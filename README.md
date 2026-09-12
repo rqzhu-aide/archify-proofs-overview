@@ -4,9 +4,9 @@ Turn a paper's assumptions, definitions, lemmas, propositions, theorems, and cor
 
 **This is a proof overview, not mathematical proof verification.** Arrows record how results are used; they do not certify correctness.
 
-[![Representer theorem overview: assumptions, training span, projection lemma, and kernel ridge regression](examples/representer-theorem/overview.svg)](examples/representer-theorem/overview.svg)
+[![Example](examples/overview-browser.png)](examples/overview-browser.png)
 
-Explore the [representer theorem example](examples/representer-theorem/overview.html) and its [standalone proof](examples/representer-theorem/proof.md). GitHub displays this SVG preview. Download the HTML and open it locally to select statements, inspect source excerpts, and trace dependencies.
+Explore the [Example](examples/representer-theorem/overview.html) and its [source proof](examples/representer-theorem/proof.md). Download the HTML and open it locally to select statements, inspect source excerpts, and trace dependencies.
 
 The viewer includes search, zoom, main-result navigation, and light/dark themes. Node colors distinguish mathematical types. Connections distinguish definition uses, theorem dependencies, reused proof arguments, and applicability conditions. Selecting a result preserves access to the complete recorded structure.
 
