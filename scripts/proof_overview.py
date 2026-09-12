@@ -16,17 +16,16 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from html.parser import HTMLParser
 
 from overview_math import render_text
+from paper_records import RecordError, KINDS, USE_TYPES
 
 
-KINDS = {"assumption", "definition", "lemma", "proposition", "theorem", "corollary", "external_result"}
-USE_TYPES = {"dependency", "definition", "proof_argument"}
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 
-class OverviewError(ValueError):
-    """An actionable source, record, or rendering error."""
+OverviewError = RecordError
 
 
 def _fields(value, required, optional, context):
@@ -105,8 +104,11 @@ def _source(value, root, base_dir, context, cache):
     return result
 
 
-def validate_data(data: dict, base_dir: Path) -> dict:
+def validate_data(data: dict, base_dir: Path, *, allow_cycles=False) -> dict:
     """Return renderer-ready data without changing the authored input."""
+    if isinstance(data, dict) and data.get('schema_version') == 2:
+        from paper_records import prepare_records
+        return prepare_records(data, base_dir)
     base_dir = Path(base_dir).resolve()
     _fields(data, ("schema_version", "title", "scope", "source", "items", "uses"), ("main_items",), "Dataset")
     if type(data["schema_version"]) is not int or data["schema_version"] != 1:
@@ -193,7 +195,7 @@ def validate_data(data: dict, base_dir: Path) -> dict:
             incoming[end] -= 1
             if incoming[end] == 0:
                 ready.append(end)
-    if len(ready) != len(by_id):
+    if len(ready) != len(by_id) and not allow_cycles:
         blocked = ", ".join(by_id[key]["label"] for key, count in incoming.items() if count)
         raise OverviewError(f"Dependency cycle blocks the layout, including: {blocked}. Inspect the directions and source argument. This overview renderer needs an acyclic map; do not delete a real circularity merely to pass validation.")
     prepared["warnings"] = warnings
@@ -216,15 +218,93 @@ def load_data(path: Path) -> dict:
         raise OverviewError(f"Cannot read dataset {path}: {exc}") from exc
 
 
-def render_file(input_path: Path, output_path: Path) -> dict:
+class _ArtifactReader(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.nodes, self.uses, self.index_nodes, self.index_uses = [], [], [], []
+        self.svg_depth = 0
+        self.metadata_count = 0
+        self.in_metadata = False
+        self.metadata = []
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == 'svg':
+            self.svg_depth += 1
+        if self.svg_depth and tag == 'g' and 'data-node-id' in attrs:
+            self.nodes.append(attrs['data-node-id'])
+        if self.svg_depth and tag == 'path' and 'data-edge-id' in attrs:
+            self.uses.append((attrs['data-edge-id'], attrs.get('data-edge-from'), attrs.get('data-edge-to')))
+        if tag == 'article' and 'data-proof-index-item' in attrs:
+            self.index_nodes.append(attrs['data-proof-index-item'])
+        if tag == 'article' and 'data-proof-index-use' in attrs:
+            self.index_uses.append((attrs['data-proof-index-use'], attrs.get('data-proof-from'), attrs.get('data-proof-to')))
+        if tag == 'script' and attrs.get('id') == 'proof-overview-records':
+            self.metadata_count += 1
+            self.in_metadata = True
+
+    def handle_endtag(self, tag):
+        if tag == 'svg':
+            self.svg_depth = max(0, self.svg_depth - 1)
+        if tag == 'script':
+            self.in_metadata = False
+
+    def handle_data(self, value):
+        if self.in_metadata:
+            self.metadata.append(value)
+
+
+def _accept_artifact(prepared, html, receipt, input_bytes):
+    """Inspect the delivered representation independently of renderer counts."""
+    if receipt.get('input_sha256') != hashlib.sha256(input_bytes).hexdigest():
+        raise OverviewError('Viewer receipt input hash does not match the checked snapshot; the previous output was preserved.')
+    if receipt.get('artifact_sha256') != hashlib.sha256(html).hexdigest():
+        raise OverviewError('Viewer receipt artifact hash does not match the candidate HTML; the previous output was preserved.')
+    parser = _ArtifactReader()
+    try:
+        parser.feed(html.decode('utf-8'))
+        metadata = json.loads(''.join(parser.metadata), object_pairs_hook=_unique_object)
+    except (ValueError, UnicodeError) as exc:
+        raise OverviewError('Viewer artifact has missing or invalid record metadata; the previous output was preserved.') from exc
+    if parser.metadata_count != 1 or not isinstance(metadata, dict):
+        raise OverviewError('Viewer artifact must contain exactly one canonical record projection; the previous output was preserved.')
+    for key in ('items', 'uses', 'build_context', 'graph_mode'):
+        if metadata.get(key) != prepared.get(key):
+            raise OverviewError(f'Viewer artifact changed the prepared {key}; the previous output was preserved.')
+    expected_nodes = sorted(item['id'] for item in prepared['items'])
+    expected_uses = sorted((use['id'], use['from'], use['to']) for use in prepared['uses'])
+    if sorted(parser.index_nodes) != expected_nodes or sorted(parser.index_uses) != expected_uses:
+        raise OverviewError('Viewer statement index omitted, duplicated, or substituted an item or use; the previous output was preserved.')
+    if prepared['graph_mode'] == 'dag' and (sorted(parser.nodes) != expected_nodes or sorted(parser.uses) != expected_uses):
+        raise OverviewError('Viewer graph omitted, duplicated, or substituted an item or use; the previous output was preserved.')
+    expected_geometry = 'pass' if prepared['graph_mode'] == 'dag' else 'not_applicable'
+    if not isinstance(receipt.get('geometry'), dict) or receipt['geometry'].get('status') != expected_geometry:
+        raise OverviewError('Viewer geometry checks did not complete successfully; the previous output was preserved.')
+    return {'status': 'pass', 'representation': prepared['graph_mode'],
+            'items': len(expected_nodes), 'uses': len(expected_uses), 'index': 'pass'}
+
+
+def _renderer_version():
+    paths = list(SCRIPT_DIR.glob('*.py')) + [SCRIPT_DIR / 'render.mjs'] + list((SCRIPT_DIR.parent / 'assets' / 'archify').glob('*'))
+    identity = hashlib.sha256()
+    for path in sorted(p for p in paths if p.is_file()):
+        identity.update(path.relative_to(SCRIPT_DIR.parent).as_posix().encode())
+        identity.update(b'\0')
+        identity.update(path.read_bytes())
+    return identity.hexdigest()
+
+
+def render_dataset(data: dict, base_dir: Path, output_path: Path, protected_paths=()) -> dict:
+    """Render one immutable exported snapshot, independent of its storage backend."""
+    from paper_records import normalize, prepare_records, source_status
     started = time.perf_counter()
-    input_path, output_path = Path(input_path).resolve(), Path(output_path).resolve()
-    data = load_data(input_path)
-    prepared = validate_data(data, input_path.parent)
-    protected = {input_path}
-    for source in [data["source"]] + [i["source"] for i in data["items"]] + [u["source"] for u in data["uses"] if "source" in u]:
-        if "file" in source:
-            protected.add((input_path.parent / source["file"]).resolve())
+    base_dir, output_path = Path(base_dir).resolve(), Path(output_path).resolve()
+    canonical = normalize(data, base_dir)
+    prepared = prepare_records(canonical, base_dir)
+    version = _renderer_version()
+    prepared['build_context']['renderer_version'] = version
+    protected = {Path(p).resolve() for p in protected_paths}
+    protected.update((base_dir / f['path']).resolve() for f in canonical['source_revision']['files'])
     if output_path in protected or output_path.suffix.lower() != ".html":
         raise OverviewError("Choose an .html output path distinct from the dataset and manuscript files.")
     node = shutil.which("node")
@@ -234,20 +314,41 @@ def render_file(input_path: Path, output_path: Path) -> dict:
     try:
         with tempfile.TemporaryDirectory(prefix="proof-overview-", dir=output_path.parent) as temp:
             staged_input, staged_output = Path(temp) / "prepared.json", Path(temp) / "overview.html"
-            staged_input.write_text(json.dumps(prepared, ensure_ascii=False), encoding="utf-8")
+            input_bytes = json.dumps(prepared, ensure_ascii=False, allow_nan=False).encode('utf-8')
+            staged_input.write_bytes(input_bytes)
             run = subprocess.run([node, str(SCRIPT_DIR / "render.mjs"), str(staged_input), str(staged_output)], capture_output=True, text=True, encoding="utf-8", timeout=60)
             if run.returncode:
                 raise OverviewError("Viewer rendering failed: " + (run.stderr or run.stdout).strip()[:2000])
-            if not staged_output.is_file() or "<svg" not in staged_output.read_text(encoding="utf-8"):
-                raise OverviewError("Viewer did not produce an SVG HTML overview; the existing output was preserved.")
+            if not staged_output.is_file():
+                raise OverviewError("Viewer did not produce an HTML overview; the existing output was preserved.")
+            try:
+                renderer_receipt = json.loads(run.stdout, object_pairs_hook=_unique_object)
+            except (ValueError, TypeError) as exc:
+                raise OverviewError('Viewer did not return a valid delivery receipt; the existing output was preserved.') from exc
+            if not isinstance(renderer_receipt, dict):
+                raise OverviewError('Viewer receipt is not an object; the existing output was preserved.')
+            html = staged_output.read_bytes()
+            preservation = _accept_artifact(prepared, html, renderer_receipt, input_bytes)
+            if version != _renderer_version():
+                raise OverviewError('Renderer files changed during generation; retry using one renderer version. The existing output was preserved.')
+            if source_status(canonical, base_dir) != prepared['build_context']['source_status']:
+                raise OverviewError('The manuscript changed during generation. Retry to report its source freshness accurately; the existing output was preserved.')
             staged_output.replace(output_path)
     except subprocess.TimeoutExpired as exc:
         raise OverviewError("Viewer rendering exceeded 60 seconds; the existing output was preserved.") from exc
     except OSError as exc:
         raise OverviewError(f"Could not write the overview: {exc}") from exc
-    return {"output": str(output_path), "items": len(data["items"]), "uses": len(data["uses"]),
+    return {"output": str(output_path), "items": len(canonical["items"]), "uses": len(canonical["uses"]),
             "bytes": output_path.stat().st_size, "seconds": round(time.perf_counter() - started, 3),
-            "sha256": hashlib.sha256(output_path.read_bytes()).hexdigest(), "warnings": prepared["warnings"]}
+            "sha256": hashlib.sha256(html).hexdigest(), "warnings": prepared["warnings"],
+            **prepared['build_context'], 'graph_preservation': preservation,
+            'geometry': renderer_receipt['geometry'], 'graph_mode': prepared['graph_mode'],
+            'browser_review': 'not_performed', 'visual_review': 'not_performed'}
+
+
+def render_file(input_path: Path, output_path: Path) -> dict:
+    input_path = Path(input_path).resolve()
+    return render_dataset(load_data(input_path), input_path.parent, output_path, protected_paths=(input_path,))
 
 
 def main() -> int:
@@ -261,8 +362,11 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.command == "validate":
-            data = validate_data(load_data(args.dataset), args.dataset.resolve().parent)
-            result = {"valid": True, "items": len(data["items"]), "uses": len(data["uses"]), "warnings": data["warnings"]}
+            from paper_records import normalize, prepare_records
+            base = args.dataset.resolve().parent
+            data = prepare_records(normalize(load_data(args.dataset), base), base)
+            result = {"valid": True, "items": len(data["items"]), "uses": len(data["uses"]), "warnings": data["warnings"],
+                      'graph_mode': data['graph_mode'], **data['build_context']}
         else:
             result = render_file(args.dataset, args.output)
         print(json.dumps(result, ensure_ascii=False, indent=2))

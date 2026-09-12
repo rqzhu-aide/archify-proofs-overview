@@ -1,0 +1,780 @@
+{
+  "anchors": [
+    {
+      "excerpt": "## Assumption 1 (RKHS and fixed data)\n\nLet $\\mathcal X$ be a nonempty set, and let $\\mathcal H$ be a real reproducing kernel Hilbert space of functions on $\\mathcal X$, with kernel $k$. Write its inner product and norm as $\\langle\\cdot,\\cdot\\rangle_{\\mathcal H}$ and $\\|\\cdot\\|_{\\mathcal H}$. For every $x\\in\\mathcal X$, the function $k_x=k(\\cdot,x)$ belongs to $\\mathcal H$, and\n\n$$\nf(x)=\\langle f,k_x\\rangle_{\\mathcal H}\n\\qquad (f\\in\\mathcal H).\n$$\n\nFix $n\\geq 1$ observations $(x_i,y_i)\\in\\mathcal X\\times\\mathbb R$. The inputs need not be distinct. All statements below concern these fixed data; no sampling assumptions are needed.",
+      "excerpt_hash": "5a50af8c9e6a20083e97c210510ad74d3df0d6d59c054268f17e1cfbf271c3ad",
+      "file_id": "file-2267f0363b32b17d",
+      "id": "anchor-item-rkhs",
+      "locator": {
+        "end_line": 16,
+        "start_line": 7
+      },
+      "source_revision": "7925e8a81e3d5837dfbad36b089db12f6a4978a56544ac9cc2ab534b7046f01c",
+      "verification": {
+        "method": "line_range",
+        "status": "checked"
+      }
+    },
+    {
+      "excerpt": "## Definition 2 (Training span)\n\nUnder Assumption 1, define\n\n$$\nS=\\operatorname{span}\\{k_{x_1},\\ldots,k_{x_n}\\}\n\\subseteq\\mathcal H.\n$$\n\nThis is a finite dimensional, hence closed, subspace. Let $P_S$ denote the orthogonal projection onto $S$. Membership in $S$ means that a function has an expansion using the training inputs, with at most $n$ coefficients. Those coefficients need not be unique because the kernel sections may be linearly dependent.",
+      "excerpt_hash": "3b484e79338c83fda97300a47ee097dafeedcf47054d2effa0525195ecc0ff3a",
+      "file_id": "file-2267f0363b32b17d",
+      "id": "anchor-item-training-span",
+      "locator": {
+        "end_line": 27,
+        "start_line": 18
+      },
+      "source_revision": "7925e8a81e3d5837dfbad36b089db12f6a4978a56544ac9cc2ab534b7046f01c",
+      "verification": {
+        "method": "line_range",
+        "status": "checked"
+      }
+    },
+    {
+      "excerpt": "## Assumption 3 (Empirical objective and norm penalty)\n\nIn the setting of Assumption 1, let\n$L:\\mathbb R^n\\to\\mathbb R\\cup\\{+\\infty\\}$ be any loss functional, with dependence on the fixed responses absorbed into $L$. Let $\\Omega:[0,\\infty)\\to\\mathbb R$ be strictly increasing. Define\n\n$$\nJ(f)=L\\bigl(f(x_1),\\ldots,f(x_n)\\bigr)\n     +\\Omega\\bigl(\\|f\\|_{\\mathcal H}\\bigr),\n\\qquad f\\in\\mathcal H.\n$$\n\nThus the loss depends on $f$ only through its training evaluations. The value $+\\infty$ can encode constraints on these evaluations. Convexity and continuity are not assumed, and these conditions alone do not assert that a minimum exists.",
+      "excerpt_hash": "780122f369576f51282fa498830186d3733ebef81c2135f77b3b56b5dceacb22",
+      "file_id": "file-2267f0363b32b17d",
+      "id": "anchor-item-objective",
+      "locator": {
+        "end_line": 40,
+        "start_line": 29
+      },
+      "source_revision": "7925e8a81e3d5837dfbad36b089db12f6a4978a56544ac9cc2ab534b7046f01c",
+      "verification": {
+        "method": "line_range",
+        "status": "checked"
+      }
+    },
+    {
+      "excerpt": "## Lemma 4 (Projection preserves the training evaluations)\n\nUnder Assumption 1 and Definition 2, every $f\\in\\mathcal H$ has a unique decomposition\n\n$$\nf=s+h,\\qquad s=P_Sf\\in S,\\qquad h\\in S^\\perp.\n$$\n\nMoreover,\n\n$$\nf(x_i)=s(x_i)\\quad (i=1,\\ldots,n),\n\\qquad\n\\|f\\|_{\\mathcal H}^2\n=\\|s\\|_{\\mathcal H}^2+\\|h\\|_{\\mathcal H}^2.\n$$",
+      "excerpt_hash": "af6fa798b82c447c8843e66f0962bcf29e2c6ee66903b453c0c95eb5f5d4b48f",
+      "file_id": "file-2267f0363b32b17d",
+      "id": "anchor-item-projection",
+      "locator": {
+        "end_line": 57,
+        "start_line": 42
+      },
+      "source_revision": "7925e8a81e3d5837dfbad36b089db12f6a4978a56544ac9cc2ab534b7046f01c",
+      "verification": {
+        "method": "line_range",
+        "status": "checked"
+      }
+    },
+    {
+      "excerpt": "## Theorem 5 (Representer theorem)\n\nUnder Assumptions 1 and 3, suppose $J$ attains a finite minimum on $\\mathcal H$. Every minimizing function $f_*$ belongs to the training span in Definition 2. Equivalently, there exist coefficients $\\alpha_1,\\ldots,\\alpha_n\\in\\mathbb R$ such that\n\n$$\nf_*(\\cdot)=\\sum_{i=1}^n\\alpha_i k(\\cdot,x_i).\n$$",
+      "excerpt_hash": "b02e09153591b7c38cd61067f24338f2c0956585910534fdffdefdb590413cfd",
+      "file_id": "file-2267f0363b32b17d",
+      "id": "anchor-item-representer",
+      "locator": {
+        "end_line": 73,
+        "start_line": 67
+      },
+      "source_revision": "7925e8a81e3d5837dfbad36b089db12f6a4978a56544ac9cc2ab534b7046f01c",
+      "verification": {
+        "method": "line_range",
+        "status": "checked"
+      }
+    },
+    {
+      "excerpt": "## Corollary 6 (Kernel ridge regression)\n\nUnder Assumption 1, fix $\\lambda>0$ and consider the sum of squared errors objective\n\n$$\nJ_\\lambda(f)=\\sum_{i=1}^n\\bigl(f(x_i)-y_i\\bigr)^2\n             +\\lambda\\|f\\|_{\\mathcal H}^2.\n$$\n\nLet $K\\in\\mathbb R^{n\\times n}$ have entries $K_{ij}=k(x_i,x_j)$, let $y=(y_1,\\ldots,y_n)^\\top$, and let $I_n$ be the identity matrix. There is a unique minimizing function, given by\n\n$$\nf_*(\\cdot)=\\sum_{i=1}^n\\alpha_i k(\\cdot,x_i),\n\\qquad\n\\alpha=(K+\\lambda I_n)^{-1}y.\n$$",
+      "excerpt_hash": "d2ab1f316f13b9289c8415df26b344166dc1351706899a3b0c9f60d1abdc61b0",
+      "file_id": "file-2267f0363b32b17d",
+      "id": "anchor-item-kernel-ridge",
+      "locator": {
+        "end_line": 100,
+        "start_line": 85
+      },
+      "source_revision": "7925e8a81e3d5837dfbad36b089db12f6a4978a56544ac9cc2ab534b7046f01c",
+      "verification": {
+        "method": "line_range",
+        "status": "checked"
+      }
+    },
+    {
+      "excerpt": "## Definition 2 (Training span)\n\nUnder Assumption 1, define\n\n$$\nS=\\operatorname{span}\\{k_{x_1},\\ldots,k_{x_n}\\}\n\\subseteq\\mathcal H.\n$$\n\nThis is a finite dimensional, hence closed, subspace. Let $P_S$ denote the orthogonal projection onto $S$. Membership in $S$ means that a function has an expansion using the training inputs, with at most $n$ coefficients. Those coefficients need not be unique because the kernel sections may be linearly dependent.",
+      "excerpt_hash": "3b484e79338c83fda97300a47ee097dafeedcf47054d2effa0525195ecc0ff3a",
+      "file_id": "file-2267f0363b32b17d",
+      "id": "anchor-use-21b7035e6e7ff549",
+      "locator": {
+        "end_line": 27,
+        "start_line": 18
+      },
+      "source_revision": "7925e8a81e3d5837dfbad36b089db12f6a4978a56544ac9cc2ab534b7046f01c",
+      "verification": {
+        "method": "line_range",
+        "status": "checked"
+      }
+    },
+    {
+      "excerpt": "## Assumption 3 (Empirical objective and norm penalty)\n\nIn the setting of Assumption 1, let\n$L:\\mathbb R^n\\to\\mathbb R\\cup\\{+\\infty\\}$ be any loss functional, with dependence on the fixed responses absorbed into $L$. Let $\\Omega:[0,\\infty)\\to\\mathbb R$ be strictly increasing. Define\n\n$$\nJ(f)=L\\bigl(f(x_1),\\ldots,f(x_n)\\bigr)\n     +\\Omega\\bigl(\\|f\\|_{\\mathcal H}\\bigr),\n\\qquad f\\in\\mathcal H.\n$$\n\nThus the loss depends on $f$ only through its training evaluations. The value $+\\infty$ can encode constraints on these evaluations. Convexity and continuity are not assumed, and these conditions alone do not assert that a minimum exists.",
+      "excerpt_hash": "780122f369576f51282fa498830186d3733ebef81c2135f77b3b56b5dceacb22",
+      "file_id": "file-2267f0363b32b17d",
+      "id": "anchor-use-ab9eeb9a881920ea",
+      "locator": {
+        "end_line": 40,
+        "start_line": 29
+      },
+      "source_revision": "7925e8a81e3d5837dfbad36b089db12f6a4978a56544ac9cc2ab534b7046f01c",
+      "verification": {
+        "method": "line_range",
+        "status": "checked"
+      }
+    },
+    {
+      "excerpt": "**Proof.** The orthogonal projection theorem applies because $S$ is closed. For each training input, the reproducing property and $k_{x_i}\\in S$ give\n\n$$\nh(x_i)=\\langle h,k_{x_i}\\rangle_{\\mathcal H}=0.\n$$\n\nConsequently $f(x_i)=s(x_i)$. Expanding the squared norm of $s+h$ and using $\\langle s,h\\rangle_{\\mathcal H}=0$ gives the norm identity. $\\square$",
+      "excerpt_hash": "35068633387b9c57ec90adc0b58f03ad01c283bb5c24ea27c075e40868e122bc",
+      "file_id": "file-2267f0363b32b17d",
+      "id": "anchor-use-45adfad9a011d01c",
+      "locator": {
+        "end_line": 65,
+        "start_line": 59
+      },
+      "source_revision": "7925e8a81e3d5837dfbad36b089db12f6a4978a56544ac9cc2ab534b7046f01c",
+      "verification": {
+        "method": "line_range",
+        "status": "checked"
+      }
+    },
+    {
+      "excerpt": "Under Assumption 1 and Definition 2, every $f\\in\\mathcal H$ has a unique decomposition\n\n$$\nf=s+h,\\qquad s=P_Sf\\in S,\\qquad h\\in S^\\perp.\n$$\n\nMoreover,\n\n$$\nf(x_i)=s(x_i)\\quad (i=1,\\ldots,n),\n\\qquad\n\\|f\\|_{\\mathcal H}^2\n=\\|s\\|_{\\mathcal H}^2+\\|h\\|_{\\mathcal H}^2.\n$$\n\n**Proof.** The orthogonal projection theorem applies because $S$ is closed. For each training input, the reproducing property and $k_{x_i}\\in S$ give\n\n$$\nh(x_i)=\\langle h,k_{x_i}\\rangle_{\\mathcal H}=0.\n$$\n\nConsequently $f(x_i)=s(x_i)$. Expanding the squared norm of $s+h$ and using $\\langle s,h\\rangle_{\\mathcal H}=0$ gives the norm identity. $\\square$",
+      "excerpt_hash": "ab96c6cfd23a999e5e34de3f1bc65081d1346982b1848e5219ab6c8c8fdf0c3f",
+      "file_id": "file-2267f0363b32b17d",
+      "id": "anchor-use-5aa653ee833ab2bd",
+      "locator": {
+        "end_line": 65,
+        "start_line": 44
+      },
+      "source_revision": "7925e8a81e3d5837dfbad36b089db12f6a4978a56544ac9cc2ab534b7046f01c",
+      "verification": {
+        "method": "line_range",
+        "status": "checked"
+      }
+    },
+    {
+      "excerpt": "Under Assumptions 1 and 3, suppose $J$ attains a finite minimum on $\\mathcal H$. Every minimizing function $f_*$ belongs to the training span in Definition 2. Equivalently, there exist coefficients $\\alpha_1,\\ldots,\\alpha_n\\in\\mathbb R$ such that\n\n$$\nf_*(\\cdot)=\\sum_{i=1}^n\\alpha_i k(\\cdot,x_i).\n$$\n\n**Proof.** Apply Lemma 4 to write $f_*=s+h$. Its evaluation identity makes the loss terms for $f_*$ and $s$ equal. Because $J(f_*)$ is finite and $\\Omega$ is real valued, this common loss is finite. If $h\\neq 0$, the norm identity implies $\\|s\\|_{\\mathcal H}<\\|f_*\\|_{\\mathcal H}$. Strict increase of $\\Omega$ then gives\n\n$$\nJ(s)<J(f_*),\n$$\n\ncontradicting minimality. Therefore $h=0$, so $f_*\\in S$, which is precisely the claimed expansion. $\\square$",
+      "excerpt_hash": "7d2a9c1fb15f7d19b9f1d33e19fa1d9659c1160873cba4995b4c7516d1e3b175",
+      "file_id": "file-2267f0363b32b17d",
+      "id": "anchor-use-89a23eed071068f3",
+      "locator": {
+        "end_line": 81,
+        "start_line": 69
+      },
+      "source_revision": "7925e8a81e3d5837dfbad36b089db12f6a4978a56544ac9cc2ab534b7046f01c",
+      "verification": {
+        "method": "line_range",
+        "status": "checked"
+      }
+    },
+    {
+      "excerpt": "**Proof.** Apply Lemma 4 to write $f_*=s+h$. Its evaluation identity makes the loss terms for $f_*$ and $s$ equal. Because $J(f_*)$ is finite and $\\Omega$ is real valued, this common loss is finite. If $h\\neq 0$, the norm identity implies $\\|s\\|_{\\mathcal H}<\\|f_*\\|_{\\mathcal H}$. Strict increase of $\\Omega$ then gives\n\n$$\nJ(s)<J(f_*),\n$$\n\ncontradicting minimality. Therefore $h=0$, so $f_*\\in S$, which is precisely the claimed expansion. $\\square$",
+      "excerpt_hash": "9cdd431e62814a57a1ed3866c7493787f08296a81cba4678e772f37ecd85aed7",
+      "file_id": "file-2267f0363b32b17d",
+      "id": "anchor-use-d3d7d40b64749d96",
+      "locator": {
+        "end_line": 81,
+        "start_line": 75
+      },
+      "source_revision": "7925e8a81e3d5837dfbad36b089db12f6a4978a56544ac9cc2ab534b7046f01c",
+      "verification": {
+        "method": "line_range",
+        "status": "checked"
+      }
+    },
+    {
+      "excerpt": "**Proof.** Apply Lemma 4 to write $f_*=s+h$. Its evaluation identity makes the loss terms for $f_*$ and $s$ equal. Because $J(f_*)$ is finite and $\\Omega$ is real valued, this common loss is finite. If $h\\neq 0$, the norm identity implies $\\|s\\|_{\\mathcal H}<\\|f_*\\|_{\\mathcal H}$. Strict increase of $\\Omega$ then gives\n\n$$\nJ(s)<J(f_*),\n$$\n\ncontradicting minimality. Therefore $h=0$, so $f_*\\in S$, which is precisely the claimed expansion. $\\square$",
+      "excerpt_hash": "9cdd431e62814a57a1ed3866c7493787f08296a81cba4678e772f37ecd85aed7",
+      "file_id": "file-2267f0363b32b17d",
+      "id": "anchor-use-8793fc790f342ce7",
+      "locator": {
+        "end_line": 81,
+        "start_line": 75
+      },
+      "source_revision": "7925e8a81e3d5837dfbad36b089db12f6a4978a56544ac9cc2ab534b7046f01c",
+      "verification": {
+        "method": "line_range",
+        "status": "checked"
+      }
+    },
+    {
+      "excerpt": "**Proof.** First establish existence. On the finite dimensional space $S$ of Definition 2, the function $J_\\lambda$ is continuous: the reproducing property makes each evaluation a continuous linear functional. Moreover, $J_\\lambda(s)\\geq\\lambda\\|s\\|_{\\mathcal H}^2$. Thus the sublevel set\n\n$$\n\\{s\\in S:J_\\lambda(s)\\leq J_\\lambda(0)\\}\n$$\n\nis nonempty, closed, and bounded, hence compact. A minimum on this set is a finite minimum over $S$. By Lemma 4, $J_\\lambda(P_Sf)\\leq J_\\lambda(f)$ for every $f\\in\\mathcal H$, so this minimum is also global.",
+      "excerpt_hash": "13fd111ddd4e46c6e6efabfaa1a4ad7154191f3a9ced47391130c3e2b23580a2",
+      "file_id": "file-2267f0363b32b17d",
+      "id": "anchor-use-9f1b7953085cde36",
+      "locator": {
+        "end_line": 108,
+        "start_line": 102
+      },
+      "source_revision": "7925e8a81e3d5837dfbad36b089db12f6a4978a56544ac9cc2ab534b7046f01c",
+      "verification": {
+        "method": "line_range",
+        "status": "checked"
+      }
+    },
+    {
+      "excerpt": "**Proof.** First establish existence. On the finite dimensional space $S$ of Definition 2, the function $J_\\lambda$ is continuous: the reproducing property makes each evaluation a continuous linear functional. Moreover, $J_\\lambda(s)\\geq\\lambda\\|s\\|_{\\mathcal H}^2$. Thus the sublevel set\n\n$$\n\\{s\\in S:J_\\lambda(s)\\leq J_\\lambda(0)\\}\n$$\n\nis nonempty, closed, and bounded, hence compact. A minimum on this set is a finite minimum over $S$. By Lemma 4, $J_\\lambda(P_Sf)\\leq J_\\lambda(f)$ for every $f\\in\\mathcal H$, so this minimum is also global.",
+      "excerpt_hash": "13fd111ddd4e46c6e6efabfaa1a4ad7154191f3a9ced47391130c3e2b23580a2",
+      "file_id": "file-2267f0363b32b17d",
+      "id": "anchor-use-af8209f3d2141bee",
+      "locator": {
+        "end_line": 108,
+        "start_line": 102
+      },
+      "source_revision": "7925e8a81e3d5837dfbad36b089db12f6a4978a56544ac9cc2ab534b7046f01c",
+      "verification": {
+        "method": "line_range",
+        "status": "checked"
+      }
+    },
+    {
+      "excerpt": "Assumption 3 holds with squared error loss and $\\Omega(t)=\\lambda t^2$. We can now apply Theorem 5: every global minimizer belongs to $S$. It remains to solve the coefficient problem and identify which coefficient vectors represent the same function.\n\nThe reproducing property makes $K$ symmetric, and for every $v\\in\\mathbb R^n$,\n\n$$\nv^\\top Kv\n=\\left\\|\\sum_{i=1}^n v_i k_{x_i}\\right\\|_{\\mathcal H}^2\\geq 0.\n$$\n\nThus $v^\\top(K+\\lambda I_n)v\\geq\\lambda\\|v\\|_2^2$, so $K+\\lambda I_n$ is invertible. For $f_a=\\sum_i a_i k_{x_i}$, the objective becomes\n\n$$\nq(a):=J_\\lambda(f_a)=\\|Ka-y\\|_2^2+\\lambda a^\\top Ka.\n$$\n\nSet $\\alpha=(K+\\lambda I_n)^{-1}y$. Since $K\\alpha-y=-\\lambda\\alpha$, expansion of the quadratic terms yields, for every $v\\in\\mathbb R^n$,\n\n$$\n\\begin{aligned}\nq(\\alpha+v)-q(\\alpha)\n&=2v^\\top K\\bigl((K+\\lambda I_n)\\alpha-y\\bigr)\n  +v^\\top K(K+\\lambda I_n)v\\\\\n&=\\|Kv\\|_2^2+\\lambda v^\\top Kv\\geq 0.\n\\end{aligned}\n$$\n\nEquality holds exactly when $Kv=0$. Hence $\\alpha$ minimizes $q$, and all minimizing coefficient vectors have the form $\\alpha+v$ with $v\\in\\ker K$. The norm identity above then gives $\\sum_i v_i k_{x_i}=0$. Since Theorem 5 confines every global minimizer to $S$, all global minimizers are the same function $f_\\alpha$.",
+      "excerpt_hash": "b994e68f64e6f1004f69f92f9aa7b92d1a55928de85e9fab44c1df5da5fa02f6",
+      "file_id": "file-2267f0363b32b17d",
+      "id": "anchor-use-6c53218bf26c76a6",
+      "locator": {
+        "end_line": 136,
+        "start_line": 110
+      },
+      "source_revision": "7925e8a81e3d5837dfbad36b089db12f6a4978a56544ac9cc2ab534b7046f01c",
+      "verification": {
+        "method": "line_range",
+        "status": "checked"
+      }
+    },
+    {
+      "excerpt": "The reproducing property makes $K$ symmetric, and for every $v\\in\\mathbb R^n$,\n\n$$\nv^\\top Kv\n=\\left\\|\\sum_{i=1}^n v_i k_{x_i}\\right\\|_{\\mathcal H}^2\\geq 0.\n$$\n\nThus $v^\\top(K+\\lambda I_n)v\\geq\\lambda\\|v\\|_2^2$, so $K+\\lambda I_n$ is invertible. For $f_a=\\sum_i a_i k_{x_i}$, the objective becomes\n\n$$\nq(a):=J_\\lambda(f_a)=\\|Ka-y\\|_2^2+\\lambda a^\\top Ka.\n$$\n\nSet $\\alpha=(K+\\lambda I_n)^{-1}y$. Since $K\\alpha-y=-\\lambda\\alpha$, expansion of the quadratic terms yields, for every $v\\in\\mathbb R^n$,\n\n$$\n\\begin{aligned}\nq(\\alpha+v)-q(\\alpha)\n&=2v^\\top K\\bigl((K+\\lambda I_n)\\alpha-y\\bigr)\n  +v^\\top K(K+\\lambda I_n)v\\\\\n&=\\|Kv\\|_2^2+\\lambda v^\\top Kv\\geq 0.\n\\end{aligned}\n$$\n\nEquality holds exactly when $Kv=0$. Hence $\\alpha$ minimizes $q$, and all minimizing coefficient vectors have the form $\\alpha+v$ with $v\\in\\ker K$. The norm identity above then gives $\\sum_i v_i k_{x_i}=0$. Since Theorem 5 confines every global minimizer to $S$, all global minimizers are the same function $f_\\alpha$.\n\nThe displayed linear system selects a unique coefficient vector, while the minimizing function has other coefficient representations whenever $K$ is singular. $\\square$",
+      "excerpt_hash": "9685e40c2dc844175305112062db01c55cc5e6335a363d5bd5c54e865381678a",
+      "file_id": "file-2267f0363b32b17d",
+      "id": "anchor-use-d6de0e33ab1a62e2",
+      "locator": {
+        "end_line": 138,
+        "start_line": 112
+      },
+      "source_revision": "7925e8a81e3d5837dfbad36b089db12f6a4978a56544ac9cc2ab534b7046f01c",
+      "verification": {
+        "method": "line_range",
+        "status": "checked"
+      }
+    },
+    {
+      "excerpt": "**Proof.** The orthogonal projection theorem applies because $S$ is closed. For each training input, the reproducing property and $k_{x_i}\\in S$ give\n\n$$\nh(x_i)=\\langle h,k_{x_i}\\rangle_{\\mathcal H}=0.\n$$\n\nConsequently $f(x_i)=s(x_i)$. Expanding the squared norm of $s+h$ and using $\\langle s,h\\rangle_{\\mathcal H}=0$ gives the norm identity. $\\square$",
+      "excerpt_hash": "35068633387b9c57ec90adc0b58f03ad01c283bb5c24ea27c075e40868e122bc",
+      "file_id": "file-2267f0363b32b17d",
+      "id": "anchor-proof-projection",
+      "locator": {
+        "end_line": 65,
+        "start_line": 59
+      },
+      "source_revision": "7925e8a81e3d5837dfbad36b089db12f6a4978a56544ac9cc2ab534b7046f01c",
+      "verification": {
+        "method": "line_range",
+        "status": "checked"
+      }
+    },
+    {
+      "excerpt": "**Proof.** Apply Lemma 4 to write $f_*=s+h$. Its evaluation identity makes the loss terms for $f_*$ and $s$ equal. Because $J(f_*)$ is finite and $\\Omega$ is real valued, this common loss is finite. If $h\\neq 0$, the norm identity implies $\\|s\\|_{\\mathcal H}<\\|f_*\\|_{\\mathcal H}$. Strict increase of $\\Omega$ then gives\n\n$$\nJ(s)<J(f_*),\n$$\n\ncontradicting minimality. Therefore $h=0$, so $f_*\\in S$, which is precisely the claimed expansion. $\\square$",
+      "excerpt_hash": "9cdd431e62814a57a1ed3866c7493787f08296a81cba4678e772f37ecd85aed7",
+      "file_id": "file-2267f0363b32b17d",
+      "id": "anchor-proof-representer",
+      "locator": {
+        "end_line": 81,
+        "start_line": 75
+      },
+      "source_revision": "7925e8a81e3d5837dfbad36b089db12f6a4978a56544ac9cc2ab534b7046f01c",
+      "verification": {
+        "method": "line_range",
+        "status": "checked"
+      }
+    },
+    {
+      "excerpt": "**Remark.** If $\\Omega$ is only nondecreasing, Lemma 4 still gives $J(P_Sf)\\leq J(f)$. Whenever a finite minimum is attained, projecting a minimizer therefore produces a minimizer in $S$. It need not follow that every minimizer lies in $S$: if $L\\equiv 0$ and $\\Omega\\equiv 0$, every function minimizes $J$, including functions outside $S$ when that subspace is proper. Neither version asserts existence or uniqueness in general.",
+      "excerpt_hash": "4cf78dd6839a639ef28e4dbd0dd38b8d2aa1acd0cb5dfc8c216ad00e11593096",
+      "file_id": "file-2267f0363b32b17d",
+      "id": "anchor-remark-monotonicity",
+      "locator": {
+        "end_line": 83,
+        "start_line": 83
+      },
+      "source_revision": "7925e8a81e3d5837dfbad36b089db12f6a4978a56544ac9cc2ab534b7046f01c",
+      "verification": {
+        "method": "line_range",
+        "status": "checked"
+      }
+    },
+    {
+      "excerpt": "**Proof.** First establish existence. On the finite dimensional space $S$ of Definition 2, the function $J_\\lambda$ is continuous: the reproducing property makes each evaluation a continuous linear functional. Moreover, $J_\\lambda(s)\\geq\\lambda\\|s\\|_{\\mathcal H}^2$. Thus the sublevel set\n\n$$\n\\{s\\in S:J_\\lambda(s)\\leq J_\\lambda(0)\\}\n$$\n\nis nonempty, closed, and bounded, hence compact. A minimum on this set is a finite minimum over $S$. By Lemma 4, $J_\\lambda(P_Sf)\\leq J_\\lambda(f)$ for every $f\\in\\mathcal H$, so this minimum is also global.\n\nAssumption 3 holds with squared error loss and $\\Omega(t)=\\lambda t^2$. We can now apply Theorem 5: every global minimizer belongs to $S$. It remains to solve the coefficient problem and identify which coefficient vectors represent the same function.\n\nThe reproducing property makes $K$ symmetric, and for every $v\\in\\mathbb R^n$,\n\n$$\nv^\\top Kv\n=\\left\\|\\sum_{i=1}^n v_i k_{x_i}\\right\\|_{\\mathcal H}^2\\geq 0.\n$$\n\nThus $v^\\top(K+\\lambda I_n)v\\geq\\lambda\\|v\\|_2^2$, so $K+\\lambda I_n$ is invertible. For $f_a=\\sum_i a_i k_{x_i}$, the objective becomes\n\n$$\nq(a):=J_\\lambda(f_a)=\\|Ka-y\\|_2^2+\\lambda a^\\top Ka.\n$$\n\nSet $\\alpha=(K+\\lambda I_n)^{-1}y$. Since $K\\alpha-y=-\\lambda\\alpha$, expansion of the quadratic terms yields, for every $v\\in\\mathbb R^n$,\n\n$$\n\\begin{aligned}\nq(\\alpha+v)-q(\\alpha)\n&=2v^\\top K\\bigl((K+\\lambda I_n)\\alpha-y\\bigr)\n  +v^\\top K(K+\\lambda I_n)v\\\\\n&=\\|Kv\\|_2^2+\\lambda v^\\top Kv\\geq 0.\n\\end{aligned}\n$$\n\nEquality holds exactly when $Kv=0$. Hence $\\alpha$ minimizes $q$, and all minimizing coefficient vectors have the form $\\alpha+v$ with $v\\in\\ker K$. The norm identity above then gives $\\sum_i v_i k_{x_i}=0$. Since Theorem 5 confines every global minimizer to $S$, all global minimizers are the same function $f_\\alpha$.\n\nThe displayed linear system selects a unique coefficient vector, while the minimizing function has other coefficient representations whenever $K$ is singular. $\\square$",
+      "excerpt_hash": "e37e0c07ffc9bbcd7869aacb9512ce5c0d10e44b0c5235efb3be473824a871c9",
+      "file_id": "file-2267f0363b32b17d",
+      "id": "anchor-proof-kernel-ridge",
+      "locator": {
+        "end_line": 138,
+        "start_line": 102
+      },
+      "source_revision": "7925e8a81e3d5837dfbad36b089db12f6a4978a56544ac9cc2ab534b7046f01c",
+      "verification": {
+        "method": "line_range",
+        "status": "checked"
+      }
+    }
+  ],
+  "inventory": {
+    "declarations": [],
+    "excluded": [],
+    "method": "literal_tex_declarations",
+    "note": "Candidate inventory only. Custom macros, unnumbered prose, and proof meaning require source comparison.",
+    "unresolved": []
+  },
+  "items": [
+    {
+      "caption": "RKHS and fixed data",
+      "id": "rkhs",
+      "kind": "assumption",
+      "label": "Assumption 1",
+      "passages": [
+        {
+          "anchor_id": "anchor-item-rkhs",
+          "role": "statement"
+        }
+      ],
+      "statement": {
+        "form": "synopsis",
+        "text": "A real reproducing kernel Hilbert space $\\mathcal H$ on a nonempty set has kernel $k$ and $k_x=k(\\cdot,x)\\in\\mathcal H$, with $f(x)=\\langle f,k_x\\rangle_{\\mathcal H}$. Fix $n\\geq1$ observations $(x_i,y_i)\\in\\mathcal X\\times\\mathbb R$. Repeated inputs are allowed; no sampling distribution is assumed."
+      }
+    },
+    {
+      "caption": "Training-point span",
+      "id": "training-span",
+      "kind": "definition",
+      "label": "Definition 2",
+      "passages": [
+        {
+          "anchor_id": "anchor-item-training-span",
+          "role": "statement"
+        }
+      ],
+      "statement": {
+        "form": "synopsis",
+        "text": "Under Assumption 1, $S=\\operatorname{span}\\{k_{x_1},\\ldots,k_{x_n}\\}$ is a finite-dimensional closed subspace of $\\mathcal H$. Let $P_S$ be its orthogonal projection. A function in $S$ has a training-kernel expansion, but its coefficients need not be unique."
+      }
+    },
+    {
+      "caption": "Loss and norm penalty",
+      "id": "objective",
+      "kind": "assumption",
+      "label": "Assumption 3",
+      "passages": [
+        {
+          "anchor_id": "anchor-item-objective",
+          "role": "statement"
+        }
+      ],
+      "statement": {
+        "form": "synopsis",
+        "text": "In the setting of Assumption 1, $J(f)=L(f(x_1),\\ldots,f(x_n))+\\Omega(\\|f\\|_{\\mathcal H})$, where $L:\\mathbb R^n\\to\\mathbb R\\cup\\{+\\infty\\}$ depends on $f$ only through training evaluations, and the real-valued function $\\Omega:[0,\\infty)\\to\\mathbb R$ is strictly increasing. Convexity, continuity, and attainment of a minimum are not assumed here."
+      }
+    },
+    {
+      "caption": "Projection identities",
+      "id": "projection",
+      "kind": "lemma",
+      "label": "Lemma 4",
+      "passages": [
+        {
+          "anchor_id": "anchor-item-projection",
+          "role": "statement"
+        },
+        {
+          "anchor_id": "anchor-proof-projection",
+          "role": "proof"
+        }
+      ],
+      "statement": {
+        "form": "synopsis",
+        "text": "Under Assumption 1 and Definition 2, every $f\\in\\mathcal H$ decomposes uniquely as $f=s+h$, with $s=P_Sf\\in S$ and $h\\in S^\\perp$. Then $f(x_i)=s(x_i)$ for all training inputs and $\\|f\\|_{\\mathcal H}^2=\\|s\\|_{\\mathcal H}^2+\\|h\\|_{\\mathcal H}^2$."
+      }
+    },
+    {
+      "caption": "Finite kernel expansion",
+      "id": "representer",
+      "kind": "theorem",
+      "label": "Theorem 5",
+      "passages": [
+        {
+          "anchor_id": "anchor-item-representer",
+          "role": "statement"
+        },
+        {
+          "anchor_id": "anchor-proof-representer",
+          "role": "proof"
+        },
+        {
+          "anchor_id": "anchor-remark-monotonicity",
+          "role": "evidence"
+        }
+      ],
+      "statement": {
+        "form": "synopsis",
+        "text": "Under Assumptions 1 and 3, if $J$ attains a finite minimum on $\\mathcal H$, every minimizer belongs to $S$: $$f_*(\\cdot)=\\sum_{i=1}^n\\alpha_i k(\\cdot,x_i).$$ The theorem does not assert existence or uniqueness. With a merely nondecreasing penalty, a minimizer in $S$ can still be chosen whenever a finite minimum is attained, but other minimizers may lie outside $S$."
+      }
+    },
+    {
+      "caption": "Kernel ridge regression",
+      "id": "kernel-ridge",
+      "kind": "corollary",
+      "label": "Corollary 6",
+      "passages": [
+        {
+          "anchor_id": "anchor-item-kernel-ridge",
+          "role": "statement"
+        },
+        {
+          "anchor_id": "anchor-proof-kernel-ridge",
+          "role": "proof"
+        }
+      ],
+      "statement": {
+        "form": "synopsis",
+        "text": "Under Assumption 1 and $\\lambda>0$, the sum-loss objective $J_\\lambda(f)=\\sum_{i=1}^n(f(x_i)-y_i)^2+\\lambda\\|f\\|_{\\mathcal H}^2$ has a unique minimizing function: $$f_*(\\cdot)=\\sum_{i=1}^n\\alpha_i k(\\cdot,x_i),\\qquad \\alpha=(K+\\lambda I_n)^{-1}y,$$ where $K_{ij}=k(x_i,x_j)$ and $y=(y_1,\\ldots,y_n)^\\top$. This linear system selects a unique vector; if $K$ is singular, other coefficient vectors represent the same minimizing function."
+      }
+    }
+  ],
+  "main_items": [
+    "representer",
+    "kernel-ridge"
+  ],
+  "schema_version": 2,
+  "scope": "All six numbered items in the accompanying standalone exposition. Numbering is local to proof.md, not the cited research paper. The nondecreasing-penalty remark is included with Theorem 5. Background Hilbert-space projection and finite-dimensional compactness stay within the proofs. Arrows record direct uses in this written argument, including the different contributions to existence and representation in Corollary 6; they do not independently certify correctness.",
+  "source_revision": {
+    "created_at": "2026-09-12T19:20:33+00:00",
+    "files": [
+      {
+        "id": "file-2267f0363b32b17d",
+        "media_type": "text/plain",
+        "path": "proof.md",
+        "sha256": "eaaaf0f280b29fe1e1963a21c33a14119ece81363c19fdafaa23405514996a37",
+        "content_base64": "IyBUaGUgcmVwcmVzZW50ZXIgdGhlb3JlbTogYSBwcm9qZWN0aW9uIHByb29mCgpBbiBSS0hTIG1heSBjb250YWluIGluZmluaXRlbHkgbWFueSBkaXJlY3Rpb25zLCBidXQgYSB0cmFpbmluZyBvYmplY3RpdmUgb2JzZXJ2ZXMgYSBmdW5jdGlvbiBvbmx5IGF0IGZpbml0ZWx5IG1hbnkgaW5wdXRzLiBUaGUgcHJvb2Ygc2VwYXJhdGVzIHRoZSBkaXJlY3Rpb25zIHRoYXQgZGV0ZXJtaW5lIHRob3NlIG9ic2VydmF0aW9ucyBmcm9tIHRoZSBkaXJlY3Rpb25zIHRoYXQgY29udHJpYnV0ZSBvbmx5IHRvIHRoZSBub3JtIHBlbmFsdHkuCgpUaGlzIGlzIGEgc3RhbmRhbG9uZSB0ZWFjaGluZyBleHBvc2l0aW9uIHdpdGggbG9jYWwgbnVtYmVyaW5nLiBGb3IgYmFja2dyb3VuZCwgc2VlIFNjaMO2bGtvcGYsIEhlcmJyaWNoLCBhbmQgU21vbGEgKDIwMDEpLCBbKkEgR2VuZXJhbGl6ZWQgUmVwcmVzZW50ZXIgVGhlb3JlbSpdKGh0dHBzOi8vYWxleC5zbW9sYS5vcmcvcGFwZXJzLzIwMDEvU2NoSGVyU21vMDEucGRmKS4gSXQgaXMgbm90IGEgdHJhbnNjcmlwdGlvbiBvciBhIGNvbXBsZXRlIG1hcCBvZiB0aGF0IHBhcGVyLgoKIyMgQXNzdW1wdGlvbiAxIChSS0hTIGFuZCBmaXhlZCBkYXRhKQoKTGV0ICRcbWF0aGNhbCBYJCBiZSBhIG5vbmVtcHR5IHNldCwgYW5kIGxldCAkXG1hdGhjYWwgSCQgYmUgYSByZWFsIHJlcHJvZHVjaW5nIGtlcm5lbCBIaWxiZXJ0IHNwYWNlIG9mIGZ1bmN0aW9ucyBvbiAkXG1hdGhjYWwgWCQsIHdpdGgga2VybmVsICRrJC4gV3JpdGUgaXRzIGlubmVyIHByb2R1Y3QgYW5kIG5vcm0gYXMgJFxsYW5nbGVcY2RvdCxcY2RvdFxyYW5nbGVfe1xtYXRoY2FsIEh9JCBhbmQgJFx8XGNkb3RcfF97XG1hdGhjYWwgSH0kLiBGb3IgZXZlcnkgJHhcaW5cbWF0aGNhbCBYJCwgdGhlIGZ1bmN0aW9uICRrX3g9ayhcY2RvdCx4KSQgYmVsb25ncyB0byAkXG1hdGhjYWwgSCQsIGFuZAoKJCQKZih4KT1cbGFuZ2xlIGYsa194XHJhbmdsZV97XG1hdGhjYWwgSH0KXHFxdWFkIChmXGluXG1hdGhjYWwgSCkuCiQkCgpGaXggJG5cZ2VxIDEkIG9ic2VydmF0aW9ucyAkKHhfaSx5X2kpXGluXG1hdGhjYWwgWFx0aW1lc1xtYXRoYmIgUiQuIFRoZSBpbnB1dHMgbmVlZCBub3QgYmUgZGlzdGluY3QuIEFsbCBzdGF0ZW1lbnRzIGJlbG93IGNvbmNlcm4gdGhlc2UgZml4ZWQgZGF0YTsgbm8gc2FtcGxpbmcgYXNzdW1wdGlvbnMgYXJlIG5lZWRlZC4KCiMjIERlZmluaXRpb24gMiAoVHJhaW5pbmcgc3BhbikKClVuZGVyIEFzc3VtcHRpb24gMSwgZGVmaW5lCgokJApTPVxvcGVyYXRvcm5hbWV7c3Bhbn1ce2tfe3hfMX0sXGxkb3RzLGtfe3hfbn1cfQpcc3Vic2V0ZXFcbWF0aGNhbCBILgokJAoKVGhpcyBpcyBhIGZpbml0ZSBkaW1lbnNpb25hbCwgaGVuY2UgY2xvc2VkLCBzdWJzcGFjZS4gTGV0ICRQX1MkIGRlbm90ZSB0aGUgb3J0aG9nb25hbCBwcm9qZWN0aW9uIG9udG8gJFMkLiBNZW1iZXJzaGlwIGluICRTJCBtZWFucyB0aGF0IGEgZnVuY3Rpb24gaGFzIGFuIGV4cGFuc2lvbiB1c2luZyB0aGUgdHJhaW5pbmcgaW5wdXRzLCB3aXRoIGF0IG1vc3QgJG4kIGNvZWZmaWNpZW50cy4gVGhvc2UgY29lZmZpY2llbnRzIG5lZWQgbm90IGJlIHVuaXF1ZSBiZWNhdXNlIHRoZSBrZXJuZWwgc2VjdGlvbnMgbWF5IGJlIGxpbmVhcmx5IGRlcGVuZGVudC4KCiMjIEFzc3VtcHRpb24gMyAoRW1waXJpY2FsIG9iamVjdGl2ZSBhbmQgbm9ybSBwZW5hbHR5KQoKSW4gdGhlIHNldHRpbmcgb2YgQXNzdW1wdGlvbiAxLCBsZXQKJEw6XG1hdGhiYiBSXm5cdG9cbWF0aGJiIFJcY3VwXHsrXGluZnR5XH0kIGJlIGFueSBsb3NzIGZ1bmN0aW9uYWwsIHdpdGggZGVwZW5kZW5jZSBvbiB0aGUgZml4ZWQgcmVzcG9uc2VzIGFic29yYmVkIGludG8gJEwkLiBMZXQgJFxPbWVnYTpbMCxcaW5mdHkpXHRvXG1hdGhiYiBSJCBiZSBzdHJpY3RseSBpbmNyZWFzaW5nLiBEZWZpbmUKCiQkCkooZik9TFxiaWdsKGYoeF8xKSxcbGRvdHMsZih4X24pXGJpZ3IpCiAgICAgK1xPbWVnYVxiaWdsKFx8Zlx8X3tcbWF0aGNhbCBIfVxiaWdyKSwKXHFxdWFkIGZcaW5cbWF0aGNhbCBILgokJAoKVGh1cyB0aGUgbG9zcyBkZXBlbmRzIG9uICRmJCBvbmx5IHRocm91Z2ggaXRzIHRyYWluaW5nIGV2YWx1YXRpb25zLiBUaGUgdmFsdWUgJCtcaW5mdHkkIGNhbiBlbmNvZGUgY29uc3RyYWludHMgb24gdGhlc2UgZXZhbHVhdGlvbnMuIENvbnZleGl0eSBhbmQgY29udGludWl0eSBhcmUgbm90IGFzc3VtZWQsIGFuZCB0aGVzZSBjb25kaXRpb25zIGFsb25lIGRvIG5vdCBhc3NlcnQgdGhhdCBhIG1pbmltdW0gZXhpc3RzLgoKIyMgTGVtbWEgNCAoUHJvamVjdGlvbiBwcmVzZXJ2ZXMgdGhlIHRyYWluaW5nIGV2YWx1YXRpb25zKQoKVW5kZXIgQXNzdW1wdGlvbiAxIGFuZCBEZWZpbml0aW9uIDIsIGV2ZXJ5ICRmXGluXG1hdGhjYWwgSCQgaGFzIGEgdW5pcXVlIGRlY29tcG9zaXRpb24KCiQkCmY9cytoLFxxcXVhZCBzPVBfU2ZcaW4gUyxccXF1YWQgaFxpbiBTXlxwZXJwLgokJAoKTW9yZW92ZXIsCgokJApmKHhfaSk9cyh4X2kpXHF1YWQgKGk9MSxcbGRvdHMsbiksClxxcXVhZApcfGZcfF97XG1hdGhjYWwgSH1eMgo9XHxzXHxfe1xtYXRoY2FsIEh9XjIrXHxoXHxfe1xtYXRoY2FsIEh9XjIuCiQkCgoqKlByb29mLioqIFRoZSBvcnRob2dvbmFsIHByb2plY3Rpb24gdGhlb3JlbSBhcHBsaWVzIGJlY2F1c2UgJFMkIGlzIGNsb3NlZC4gRm9yIGVhY2ggdHJhaW5pbmcgaW5wdXQsIHRoZSByZXByb2R1Y2luZyBwcm9wZXJ0eSBhbmQgJGtfe3hfaX1caW4gUyQgZ2l2ZQoKJCQKaCh4X2kpPVxsYW5nbGUgaCxrX3t4X2l9XHJhbmdsZV97XG1hdGhjYWwgSH09MC4KJCQKCkNvbnNlcXVlbnRseSAkZih4X2kpPXMoeF9pKSQuIEV4cGFuZGluZyB0aGUgc3F1YXJlZCBub3JtIG9mICRzK2gkIGFuZCB1c2luZyAkXGxhbmdsZSBzLGhccmFuZ2xlX3tcbWF0aGNhbCBIfT0wJCBnaXZlcyB0aGUgbm9ybSBpZGVudGl0eS4gJFxzcXVhcmUkCgojIyBUaGVvcmVtIDUgKFJlcHJlc2VudGVyIHRoZW9yZW0pCgpVbmRlciBBc3N1bXB0aW9ucyAxIGFuZCAzLCBzdXBwb3NlICRKJCBhdHRhaW5zIGEgZmluaXRlIG1pbmltdW0gb24gJFxtYXRoY2FsIEgkLiBFdmVyeSBtaW5pbWl6aW5nIGZ1bmN0aW9uICRmXyokIGJlbG9uZ3MgdG8gdGhlIHRyYWluaW5nIHNwYW4gaW4gRGVmaW5pdGlvbiAyLiBFcXVpdmFsZW50bHksIHRoZXJlIGV4aXN0IGNvZWZmaWNpZW50cyAkXGFscGhhXzEsXGxkb3RzLFxhbHBoYV9uXGluXG1hdGhiYiBSJCBzdWNoIHRoYXQKCiQkCmZfKihcY2RvdCk9XHN1bV97aT0xfV5uXGFscGhhX2kgayhcY2RvdCx4X2kpLgokJAoKKipQcm9vZi4qKiBBcHBseSBMZW1tYSA0IHRvIHdyaXRlICRmXyo9cytoJC4gSXRzIGV2YWx1YXRpb24gaWRlbnRpdHkgbWFrZXMgdGhlIGxvc3MgdGVybXMgZm9yICRmXyokIGFuZCAkcyQgZXF1YWwuIEJlY2F1c2UgJEooZl8qKSQgaXMgZmluaXRlIGFuZCAkXE9tZWdhJCBpcyByZWFsIHZhbHVlZCwgdGhpcyBjb21tb24gbG9zcyBpcyBmaW5pdGUuIElmICRoXG5lcSAwJCwgdGhlIG5vcm0gaWRlbnRpdHkgaW1wbGllcyAkXHxzXHxfe1xtYXRoY2FsIEh9PFx8Zl8qXHxfe1xtYXRoY2FsIEh9JC4gU3RyaWN0IGluY3JlYXNlIG9mICRcT21lZ2EkIHRoZW4gZ2l2ZXMKCiQkCkoocyk8SihmXyopLAokJAoKY29udHJhZGljdGluZyBtaW5pbWFsaXR5LiBUaGVyZWZvcmUgJGg9MCQsIHNvICRmXypcaW4gUyQsIHdoaWNoIGlzIHByZWNpc2VseSB0aGUgY2xhaW1lZCBleHBhbnNpb24uICRcc3F1YXJlJAoKKipSZW1hcmsuKiogSWYgJFxPbWVnYSQgaXMgb25seSBub25kZWNyZWFzaW5nLCBMZW1tYSA0IHN0aWxsIGdpdmVzICRKKFBfU2YpXGxlcSBKKGYpJC4gV2hlbmV2ZXIgYSBmaW5pdGUgbWluaW11bSBpcyBhdHRhaW5lZCwgcHJvamVjdGluZyBhIG1pbmltaXplciB0aGVyZWZvcmUgcHJvZHVjZXMgYSBtaW5pbWl6ZXIgaW4gJFMkLiBJdCBuZWVkIG5vdCBmb2xsb3cgdGhhdCBldmVyeSBtaW5pbWl6ZXIgbGllcyBpbiAkUyQ6IGlmICRMXGVxdWl2IDAkIGFuZCAkXE9tZWdhXGVxdWl2IDAkLCBldmVyeSBmdW5jdGlvbiBtaW5pbWl6ZXMgJEokLCBpbmNsdWRpbmcgZnVuY3Rpb25zIG91dHNpZGUgJFMkIHdoZW4gdGhhdCBzdWJzcGFjZSBpcyBwcm9wZXIuIE5laXRoZXIgdmVyc2lvbiBhc3NlcnRzIGV4aXN0ZW5jZSBvciB1bmlxdWVuZXNzIGluIGdlbmVyYWwuCgojIyBDb3JvbGxhcnkgNiAoS2VybmVsIHJpZGdlIHJlZ3Jlc3Npb24pCgpVbmRlciBBc3N1bXB0aW9uIDEsIGZpeCAkXGxhbWJkYT4wJCBhbmQgY29uc2lkZXIgdGhlIHN1bSBvZiBzcXVhcmVkIGVycm9ycyBvYmplY3RpdmUKCiQkCkpfXGxhbWJkYShmKT1cc3VtX3tpPTF9Xm5cYmlnbChmKHhfaSkteV9pXGJpZ3IpXjIKICAgICAgICAgICAgICtcbGFtYmRhXHxmXHxfe1xtYXRoY2FsIEh9XjIuCiQkCgpMZXQgJEtcaW5cbWF0aGJiIFJee25cdGltZXMgbn0kIGhhdmUgZW50cmllcyAkS197aWp9PWsoeF9pLHhfaikkLCBsZXQgJHk9KHlfMSxcbGRvdHMseV9uKV5cdG9wJCwgYW5kIGxldCAkSV9uJCBiZSB0aGUgaWRlbnRpdHkgbWF0cml4LiBUaGVyZSBpcyBhIHVuaXF1ZSBtaW5pbWl6aW5nIGZ1bmN0aW9uLCBnaXZlbiBieQoKJCQKZl8qKFxjZG90KT1cc3VtX3tpPTF9Xm5cYWxwaGFfaSBrKFxjZG90LHhfaSksClxxcXVhZApcYWxwaGE9KEsrXGxhbWJkYSBJX24pXnstMX15LgokJAoKKipQcm9vZi4qKiBGaXJzdCBlc3RhYmxpc2ggZXhpc3RlbmNlLiBPbiB0aGUgZmluaXRlIGRpbWVuc2lvbmFsIHNwYWNlICRTJCBvZiBEZWZpbml0aW9uIDIsIHRoZSBmdW5jdGlvbiAkSl9cbGFtYmRhJCBpcyBjb250aW51b3VzOiB0aGUgcmVwcm9kdWNpbmcgcHJvcGVydHkgbWFrZXMgZWFjaCBldmFsdWF0aW9uIGEgY29udGludW91cyBsaW5lYXIgZnVuY3Rpb25hbC4gTW9yZW92ZXIsICRKX1xsYW1iZGEocylcZ2VxXGxhbWJkYVx8c1x8X3tcbWF0aGNhbCBIfV4yJC4gVGh1cyB0aGUgc3VibGV2ZWwgc2V0CgokJApce3NcaW4gUzpKX1xsYW1iZGEocylcbGVxIEpfXGxhbWJkYSgwKVx9CiQkCgppcyBub25lbXB0eSwgY2xvc2VkLCBhbmQgYm91bmRlZCwgaGVuY2UgY29tcGFjdC4gQSBtaW5pbXVtIG9uIHRoaXMgc2V0IGlzIGEgZmluaXRlIG1pbmltdW0gb3ZlciAkUyQuIEJ5IExlbW1hIDQsICRKX1xsYW1iZGEoUF9TZilcbGVxIEpfXGxhbWJkYShmKSQgZm9yIGV2ZXJ5ICRmXGluXG1hdGhjYWwgSCQsIHNvIHRoaXMgbWluaW11bSBpcyBhbHNvIGdsb2JhbC4KCkFzc3VtcHRpb24gMyBob2xkcyB3aXRoIHNxdWFyZWQgZXJyb3IgbG9zcyBhbmQgJFxPbWVnYSh0KT1cbGFtYmRhIHReMiQuIFdlIGNhbiBub3cgYXBwbHkgVGhlb3JlbSA1OiBldmVyeSBnbG9iYWwgbWluaW1pemVyIGJlbG9uZ3MgdG8gJFMkLiBJdCByZW1haW5zIHRvIHNvbHZlIHRoZSBjb2VmZmljaWVudCBwcm9ibGVtIGFuZCBpZGVudGlmeSB3aGljaCBjb2VmZmljaWVudCB2ZWN0b3JzIHJlcHJlc2VudCB0aGUgc2FtZSBmdW5jdGlvbi4KClRoZSByZXByb2R1Y2luZyBwcm9wZXJ0eSBtYWtlcyAkSyQgc3ltbWV0cmljLCBhbmQgZm9yIGV2ZXJ5ICR2XGluXG1hdGhiYiBSXm4kLAoKJCQKdl5cdG9wIEt2Cj1cbGVmdFx8XHN1bV97aT0xfV5uIHZfaSBrX3t4X2l9XHJpZ2h0XHxfe1xtYXRoY2FsIEh9XjJcZ2VxIDAuCiQkCgpUaHVzICR2Xlx0b3AoSytcbGFtYmRhIElfbil2XGdlcVxsYW1iZGFcfHZcfF8yXjIkLCBzbyAkSytcbGFtYmRhIElfbiQgaXMgaW52ZXJ0aWJsZS4gRm9yICRmX2E9XHN1bV9pIGFfaSBrX3t4X2l9JCwgdGhlIG9iamVjdGl2ZSBiZWNvbWVzCgokJApxKGEpOj1KX1xsYW1iZGEoZl9hKT1cfEthLXlcfF8yXjIrXGxhbWJkYSBhXlx0b3AgS2EuCiQkCgpTZXQgJFxhbHBoYT0oSytcbGFtYmRhIElfbileey0xfXkkLiBTaW5jZSAkS1xhbHBoYS15PS1cbGFtYmRhXGFscGhhJCwgZXhwYW5zaW9uIG9mIHRoZSBxdWFkcmF0aWMgdGVybXMgeWllbGRzLCBmb3IgZXZlcnkgJHZcaW5cbWF0aGJiIFJebiQsCgokJApcYmVnaW57YWxpZ25lZH0KcShcYWxwaGErdiktcShcYWxwaGEpCiY9MnZeXHRvcCBLXGJpZ2woKEsrXGxhbWJkYSBJX24pXGFscGhhLXlcYmlncikKICArdl5cdG9wIEsoSytcbGFtYmRhIElfbil2XFwKJj1cfEt2XHxfMl4yK1xsYW1iZGEgdl5cdG9wIEt2XGdlcSAwLgpcZW5ke2FsaWduZWR9CiQkCgpFcXVhbGl0eSBob2xkcyBleGFjdGx5IHdoZW4gJEt2PTAkLiBIZW5jZSAkXGFscGhhJCBtaW5pbWl6ZXMgJHEkLCBhbmQgYWxsIG1pbmltaXppbmcgY29lZmZpY2llbnQgdmVjdG9ycyBoYXZlIHRoZSBmb3JtICRcYWxwaGErdiQgd2l0aCAkdlxpblxrZXIgSyQuIFRoZSBub3JtIGlkZW50aXR5IGFib3ZlIHRoZW4gZ2l2ZXMgJFxzdW1faSB2X2kga197eF9pfT0wJC4gU2luY2UgVGhlb3JlbSA1IGNvbmZpbmVzIGV2ZXJ5IGdsb2JhbCBtaW5pbWl6ZXIgdG8gJFMkLCBhbGwgZ2xvYmFsIG1pbmltaXplcnMgYXJlIHRoZSBzYW1lIGZ1bmN0aW9uICRmX1xhbHBoYSQuCgpUaGUgZGlzcGxheWVkIGxpbmVhciBzeXN0ZW0gc2VsZWN0cyBhIHVuaXF1ZSBjb2VmZmljaWVudCB2ZWN0b3IsIHdoaWxlIHRoZSBtaW5pbWl6aW5nIGZ1bmN0aW9uIGhhcyBvdGhlciBjb2VmZmljaWVudCByZXByZXNlbnRhdGlvbnMgd2hlbmV2ZXIgJEskIGlzIHNpbmd1bGFyLiAkXHNxdWFyZSQK"
+      }
+    ],
+    "id": "7925e8a81e3d5837dfbad36b089db12f6a4978a56544ac9cc2ab534b7046f01c",
+    "title": "Standalone representer theorem exposition"
+  },
+  "title": "The representer theorem: a projection proof",
+  "uses": [
+    {
+      "evidence_refs": [
+        "anchor-use-21b7035e6e7ff549"
+      ],
+      "from": "rkhs",
+      "id": "use-21b7035e6e7ff549",
+      "reason": "The RKHS and fixed inputs supply the kernel sections whose span is defined.",
+      "to": "training-span",
+      "type": "dependency"
+    },
+    {
+      "evidence_refs": [
+        "anchor-use-ab9eeb9a881920ea"
+      ],
+      "from": "rkhs",
+      "id": "use-ab9eeb9a881920ea",
+      "reason": "The fixed observations and RKHS norm determine the arguments of the empirical objective.",
+      "to": "objective",
+      "type": "dependency"
+    },
+    {
+      "evidence_refs": [
+        "anchor-use-45adfad9a011d01c"
+      ],
+      "from": "rkhs",
+      "id": "use-45adfad9a011d01c",
+      "reason": "The reproducing property makes the orthogonal component vanish at every training input.",
+      "to": "projection",
+      "type": "dependency"
+    },
+    {
+      "evidence_refs": [
+        "anchor-use-5aa653ee833ab2bd"
+      ],
+      "from": "training-span",
+      "id": "use-5aa653ee833ab2bd",
+      "reason": "The closed training span supplies the projection and contains each training kernel section.",
+      "to": "projection",
+      "type": "definition"
+    },
+    {
+      "evidence_refs": [
+        "anchor-use-89a23eed071068f3"
+      ],
+      "from": "training-span",
+      "id": "use-89a23eed071068f3",
+      "reason": "Membership in the defined span is exactly the claimed finite kernel expansion.",
+      "to": "representer",
+      "type": "definition"
+    },
+    {
+      "evidence_refs": [
+        "anchor-use-d3d7d40b64749d96"
+      ],
+      "from": "objective",
+      "id": "use-d3d7d40b64749d96",
+      "reason": "Equal training evaluations give equal loss, and strict increase of the real-valued penalty rules out a nonzero orthogonal component at a finite minimizer.",
+      "to": "representer",
+      "type": "dependency"
+    },
+    {
+      "evidence_refs": [
+        "anchor-use-8793fc790f342ce7"
+      ],
+      "from": "projection",
+      "id": "use-8793fc790f342ce7",
+      "reason": "The evaluation and norm identities preserve loss while strictly reducing the norm if the orthogonal component is nonzero.",
+      "to": "representer",
+      "type": "dependency"
+    },
+    {
+      "evidence_refs": [
+        "anchor-use-9f1b7953085cde36"
+      ],
+      "from": "training-span",
+      "id": "use-9f1b7953085cde36",
+      "reason": "Finite dimensionality of the training span makes the continuous objective's closed bounded sublevel set compact, establishing attainment on that span.",
+      "to": "kernel-ridge",
+      "type": "definition"
+    },
+    {
+      "evidence_refs": [
+        "anchor-use-af8209f3d2141bee"
+      ],
+      "from": "projection",
+      "id": "use-af8209f3d2141bee",
+      "reason": "Projection cannot increase the squared-loss objective, so its attained minimum on the span is a global minimum in the RKHS.",
+      "to": "kernel-ridge",
+      "type": "dependency"
+    },
+    {
+      "evidence_refs": [
+        "anchor-use-6c53218bf26c76a6"
+      ],
+      "from": "representer",
+      "id": "use-6c53218bf26c76a6",
+      "reason": "After finite attainment is established and the squared penalty is specialized, Theorem 5 confines every global minimizer to the span. The coefficient calculation then establishes uniqueness of the function.",
+      "to": "kernel-ridge",
+      "type": "dependency"
+    },
+    {
+      "evidence_refs": [
+        "anchor-use-d6de0e33ab1a62e2"
+      ],
+      "from": "rkhs",
+      "id": "use-d6de0e33ab1a62e2",
+      "reason": "The reproducing property yields the Gram matrix's symmetry, positive semidefiniteness, and the function-norm identity used to distinguish unique functions from nonunique coefficient representations.",
+      "to": "kernel-ridge",
+      "type": "dependency"
+    }
+  ],
+  "observations": [
+    {
+      "created_at": "2026-09-12T19:23:15+00:00",
+      "id": "comparison-204b92ab7fb44f5786976a275001d3fc",
+      "input_snapshot": "e5d67ee8f7e1c6a45df11f1be8dd229f4f659b514808c532412fff2606cc88e2",
+      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "result": "matched",
+      "reviewer": "Codex overview author with independent source comparison",
+      "target": {
+        "collection": "items",
+        "id": "rkhs"
+      }
+    },
+    {
+      "created_at": "2026-09-12T19:23:15+00:00",
+      "id": "comparison-05ceb03a38b14b39a08009163f328c98",
+      "input_snapshot": "aaa438261596c915c0abccb09516ff851d84901e10045daef6347b86a0fb46c9",
+      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "result": "matched",
+      "reviewer": "Codex overview author with independent source comparison",
+      "target": {
+        "collection": "items",
+        "id": "training-span"
+      }
+    },
+    {
+      "created_at": "2026-09-12T19:23:15+00:00",
+      "id": "comparison-4299fbabd696475997419f146869bfbe",
+      "input_snapshot": "81f2fdb215b5126a5d04d93671a0d9fe62f24f3471c92acfcfbfc0068a72ed88",
+      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "result": "matched",
+      "reviewer": "Codex overview author with independent source comparison",
+      "target": {
+        "collection": "items",
+        "id": "objective"
+      }
+    },
+    {
+      "created_at": "2026-09-12T19:23:15+00:00",
+      "id": "comparison-f0719d8adcd54e9fb3691ed3d974028b",
+      "input_snapshot": "dee262e16a2e145546c951e0ff23b994e898732ddb8814d78d0766b0186a9958",
+      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "result": "matched",
+      "reviewer": "Codex overview author with independent source comparison",
+      "target": {
+        "collection": "items",
+        "id": "projection"
+      }
+    },
+    {
+      "created_at": "2026-09-12T19:23:15+00:00",
+      "id": "comparison-1710e31a52874a5d8965e55365d22bfc",
+      "input_snapshot": "dac96f6e4e4d63b4ecaf2dea6013f085e18f1501a3a9f211d2126909b538d619",
+      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "result": "matched",
+      "reviewer": "Codex overview author with independent source comparison",
+      "target": {
+        "collection": "items",
+        "id": "representer"
+      }
+    },
+    {
+      "created_at": "2026-09-12T19:23:15+00:00",
+      "id": "comparison-f9b6a94dde3845828c19d30c380c878a",
+      "input_snapshot": "ee92ca5b5c2f2bb38c94a0c9f52e0fad0a8247ec132c72394af5ea11d9e3d9c6",
+      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "result": "matched",
+      "reviewer": "Codex overview author with independent source comparison",
+      "target": {
+        "collection": "items",
+        "id": "kernel-ridge"
+      }
+    },
+    {
+      "created_at": "2026-09-12T19:23:15+00:00",
+      "id": "comparison-7abf0853c36c4e4ab2f23cc839595e31",
+      "input_snapshot": "ab159906884e992d6ea365b1bc9da7efc5c0deb8142bb8b888c2ba8ee85327cf",
+      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "result": "matched",
+      "reviewer": "Codex overview author with independent source comparison",
+      "target": {
+        "collection": "uses",
+        "id": "use-21b7035e6e7ff549"
+      }
+    },
+    {
+      "created_at": "2026-09-12T19:23:15+00:00",
+      "id": "comparison-73ab1d205f9c412aa93b70a39f879ab3",
+      "input_snapshot": "e0908e2e682d0b461b59370ae8753ddd7bcdd27729ac89c74d1669ce4f5b5d7e",
+      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "result": "matched",
+      "reviewer": "Codex overview author with independent source comparison",
+      "target": {
+        "collection": "uses",
+        "id": "use-ab9eeb9a881920ea"
+      }
+    },
+    {
+      "created_at": "2026-09-12T19:23:15+00:00",
+      "id": "comparison-92d6603d34764ac0a7f5d7007e422395",
+      "input_snapshot": "5dda57321e452ca24fe7fed5ffe523596a9446ffe1b0a6639780bcef9b034100",
+      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "result": "matched",
+      "reviewer": "Codex overview author with independent source comparison",
+      "target": {
+        "collection": "uses",
+        "id": "use-45adfad9a011d01c"
+      }
+    },
+    {
+      "created_at": "2026-09-12T19:23:15+00:00",
+      "id": "comparison-aff390a532c34af897f5e60ca47a0077",
+      "input_snapshot": "b87c8b0e66a3b04b23a88657156f959b3ac9b9fa70a4ae1c50092d346c177ebf",
+      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "result": "matched",
+      "reviewer": "Codex overview author with independent source comparison",
+      "target": {
+        "collection": "uses",
+        "id": "use-5aa653ee833ab2bd"
+      }
+    },
+    {
+      "created_at": "2026-09-12T19:23:15+00:00",
+      "id": "comparison-fd2db924da4545b9bc688e79077dd739",
+      "input_snapshot": "2cf1bb0c2b00307aeccf6c0cf8b20f2d527cf12472f036ee32f740dea014e872",
+      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "result": "matched",
+      "reviewer": "Codex overview author with independent source comparison",
+      "target": {
+        "collection": "uses",
+        "id": "use-89a23eed071068f3"
+      }
+    },
+    {
+      "created_at": "2026-09-12T19:23:15+00:00",
+      "id": "comparison-a0789b58df394d1d9e7f9e2c494ff88d",
+      "input_snapshot": "bc62ddd3ac9c65aaf166892ea727f26ac5b50bc9de5c27b5eee5f253c04f8246",
+      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "result": "matched",
+      "reviewer": "Codex overview author with independent source comparison",
+      "target": {
+        "collection": "uses",
+        "id": "use-d3d7d40b64749d96"
+      }
+    },
+    {
+      "created_at": "2026-09-12T19:23:15+00:00",
+      "id": "comparison-10b6843c781546bd8b912d57559a05f1",
+      "input_snapshot": "b89e534604353440d417a09bcb72118aaed37d8cc9d36ccb4342a16c2a408116",
+      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "result": "matched",
+      "reviewer": "Codex overview author with independent source comparison",
+      "target": {
+        "collection": "uses",
+        "id": "use-8793fc790f342ce7"
+      }
+    },
+    {
+      "created_at": "2026-09-12T19:23:15+00:00",
+      "id": "comparison-7434699c603e4293a4c10f6bd6250562",
+      "input_snapshot": "8b3a16aafc3c5e1907478ddee49195e4a636d0820b5969ae8481335f4f141ebf",
+      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "result": "matched",
+      "reviewer": "Codex overview author with independent source comparison",
+      "target": {
+        "collection": "uses",
+        "id": "use-9f1b7953085cde36"
+      }
+    },
+    {
+      "created_at": "2026-09-12T19:23:15+00:00",
+      "id": "comparison-36c2afb25238425d9f0ff7c418a7d642",
+      "input_snapshot": "90602197df88855ba5b2c68934cbbdc775f5751499f6f285f82ef1135ba1492f",
+      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "result": "matched",
+      "reviewer": "Codex overview author with independent source comparison",
+      "target": {
+        "collection": "uses",
+        "id": "use-af8209f3d2141bee"
+      }
+    },
+    {
+      "created_at": "2026-09-12T19:23:15+00:00",
+      "id": "comparison-05a88dd6d7204259b8b4f459eee1bc22",
+      "input_snapshot": "b4eb0c43c9dbcd1ae8d1eec406892809e7ec26102171a0adf89d7b96aec7a783",
+      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "result": "matched",
+      "reviewer": "Codex overview author with independent source comparison",
+      "target": {
+        "collection": "uses",
+        "id": "use-6c53218bf26c76a6"
+      }
+    },
+    {
+      "created_at": "2026-09-12T19:23:15+00:00",
+      "id": "comparison-6393eda931194c118ea0779304aceb65",
+      "input_snapshot": "e7362e9d530474871c074e2e207285bc0601ab73b23becf91658f81ba3661380",
+      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "result": "matched",
+      "reviewer": "Codex overview author with independent source comparison",
+      "target": {
+        "collection": "uses",
+        "id": "use-d6de0e33ab1a62e2"
+      }
+    }
+  ],
+  "snapshot_id": "3df3646a79c38af1f1a93a402234f624900277752a4bfb808265a5c96cf6c614"
+}

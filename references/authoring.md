@@ -1,8 +1,8 @@
-# Author the overview dataset
+# Author a schema 1 seed or one-off JSON overview
 
-The dataset is the editable source of the visualization. The shared script validates its structure and builds the HTML; the agent reads the paper and supplies the mathematical content. The validator checks record integrity, not mathematical truth or completeness.
+This is the compact legacy format, still supported for initial authoring and one-off rendering. For reusable records, multiple proof passages, distinct parallel uses, and retained source comparisons, initialize the database and follow [database.md](database.md). After initialization the database is authoritative; this JSON is a seed import. The validator checks record integrity, not mathematical truth or completeness.
 
-Start from [the small teaching example](../examples/mean-consistency.overview.json), replacing its content with records from the paper. Use meaningful stable internal identifiers such as `uniform-remainder`, independent of the printed labels shown to readers.
+Build a small seed from the fields below and the actual paper. The optional [representer theorem example](../examples/representer-theorem/proof.md) and its [finished schema 2 records](../examples/representer-theorem/overview.json) illustrate source-backed authoring and delivery; the finished export is not a schema 1 seed to copy wholesale. Use meaningful stable internal identifiers such as `uniform-remainder`, independent of the printed labels shown to readers.
 
 ## Minimal records
 
@@ -31,7 +31,7 @@ Store each use once. Outgoing and incoming lists, graph layout, and neighbor hig
 
 For a theorem requiring an assumption and two lemmas, make three use records whose `to` is that theorem. Explain the contribution of each prerequisite in `reason`. These are dependencies of the written argument, not three independent proofs of the theorem. Do not add redundant transitive arrows merely because a dependency can be reached through another item.
 
-A useful reason is “The variance identity supplies the numerator of the tail bound after centering.” “Used in the theorem” is too vague. A general assumption applies to every result only when the paper says so or the proof actually uses it; avoid connecting every assumption to every theorem by default.
+A useful reason is “Projection preserves the training evaluations while removing the orthogonal contribution to the norm.” “Used in the theorem” is too vague. A general assumption applies to every result only when the paper says so or the proof actually uses it; avoid connecting every assumption to every theorem by default.
 
 Use optional `type` only to distinguish the contribution of an arrow:
 

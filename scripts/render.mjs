@@ -53,8 +53,8 @@ function preparedDataset(input) {
   }
   const useIds = new Set();
   const uses = input.uses.map((use, index) => {
-    if (!use || !ids.has(use.from) || !ids.has(use.to) || use.from === use.to || !use.reason) {
-      throw new Error(`Dependency ${index + 1} needs valid distinct endpoints and a reason.`);
+    if (!use || !ids.has(use.from) || !ids.has(use.to) || !use.reason || (use.from === use.to && input.graph_mode !== 'index')) {
+      throw new Error(`Dependency ${index + 1} needs valid endpoints and a reason; self references require index mode.`);
     }
     const id = use.id || `use-${index + 1}`;
     if (!/^[a-zA-Z][a-zA-Z0-9_.:-]*$/.test(id) || useIds.has(id)) throw new Error('Dependency identifiers must be safe and unique.');
@@ -65,7 +65,16 @@ function preparedDataset(input) {
     return { ...use, id, type };
   });
   if (input.main_items !== undefined && (!Array.isArray(input.main_items) || !input.main_items.length || new Set(input.main_items).size !== input.main_items.length || input.main_items.some((id) => !ids.has(id)))) throw new Error('main_items must contain distinct existing item identifiers.');
+  if (input.graph_mode !== undefined && !['dag', 'index'].includes(input.graph_mode)) throw new Error('graph_mode must be dag or index.');
   return { ...input, uses };
+}
+
+function indexGraph(data) {
+  const nodes = new Map(data.items.map((item) => [item.id, item]));
+  const incoming = new Map(data.items.map((item) => [item.id, []]));
+  const outgoing = new Map(data.items.map((item) => [item.id, []]));
+  data.uses.forEach((use) => { incoming.get(use.to).push(use); outgoing.get(use.from).push(use); });
+  return { nodes, incoming, outgoing };
 }
 
 // Longest-path layers preserve prerequisite direction. Ordering uses stable
@@ -264,15 +273,99 @@ function renderSvg(data, graph) {
   </svg>`;
 }
 
+// These checks inspect the planned boxes and orthogonal route segments only.
+// They do not claim text, badge, browser, or perceptual layout validation.
+function geometryReceipt(data, graph) {
+  const diagnostics = [], nodes = [...graph.nodes.values()];
+  const messages = {
+    'geometry/nonfinite-node': 'A displayed item has invalid coordinates or dimensions.',
+    'geometry/node-clipping': 'A displayed item extends beyond the SVG viewBox.',
+    'geometry/node-overlap': 'Two displayed item boxes overlap.',
+    'geometry/nonfinite-route': 'A recorded use has a nonfinite route coordinate.',
+    'geometry/route-through-node': 'A recorded use crosses an unrelated item box.',
+  };
+  const issue = (code, subject, evidence) => diagnostics.push({ code, severity: 'error', message: messages[code], subject, evidence, supportedFixes: [] });
+  for (const node of nodes) {
+    if (![node.x, node.y, node.width, node.height].every(Number.isFinite) || node.width <= 0 || node.height <= 0) {
+      issue('geometry/nonfinite-node', { item: node.id }, {});
+    } else if (node.x < 0 || node.y < 0 || node.x + node.width > graph.width || node.y + node.height > graph.height) {
+      issue('geometry/node-clipping', { item: node.id }, { x: node.x, y: node.y, width: node.width, height: node.height, viewBox: [graph.width, graph.height] });
+    }
+  }
+  for (let i = 0; i < nodes.length; i += 1) {
+    for (let j = i + 1; j < nodes.length; j += 1) {
+      const a = nodes[i], b = nodes[j];
+      if (a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y) {
+        issue('geometry/node-overlap', { items: [a.id, b.id] }, {});
+      }
+    }
+  }
+  for (const use of data.uses) {
+    const points = edgePoints(use, graph);
+    for (let i = 1; i < points.length; i += 1) {
+      const [x1, y1] = points[i - 1], [x2, y2] = points[i];
+      if (![x1, y1, x2, y2].every(Number.isFinite)) {
+        issue('geometry/nonfinite-route', { use: use.id, segment: i - 1 }, {});
+        continue;
+      }
+      for (const node of nodes) {
+        if (node.id === use.from || node.id === use.to) continue;
+        const horizontal = y1 === y2 && y1 > node.y && y1 < node.y + node.height && Math.max(x1, x2) > node.x && Math.min(x1, x2) < node.x + node.width;
+        const vertical = x1 === x2 && x1 > node.x && x1 < node.x + node.width && Math.max(y1, y2) > node.y && Math.min(y1, y2) < node.y + node.height;
+        if (horizontal || vertical) issue('geometry/route-through-node', { use: use.id, item: node.id, segment: i - 1 }, { from: points[i - 1], to: points[i] });
+      }
+    }
+  }
+  const checks = ['finite_node_geometry', 'node_overlaps', 'node_clipping', 'finite_route_geometry', 'routes_through_unrelated_nodes'];
+  return { status: diagnostics.length ? 'fail' : 'pass', checks, diagnostics, limits: 'Computed node boxes and orthogonal route segments only; text, badge placement, rounded corners, browser behavior, and perceptual review are not checked.' };
+}
+
+function representationReceipt(data, html, graphMode) {
+  const attributes = (tag) => Object.fromEntries([...tag.matchAll(/([\w:-]+)="([^"]*)"/g)].map((match) => [match[1], match[2]]));
+  const nodes = [], uses = [];
+  // Inspect the emitted drawing or index, not JSON, templates, or claimed counts.
+  const representation = graphMode === 'dag' ? html.match(/<svg\b[\s\S]*?<\/svg>/)?.[0] || '' : html.match(/<details\b[^>]*id="proof-full-index"[\s\S]*?<\/main>/)?.[0] || '';
+  for (const match of representation.matchAll(graphMode === 'dag' ? /<(?:g|path)\b[^>]*>/g : /<article\b[^>]*>/g)) {
+    const attrs = attributes(match[0]);
+    if (graphMode === 'dag') {
+      if (Object.hasOwn(attrs, 'data-node-id')) nodes.push(attrs['data-node-id']);
+      if (Object.hasOwn(attrs, 'data-edge-id')) uses.push({ id: attrs['data-edge-id'], from: attrs['data-edge-from'], to: attrs['data-edge-to'] });
+    } else {
+      if (Object.hasOwn(attrs, 'data-proof-index-item')) nodes.push(attrs['data-proof-index-item']);
+      if (Object.hasOwn(attrs, 'data-proof-index-use')) uses.push({ id: attrs['data-proof-index-use'], from: attrs['data-proof-from'], to: attrs['data-proof-to'] });
+    }
+  }
+  const expectedNodes = data.items.map(({ id }) => id).sort();
+  const normalizedUses = (records) => records.map(({ id, from, to }) => ({ id, from, to })).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  const status = JSON.stringify(nodes.sort()) === JSON.stringify(expectedNodes) && JSON.stringify(normalizedUses(uses)) === JSON.stringify(normalizedUses(data.uses)) ? 'pass' : 'fail';
+  return { status, expected_items: data.items.length, rendered_items: nodes.length, expected_uses: data.uses.length, rendered_uses: uses.length, representation: graphMode === 'dag' ? 'svg' : 'index', item_ids: nodes, uses: normalizedUses(uses) };
+}
+
 function sourceHtml(record) {
   const label = record.source_display || 'Source location not supplied';
   const href = safeHref(record.source_href);
   return `<p class="proof-source">${href ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>` : esc(label)}</p>`;
 }
 
+function passagesHtml(record) {
+  const passages = Array.isArray(record.source_passages) && record.source_passages.length
+    ? record.source_passages
+    : record.source_excerpt ? [{ source_display: record.source_display, source_excerpt: record.source_excerpt }] : [];
+  if (!passages.length) return '';
+  return `<div class="proof-passages">${passages.map((passage) => {
+    const verification = typeof passage.verification === 'string' ? { status: passage.verification } : passage.verification || {};
+    const methods = { line_range: 'line range', tex_label: 'TeX label', pdf_page_bounds: 'physical PDF page bounds', entered_locator: 'entered locator' };
+    const method = verification.method ? String(verification.method).split(',').map((value) => methods[value.trim()] || value.trim().replaceAll('_', ' ')).join(', ') : '';
+    const status = verification.status === 'unverified' ? 'Locator not yet verified' : verification.status === 'checked' ? 'Locator checked' : verification.status ? `Locator check: ${String(verification.status).replaceAll('_', ' ')}` : '';
+    const authoredRole = passage.role ? String(passage.role).replaceAll('_', ' ') : 'Source';
+    const role = authoredRole[0].toUpperCase() + authoredRole.slice(1);
+    return `<details><summary>${esc(role)} passage${passage.source_display ? `: ${esc(passage.source_display)}` : ''}</summary>${sourceHtml(passage)}${status ? `<p class="proof-hint">${esc(status)}${method ? ` (${esc(method)})` : ''}. This does not assess the mathematics.</p>` : ''}${verification.note ? `<p class="proof-hint">${esc(verification.note)}</p>` : ''}${passage.source_excerpt ? `<pre class="proof-excerpt">${esc(passage.source_excerpt)}</pre>` : '<p class="proof-hint">No source excerpt is available for this locator.</p>'}</details>`;
+  }).join('')}</div>`;
+}
+
 function relationHtml(use, graph, incoming) {
   const other = graph.nodes.get(incoming ? use.from : use.to);
-  return `<li><button type="button" data-proof-focus="${esc(other.id)}">${esc(other.label)}</button> ${qualificationHtml(use)}<div>${formulaHtml(use.reason_html || esc(use.reason))}</div>${use.uncertainty ? `<span class="proof-uncertainty"> Uncertain connection: ${esc(use.uncertainty)}</span>` : ''}${use.source_display ? `<small>${esc(use.source_display)}</small>` : ''}</li>`;
+  return `<li><button type="button" data-proof-focus="${esc(other.id)}">${esc(other.label)}</button> ${qualificationHtml(use)}<div>${formulaHtml(use.reason_html || esc(use.reason))}</div>${use.uncertainty ? `<span class="proof-uncertainty"> Uncertain connection: ${esc(use.uncertainty)}</span>` : ''}${use.source_display ? `<small>${esc(use.source_display)}</small>` : ''}${passagesHtml(use)}</li>`;
 }
 
 function qualificationHtml(use) {
@@ -283,10 +376,49 @@ function fullItemHtml(node, graph, { hover = false } = {}) {
   const incoming = graph.incoming.get(node.id), outgoing = graph.outgoing.get(node.id);
   if (hover) return `<strong>${esc(node.label)}</strong><p class="proof-hover-caption">${esc(node.caption || kinds[node.kind][0])}</p>${sourceHtml(node)}<p class="proof-hint">Click or press Enter for the full statement and dependencies.</p>`;
   return `
-    <div class="proof-statement">${formulaHtml(node.statement_html)}</div>${sourceHtml(node)}${node.uncertainty ? `<p class="proof-uncertainty">Extraction uncertainty: ${esc(node.uncertainty)}</p>` : ''}
-      ${node.source_excerpt ? `<details><summary>Source passage</summary><pre class="proof-excerpt">${esc(node.source_excerpt)}</pre></details>` : ''}
+    ${node.statement_form === 'synopsis' ? '<p class="proof-hint proof-statement-form">Statement synopsis</p>' : ''}<div class="proof-statement">${formulaHtml(node.statement_html)}</div>${sourceHtml(node)}${node.uncertainty ? `<p class="proof-uncertainty">Extraction uncertainty: ${esc(node.uncertainty)}</p>` : ''}
+      ${Array.isArray(node.aliases) && node.aliases.length ? `<p class="proof-hint">Also identified as: ${node.aliases.map((alias) => esc(alias)).join(', ')}</p>` : ''}${passagesHtml(node)}
       <div class="proof-dependencies"><h4>Prerequisites used (${incoming.length})</h4>${incoming.length ? `<ul>${incoming.map((use) => relationHtml(use, graph, true)).join('')}</ul><p class="proof-hint">These are recorded inputs to the argument. Their joint sufficiency has not been verified by this overview.</p>` : '<p>No prerequisite use is recorded in this overview.</p>'}
       <h4>Used by (${outgoing.length})</h4>${outgoing.length ? `<ul>${outgoing.map((use) => relationHtml(use, graph, false)).join('')}</ul>` : '<p>No downstream use is recorded in this overview.</p>'}</div>`;
+}
+
+function fullUseHtml(use, graph) {
+  return `<h4>${esc(graph.nodes.get(use.from).label)} → ${esc(graph.nodes.get(use.to).label)}</h4>${qualificationHtml(use)}<div class="proof-statement">${formulaHtml(use.reason_html || esc(use.reason))}</div>${use.uncertainty ? `<p class="proof-uncertainty">Uncertain connection: ${esc(use.uncertainty)}</p>` : ''}${sourceHtml(use)}${passagesHtml(use)}<p class="proof-hint">This connection records a use in the argument. This overview does not verify that inference.</p>`;
+}
+
+function fullIndexHtml(data, graph, open = false) {
+  return `<details class="proof-index" id="proof-full-index"${open ? ' open' : ''}><summary>Full statement index (${data.items.length} items, ${data.uses.length} recorded uses)</summary>${data.items.map((node) => `<article id="proof-index-item-${esc(node.id)}" data-proof-index-item="${esc(node.id)}"><h3>${esc(node.label)}${node.caption ? `: ${esc(node.caption)}` : ''}</h3>${fullItemHtml(node, graph)}</article>`).join('')}<h3>Recorded uses</h3>${data.uses.map((use) => `<article id="proof-index-use-${esc(use.id)}" data-proof-index-use="${esc(use.id)}" data-proof-from="${esc(use.from)}" data-proof-to="${esc(use.to)}">${fullUseHtml(use, graph)}</article>`).join('')}</details>`;
+}
+
+function recordsHtml(data, graphMode) {
+  const records = { schema_version: data.schema_version || 1, graph_mode: graphMode, items: data.items, uses: data.uses, build_context: data.build_context || { mathematical_assessment: 'not_performed' } };
+  return `<script id="proof-overview-records" type="application/json">${jsonForScript(records)}</script>`;
+}
+
+function buildContextHtml(data) {
+  const context = data.build_context;
+  if (!context) return '';
+  const revision = typeof context.source_revision === 'string' ? context.source_revision : context.source_revision?.id;
+  const sourceStatus = {
+    current: 'The captured manuscript matches the registered files.',
+    historical_changed: 'This overview uses an earlier captured manuscript; the registered files have changed.',
+    historical_unavailable: 'This overview uses a captured manuscript whose original files are unavailable.',
+    unregistered: 'No manuscript snapshot is registered.',
+  }[context.source_status] || '';
+  const comparisonStatus = typeof context.source_comparison === 'string' ? context.source_comparison : context.source_comparison?.status;
+  const comparison = { complete: 'Source comparisons are complete.', incomplete: 'Some source comparisons remain incomplete.' }[comparisonStatus] || '';
+  return `<p class="proof-hint">${revision ? `<span title="Captured revision ${esc(revision.slice(0, 12))}">Captured manuscript version.</span> ` : ''}${sourceStatus ? `${sourceStatus} ` : ''}${comparison ? `${comparison} ` : ''}Mathematical assessment has not been performed.</p>`;
+}
+
+function renderIndex(data) {
+  const graph = indexGraph(data);
+  const warnings = (data.warnings || []).map((warning) => `<li>${esc(warning)}</li>`).join('');
+  const html = `<!doctype html><html lang="en" data-theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(data.title)} | Proof overview index</title>${proofCss(data)}<style>
+    :root{--text:#172033;--text-muted:#526075;--text-dim:#637086;--panel:#f8fafc;--panel-border:#d7dee8;--mask:#fff;--arrow:#64748b;color-scheme:light}html[data-theme="dark"]{--text:#e5eaf3;--text-muted:#adb8cb;--text-dim:#9caac0;--panel:#101827;--panel-border:#344155;--mask:#172132;color-scheme:dark}body{margin:0;background:var(--panel);color:var(--text);font:14px/1.6 system-ui,sans-serif}main{max-width:1000px;margin:auto;padding:28px 24px}h1{font-size:22px;line-height:1.3}.proof-index article{scroll-margin-top:18px}.proof-passages details{margin:8px 0}.proof-passages summary{cursor:pointer;font-size:12px;overflow-wrap:anywhere}.proof-index h4{font-size:13px}.proof-index-controls{display:flex;flex-wrap:wrap;gap:8px}.proof-index-controls a,.proof-index-controls button{font:inherit;color:var(--text);border:1px solid var(--panel-border);border-radius:5px;background:var(--mask);padding:5px 9px;text-decoration:none}@media print{main{max-width:none;padding:0}}
+    </style></head><body><main><h1>${esc(data.title)}</h1><p class="proof-caption">${data.items.length} items · ${data.uses.length} recorded uses</p><p><strong>Index view.</strong> The recorded mapping is displayed as a complete index because the current diagram layout requires an acyclic graph. Cyclic mappings alone do not establish a circular proof.</p><p>${esc(data.scope || '')}</p>${buildContextHtml(data)}${warnings ? `<div class="proof-render-warnings"><ul>${warnings}</ul></div>` : ''}<nav class="proof-index-controls" aria-label="Index controls"><button type="button" id="proof-index-theme">Switch theme</button><a href="#proof-full-index">All statements and uses</a></nav>${fullIndexHtml(data, graph, true)}</main>${recordsHtml(data, 'index')}<script>(function(){document.getElementById('proof-index-theme').addEventListener('click',function(){document.documentElement.setAttribute('data-theme',document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark');});document.addEventListener('click',function(event){var button=event.target.closest('[data-proof-focus]');if(!button)return;var article=document.getElementById('proof-index-item-'+button.getAttribute('data-proof-focus'));if(article){document.getElementById('proof-full-index').open=true;article.scrollIntoView({block:'start'});article.setAttribute('tabindex','-1');article.focus({preventScroll:true});}});})();</script></body></html>`;
+  const graph_preservation = representationReceipt(data, html, 'index');
+  if (graph_preservation.status !== 'pass') throw new Error('Rendered index does not preserve the supplied item and use identities.');
+  return { html, items: data.items.length, uses: data.uses.length, viewBox: null, graph_mode: 'index', graph_preservation, geometry: { status: 'not_applicable', checks: [], diagnostics: [], reason: 'The complete records are shown as an index; no dependency geometry is drawn.' } };
 }
 
 function proofCss(data) {
@@ -316,14 +448,15 @@ function proofCss(data) {
     .proof-statement math[display="block"]{padding:4px 0}.proof-statement math{font-size:1.05em}
     .proof-formula{display:inline-block;max-width:100%;vertical-align:middle;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;scrollbar-color:var(--text-dim) var(--mask)}.proof-formula-block{display:block}
     .proof-source{font-size:11px;color:var(--text-muted);overflow-wrap:anywhere;margin:8px 0}.proof-source a{color:inherit;text-decoration:underline}
-    #focus-chip{display:flex;flex-direction:column;width:min(460px,calc(100% - 2rem));max-width:calc(100% - 2rem);max-height:calc(100% - 32px);box-sizing:border-box}#focus-chip[hidden]{display:none}
+    #focus-chip{position:relative;inset:auto!important;display:flex;flex-direction:column;width:100%;max-width:none;max-height:none;box-sizing:border-box;margin:12px 0 0}#focus-chip[hidden]{display:none}
     #focus-chip .relationship-lens-head{flex-shrink:0}
-    #proof-selection{flex:1 1 auto;min-height:0;overflow:auto;box-sizing:border-box;padding:0 14px 12px;margin-top:8px;min-width:0;scrollbar-width:thin;scrollbar-color:var(--text-dim) var(--mask)}
+    #proof-selection{flex:none;max-height:min(60vh,540px);overflow:auto;box-sizing:border-box;padding:0 14px 12px;margin-top:8px;min-width:0;scrollbar-width:thin;scrollbar-color:var(--text-dim) var(--mask)}
     .proof-hint,.proof-uncertainty{font-size:11px;color:var(--text-muted);line-height:1.55}.proof-dependencies{border-top:1px solid var(--panel-border);padding-top:10px;margin-top:10px}
     .proof-dependencies h4{margin:10px 0 6px;font-size:11px;color:var(--text)}.proof-dependencies p,.proof-dependencies li{font-size:11px;line-height:1.6;color:var(--text-muted)}
     .proof-dependencies ul{padding-left:18px;margin:6px 0}.proof-dependencies li{margin:5px 0}.proof-dependencies small{display:block;color:var(--text-dim)}
     [data-proof-focus]{border:0;background:transparent;color:var(--text);text-decoration:underline;font:inherit;cursor:pointer;padding:0}
     .proof-excerpt{font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text-muted);line-height:1.5}
+    .proof-passages details{margin:8px 0}.proof-passages summary{cursor:pointer;font-size:11px;overflow-wrap:anywhere}.proof-statement-form{margin:8px 0 -4px;font-weight:600}
     #proof-tooltip{position:fixed;z-index:10000;width:320px;max-width:calc(100vw - 24px);box-sizing:border-box;padding:12px 15px;border:1px solid var(--panel-border);border-radius:8px;background:var(--mask);box-shadow:0 12px 35px #0003;pointer-events:none;color:var(--text);font-size:12px}#proof-tooltip[hidden]{display:none}.proof-hover-caption{margin:6px 0;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}#proof-tooltip .proof-source{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#proof-tooltip .proof-hint{margin:7px 0 0}
     .proof-index{margin:14px 0 0;color:var(--text-muted);font-size:12px}.proof-index>summary{cursor:pointer}.proof-index article{padding:16px 0;border-top:1px solid var(--panel-border);break-inside:avoid}.proof-index h3{font-size:14px;color:var(--text);margin:5px 0}
     .proof-attribution{font-size:10px;color:var(--text-dim);margin:15px 0 0}
@@ -345,7 +478,12 @@ function proofRuntime(payload) {
     // edge hit targets so a badge always opens its own recorded connection.
     svg.querySelectorAll('.proof-edge-badge').forEach(function(badge){svg.appendChild(badge);});
     var panel=document.createElement('div');panel.id='proof-selection';panel.setAttribute('aria-label','Mathematical statement and recorded dependencies');
-    var chip=document.getElementById('focus-chip'),head=chip.querySelector('.relationship-lens-head');head.insertAdjacentElement('afterend',panel);
+    var chip=document.getElementById('focus-chip'),head=chip.querySelector('.relationship-lens-head');
+    // Mathematical details need their own reading space even when the graph
+    // is only one or two rows high. Keep them outside the clipped canvas.
+    svg.parentElement.insertAdjacentElement('afterend',chip);
+    chip.removeAttribute('data-radar-yielded');chip.removeAttribute('aria-hidden');
+    head.insertAdjacentElement('afterend',panel);
     chip.querySelector('.relationship-lens-eyebrow').textContent='Result details';
     chip.querySelector('.semantic-passport-reach-label').textContent='Trace dependencies';
     document.getElementById('btn-focus-clear').setAttribute('aria-label','Close result details');
@@ -362,6 +500,7 @@ function proofRuntime(payload) {
       if(relation&&uses[relation.id])panel.innerHTML=copyTemplate('proof-use-'+relation.id);
       else panel.innerHTML=typeof active==='string'?copyTemplate('proof-detail-'+active):'';
       panel.scrollTop=0;cancelPreview();
+      if(key)chip.scrollIntoView({block:'nearest',behavior:'auto'});
     }
     new MutationObserver(sync).observe(svg,{subtree:true,attributes:true,attributeFilter:['data-focus-active','data-focus-selected','data-relationship-pinned']});
     function readableView(id){
@@ -369,22 +508,13 @@ function proofRuntime(payload) {
       var size=Math.min.apply(Math,Array.from(svg.querySelectorAll('g[data-node-id] text[data-node-label]')).map(function(label){return Number(label.getAttribute('font-size'))||14;})),viewBox=svg.viewBox.baseVal;
       var baseScale=Math.min(svg.clientWidth/viewBox.width,svg.clientHeight/viewBox.height),target=Math.max(1,Math.min(3,Math.ceil(12/(size*baseScale)*4)/4));
       var node=nodes[id]||{x:viewBox.width/2,y:viewBox.height/2};
-      var centerX=node.x;
-      if(!chip.hidden&&svg.clientWidth>chip.offsetWidth+170*baseScale*target+48){
-        // Put the panel on the opposite side of the selected result, and frame
-        // the result in the remaining space rather than underneath the panel.
-        var panelOnRight=node.x<viewBox.width/2;
-        chip.style.left=panelOnRight?'auto':'16px';chip.style.right=panelOnRight?'16px':'auto';
-        var desiredX=panelOnRight?(svg.clientWidth-chip.offsetWidth-20)/2:(svg.clientWidth+chip.offsetWidth+20)/2;
-        centerX=node.x-(desiredX-svg.clientWidth/2)/(baseScale*target);
-      }else{chip.style.removeProperty('left');chip.style.removeProperty('right');}
       // Supply the scale in the same camera transaction. Repeated zoomIn calls
       // are sampled mid-transition by the viewer and can reset the next move.
-      Archify.view.centerAt(centerX,node.y,{scale:target,minimumScale:target,instant:true});
+      Archify.view.centerAt(node.x,node.y,{scale:target,minimumScale:target,instant:true});
       status.textContent='Readable view shows part of the complete graph. Drag the background or select a result to navigate.';
       cancelPreview();
     }
-    function openResult(id){cancelPreview();Archify.focus.set(id,{toggle:false});sync();svg.parentElement.scrollIntoView({block:'start',behavior:'auto'});requestAnimationFrame(function(){readableView(id);Archify.focus.reposition();});}
+    function openResult(id){cancelPreview();Archify.focus.set(id,{toggle:false});sync();requestAnimationFrame(function(){readableView(id);chip.scrollIntoView({block:'nearest',behavior:'auto'});});}
     // The upstream viewer treats an otherwise unknown SVG target as a
     // background click. Own badge activation before that handler can clear it.
     document.addEventListener('click',function(event){var badge=event.target.closest('[data-proof-use]');if(!badge)return;event.preventDefault();event.stopPropagation();cancelPreview();Archify.focus.inspectRelationshipById(badge.getAttribute('data-proof-use'),{toggle:false});sync();},true);
@@ -426,7 +556,9 @@ function proofRuntime(payload) {
 }
 
 function render(input) {
-  const data = preparedDataset(input), graph = layoutGraph(data);
+  const data = preparedDataset(input);
+  if (data.graph_mode === 'index') return renderIndex(data);
+  const graph = layoutGraph(data);
   const mainItems = data.main_items || data.items.filter((item) => !graph.outgoing.get(item.id).length).map((item) => item.id);
   const hasRegimes = data.uses.some((use) => use.regime);
   const presentKinds = new Set(data.items.map((item) => item.kind));
@@ -439,22 +571,41 @@ function render(input) {
   template = replaceTemplateOnce(template,
     'meta.title = [viewerKindLabel(item.type), item.id, item.context, item.sublabel, item.tag]',
     'meta.title = [viewerKindLabel(item.type), item.context, item.sublabel, item.tag]');
-  let html = applyTemplate(template, { title: data.title, subtitle: '', svg: renderSvg(data, graph), cards, locale: 'en' });
+  // The proof inspector is docked below the canvas. Upstream overlay placement
+  // and the overview map must not reserve canvas space for it or hide it.
+  template = replaceTemplateOnce(template,
+    'if (chip.hidden || activeIds.length !== 1) return;',
+    'if (chip.hidden || !container.contains(chip) || activeIds.length !== 1) return;');
+  template = replaceTemplateOnce(template,
+    'if (chip && !chip.hidden) {',
+    'if (chip && !chip.hidden && container.contains(chip)) {');
+  template = replaceTemplateOnce(template,
+    'if (!passport || passport.hidden || passportYielded) return passportYielded;',
+    'if (!passport || passport.hidden || !container.contains(passport) || passportYielded) return passportYielded;');
+  const svg = renderSvg(data, graph), geometry = geometryReceipt(data, graph);
+  if (geometry.status !== 'pass') {
+    const error = new Error('Proof diagram geometry checks failed. The previous artifact was preserved.');
+    error.diagnostics = geometry.diagnostics; error.stage = 'geometry';
+    throw error;
+  }
+  let html = applyTemplate(template, { title: data.title, subtitle: '', svg, cards, locale: 'en' });
   html = html.replace(/<title>[\s\S]*?<\/title>/, () => `<title>${esc(data.title)} | Proof overview</title>`);
   html = html.replace('</head>', () => `${proofCss(data)}</head>`);
-  const warnings = Array.isArray(data.warnings) && data.warnings.length ? `<div class="proof-render-warnings" role="note"><strong>Typesetting limitations</strong><ul>${data.warnings.map((warning) => `<li>${esc(warning)}</li>`).join('')}</ul></div>` : '';
+  const warnings = Array.isArray(data.warnings) && data.warnings.length ? `<div class="proof-render-warnings" role="note"><strong>Source and rendering notes</strong><ul>${data.warnings.map((warning) => `<li>${esc(warning)}</li>`).join('')}</ul></div>` : '';
   const navigation = `<section class="proof-navigation" aria-labelledby="proof-main-title"><h2 id="proof-main-title">${data.main_items ? 'Main results' : 'Terminal results in the recorded graph'}</h2><div class="proof-main-list" id="proof-main-results">${mainItems.map((id) => {
     const node = graph.nodes.get(id);
     return `<button type="button" data-proof-main="${esc(id)}" class="c-${esc(node.kind)}" aria-pressed="false" title="${esc(`${node.label}: ${node.caption}. Open statement and supporting dependencies.`)}"><strong>${esc(node.label)}</strong><span>${esc(node.caption)}</span></button>`;
   }).join('')}</div><div class="proof-view-controls"><button type="button" id="proof-full-structure">Fit complete structure (${data.items.length} items)</button><button type="button" id="proof-readable-view">Readable view</button><p id="proof-view-status" aria-live="polite">Select a result to read its statement and explore its supporting items.</p></div>${hasRegimes ? '<p class="proof-trace-note" role="note">Some connections apply only in a named regime. Dependency tracing follows all recorded arrows, including alternative routes. Regime labels still apply; a trace is not one required or verified proof route.</p>' : ''}</section>`;
-  html = html.replace('<div class="diagram-container"', () => `<div class="proof-caption"><p>${esc(data.source?.title || data.title)} · ${data.items.length} items · ${data.uses.length} recorded connections</p><p><strong>Dependency overview, not proof verification.</strong> Select a result for its statement, source, and supporting items.</p></div><details class="proof-scope"><summary>Scope and reading limits</summary><p>${esc(data.scope)}</p></details>${warnings}${navigation}\n<div class="diagram-container"`);
+  html = html.replace('<div class="diagram-container"', () => `<div class="proof-caption"><p>${esc(data.source?.title || data.title)} · ${data.items.length} items · ${data.uses.length} recorded connections</p><p><strong>Dependency overview, not proof verification.</strong> Select a result for its statement, source, and supporting items.</p>${buildContextHtml(data)}</div><details class="proof-scope"><summary>Scope and reading limits</summary><p>${esc(data.scope)}</p></details>${warnings}${navigation}\n<div class="diagram-container"`);
   const fragments = data.items.map((node) => `<template id="proof-detail-${esc(node.id)}">${fullItemHtml(node, graph)}</template><template id="proof-hover-${esc(node.id)}">${fullItemHtml(node, graph, { hover: true })}</template>`).join('');
-  const useFragments = data.uses.map((use) => `<template id="proof-use-${esc(use.id)}"><h4>${esc(graph.nodes.get(use.from).label)} → ${esc(graph.nodes.get(use.to).label)}</h4>${qualificationHtml(use)}<div class="proof-statement">${formulaHtml(use.reason_html || esc(use.reason))}</div>${use.uncertainty ? `<p class="proof-uncertainty">Uncertain connection: ${esc(use.uncertainty)}</p>` : ''}${sourceHtml(use)}${use.source_excerpt ? `<details><summary>Source passage</summary><pre class="proof-excerpt">${esc(use.source_excerpt)}</pre></details>` : ''}<p class="proof-hint">This connection records a use in the argument, not a completed verification of that inference.</p></template>`).join('');
-  const index = `<details class="proof-index" id="proof-full-index"><summary>Full statement index (${data.items.length} items)</summary>${data.items.map((node) => `<article><h3>${esc(node.label)}${node.caption ? `: ${esc(node.caption)}` : ''}</h3>${fullItemHtml(node, graph)}</article>`).join('')}</details><p class="proof-attribution">Viewer adapted from Archify 2.17 by tt-a1i and Cocoon AI, MIT licensed. Proof-specific dataset and rendering by archify-proofs-overview.</p>`;
+  const useFragments = data.uses.map((use) => `<template id="proof-use-${esc(use.id)}">${fullUseHtml(use, graph)}</template>`).join('');
+  const index = `${fullIndexHtml(data, graph)}<p class="proof-attribution">Viewer adapted from Archify 2.17 by tt-a1i and Cocoon AI, MIT licensed. Proof-specific dataset and rendering by archify-proofs-overview.</p>`;
   // applyTemplate replaces the complete cards slot including its sentinels.
   html = html.replace(cards, () => `${cards}${index}`);
-  html = html.replace('</body>', () => `${fragments}${useFragments}${proofRuntime({ items: [...graph.nodes.values()].map(({ id, x, y }) => ({ id, x: x + box.w / 2, y: y + box.h / 2 })), uses: data.uses.map(({ id }) => ({ id })), main_items: mainItems })}</body>`);
-  return { html, items: data.items.length, uses: data.uses.length, viewBox: [graph.width, graph.height] };
+  html = html.replace('</body>', () => `${fragments}${useFragments}${recordsHtml(data, 'dag')}${proofRuntime({ items: [...graph.nodes.values()].map(({ id, x, y }) => ({ id, x: x + box.w / 2, y: y + box.h / 2 })), uses: data.uses.map(({ id }) => ({ id })), main_items: mainItems })}</body>`);
+  const graph_preservation = representationReceipt(data, html, 'dag');
+  if (graph_preservation.status !== 'pass') throw new Error('Rendered SVG does not preserve the supplied item and use identities.');
+  return { html, items: data.items.length, uses: data.uses.length, viewBox: [graph.width, graph.height], graph_mode: 'dag', graph_preservation, geometry };
 }
 
 try {
@@ -467,8 +618,8 @@ try {
   const candidate = `${outputPath}.${process.pid}.tmp`;
   try { fs.writeFileSync(candidate, result.html, { encoding: 'utf8', flag: 'wx' }); fs.renameSync(candidate, outputPath); }
   finally { if (fs.existsSync(candidate)) fs.unlinkSync(candidate); }
-  console.log(JSON.stringify({ ok: true, output: outputPath, items: result.items, uses: result.uses, viewBox: result.viewBox, bytes: Buffer.byteLength(result.html), input_sha256: crypto.createHash('sha256').update(inputBytes).digest('hex'), artifact_sha256: crypto.createHash('sha256').update(result.html).digest('hex'), visual_review: 'not_performed' }));
+  console.log(JSON.stringify({ ok: true, output: outputPath, items: result.items, uses: result.uses, viewBox: result.viewBox, graph_mode: result.graph_mode, graph_preservation: result.graph_preservation, geometry: result.geometry, bytes: Buffer.byteLength(result.html), input_sha256: crypto.createHash('sha256').update(inputBytes).digest('hex'), artifact_sha256: crypto.createHash('sha256').update(result.html).digest('hex'), browser_review: 'not_performed', visual_review: 'not_performed', mathematical_assessment: 'not_performed' }));
 } catch (error) {
-  console.error(JSON.stringify({ ok: false, error: error.message }));
+  console.error(JSON.stringify({ ok: false, error: error.message, ...(error.stage ? { stage: error.stage } : {}), ...(error.diagnostics ? { diagnostics: error.diagnostics } : {}) }));
   process.exitCode = 1;
 }
