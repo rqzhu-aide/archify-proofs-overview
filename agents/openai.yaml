@@ -1,0 +1,4 @@
+interface:
+  display_name: "Archify Proofs Overview"
+  short_description: "Map major results and their proof dependencies"
+  default_prompt: "Use $archify-proofs-overview to map this paper's main assumptions and results into a source-backed interactive proof overview."
