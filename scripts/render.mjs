@@ -582,6 +582,16 @@ function render(input) {
   template = replaceTemplateOnce(template,
     'if (!passport || passport.hidden || passportYielded) return passportYielded;',
     'if (!passport || passport.hidden || !container.contains(passport) || passportYielded) return passportYielded;');
+  // Proof statements and disclosures intentionally extend the document. The
+  // upstream one-screen fitter alternates between widening the graph and
+  // shrinking it for document overflow, retriggering its own ResizeObserver.
+  // Keep the existing reader API and mode handling, but size from width only.
+  template = replaceTemplateOnce(template,
+    'var desiredWidth = availableSvgHeight * ratio + chrome.diagramX;',
+    'var desiredWidth = maxWidth;');
+  template = replaceTemplateOnce(template,
+    'settleOverflow(minWidth);',
+    '// Expanded proof content uses document scrolling without resizing the reader.');
   const svg = renderSvg(data, graph), geometry = geometryReceipt(data, graph);
   if (geometry.status !== 'pass') {
     const error = new Error('Proof diagram geometry checks failed. The previous artifact was preserved.');
