@@ -159,6 +159,32 @@ class PaperRecordsTests(unittest.TestCase):
         self.assertEqual(state["unreviewed"], 3)
         self.assertEqual(state["status"], "incomplete")
 
+    def test_partial_locator_warning_retains_checked_line_ranges(self):
+        self.legacy["items"][0]["source"].update(label="Assumption 1", page=5)
+        self.legacy["items"][1]["source"]["label"] = "Theorem 1"
+        migrated = self.compare_all(self.migrate())
+        original = deepcopy(migrated)
+        prepared = records.prepare_records(migrated, self.base)
+        warnings = prepared["warnings"]
+        self.assertEqual(migrated, original)
+        self.assertEqual(records.comparison_status(migrated)["status"], "complete")
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("Source line ranges checked for 3 of 3 anchors", warnings[0])
+        self.assertIn("2 anchors still have locator details", warnings[0])
+        passage = prepared["items"][0]["source_passages"][0]
+        self.assertEqual(passage["verification"]["method"], "line_range")
+        self.assertEqual(passage["verification"]["status"], "unverified")
+        self.assertIn("PDF page", passage["verification"]["note"])
+
+    def test_label_only_warning_does_not_claim_a_line_check(self):
+        for item in self.legacy["items"]:
+            item["source"] = {"label": item["label"]}
+        self.legacy["uses"][0]["source"] = {"label": "Proof of Theorem 1"}
+        migrated = self.compare_all(self.migrate())
+        warning, = records.prepare_records(migrated, self.base)["warnings"][:1]
+        self.assertIn("Source line ranges checked for 0 of 3 anchors", warning)
+        self.assertIn("3 anchors still have locator details", warning)
+
     def test_literal_tex_context_is_snapshotted_once_with_exact_bytes(self):
         migrated = self.migrate()
         files = migrated["source_revision"]["files"]

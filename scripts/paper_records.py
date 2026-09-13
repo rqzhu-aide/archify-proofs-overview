@@ -751,7 +751,8 @@ def prepare_records(data, base_dir):
         prepared['warnings'].append(f"Source comparison is incomplete: {status['unreviewed']} records unreviewed, {status['stale']} comparisons stale, {status['needs_attention']} needing attention. These are overview comparisons, not proof verdicts.")
     unverified = sum(a['verification']['status'] != 'checked' for a in data['anchors'])
     if unverified:
-        prepared['warnings'].append(f"{unverified} locators include labels or pages that were not mechanically verified. See passage details for checked locations and limitations; source comparisons are reported separately.")
+        line_checked = sum('start_line' in a['locator'] for a in data['anchors'])
+        prepared['warnings'].append(f"Source line ranges checked for {line_checked} of {len(data['anchors'])} anchors; {unverified} anchors still have locator details requiring source comparison. See passage details for unresolved labels or PDF pages. Location checks do not establish that a passage states the recorded claim.")
     inventory = data.get('inventory', {})
     missing = sum(not d['item_ids'] for d in inventory.get('declarations', []))
     if missing:

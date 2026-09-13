@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
 import shutil
 import sqlite3
@@ -358,6 +359,29 @@ class PaperDatabaseTests(unittest.TestCase):
         self.assertEqual(run.returncode, 2)
         self.assertIn("missing-item", json.loads(run.stderr)["error"])
         self.assertNotIn("Traceback", run.stderr)
+
+    def test_cli_redirected_json_is_utf8_under_legacy_encoding(self):
+        environment = {**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}
+        for caption in ("Covariance, §2.2", "α → β"):
+            with self.subTest(caption=caption):
+                database.apply_edits(self.db, self.update_caption(caption))
+                run = subprocess.run([sys.executable, "-B", str(SKILL / "scripts/paper_database.py"),
+                                      "get", str(self.db), "variance"],
+                                     capture_output=True, env=environment, timeout=15)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                self.assertEqual(run.stderr, b"")
+                self.assertEqual(json.loads(run.stdout.decode("utf-8"))["item"]["caption"], caption)
+
+    def test_cli_redirected_error_is_utf8_under_legacy_encoding(self):
+        missing = "missing-§-α"
+        run = subprocess.run([sys.executable, "-B", str(SKILL / "scripts/paper_database.py"),
+                              "get", str(self.db), missing], capture_output=True, timeout=15,
+                             env={**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"})
+        self.assertEqual(run.returncode, 2)
+        self.assertEqual(run.stdout, b"")
+        error = json.loads(run.stderr.decode("utf-8"))["error"]
+        self.assertIn(missing, error)
+        self.assertNotIn("Traceback", error)
 
     @unittest.skipUnless(shutil.which("node"), "shared Node.js is needed for rendering")
     def test_render_stores_build_without_changing_semantic_snapshot(self):

@@ -298,6 +298,51 @@ class RevisionWorkflowTests(unittest.TestCase):
             self.refresh(relocate_exact=True)
         self.assertEqual(database.export_snapshot(self.db), self.before)
 
+    def test_text_page_correction_allows_reviewed_reuse_without_downstream_impact(self):
+        anchor = next(row for row in self.before["anchors"] if row["id"] == "anchor-item-sample")
+        self.refresh(anchor_locations={anchor["id"]: {"locator": {**anchor["locator"], "page": 5}}})
+        self.compare_new_baseline()
+        after = self.refresh(anchor_locations={anchor["id"]: {"locator": {**anchor["locator"], "page": 4}}})
+        report = self.changes(after)
+        self.assertEqual(after["source_revision"], self.before["source_revision"])
+        self.assertFalse(report["source_changes"])
+        self.assertFalse(report["changed_targets"])
+        self.assertFalse(report["potentially_affected"])
+        self.assertEqual(references(report["reuse_candidates"]), self.all_targets)
+        change, = report["anchor_changes"]
+        self.assertEqual(change["status"], "moved")
+        self.assertEqual(change["before_locator"]["page"], 5)
+        self.assertEqual(change["after_locator"]["page"], 4)
+        self.assertIn("check the corrected PDF page", change["note"])
+        self.assertGreater(records.comparison_status(after)["stale"], 0)
+        self.assert_no_review_write(lambda: self.reuse(after, changes_reviewed=False))
+        self.reuse(after, note="Checked the corrected page; source text and mathematical context are unchanged.")
+        self.assertEqual(records.comparison_status(database.export_snapshot(self.db))["status"], "complete")
+        self.assertEqual(database.export_snapshot(self.db, self.before["snapshot_id"])["anchors"], self.before["anchors"])
+
+    def test_page_correction_does_not_hide_a_changed_hypothesis(self):
+        anchor = next(row for row in self.before["anchors"] if row["id"] == "anchor-item-sample")
+        self.refresh(anchor_locations={anchor["id"]: {"locator": {**anchor["locator"], "page": 5}}})
+        self.compare_new_baseline()
+        self.replace(self.main, "variance at most one", "variance at most two")
+        after = self.refresh(anchor_locations={anchor["id"]: {"locator": {**anchor["locator"], "page": 4}}})
+        report = self.changes(after)
+        self.assertIn(("items", "sample"), references(report["changed_targets"]))
+        self.assertIn(("items", "tail"), references(report["potentially_affected"]))
+        self.assertNotIn(("items", "tail"), references(report["reuse_candidates"]))
+        self.assert_no_review_write(lambda: self.reuse(after, [{"collection": "items", "id": "tail"}]))
+
+    def test_added_pdf_allows_reviewed_reuse_of_unchanged_text_records(self):
+        pdf = self.paper / "main.pdf"
+        pdf.write_bytes(small_pdf("Companion PDF"))
+        after = self.refresh(extra_files=[pdf])
+        report = self.changes(after)
+        self.assertEqual(records.comparison_status(after)["stale"], len(self.targets))
+        self.assertEqual(references(report["reuse_candidates"]), self.all_targets)
+        self.assertFalse(report["changed_targets"])
+        self.reuse(after, note="Checked the added PDF against the captured manuscript; the existing text evidence and context are unchanged.")
+        self.assertEqual(records.comparison_status(database.export_snapshot(self.db))["status"], "complete")
+
     def test_missing_file_preserves_database_then_explicit_rename_preserves_ids(self):
         file_id = next(row["id"] for row in self.before["source_revision"]["files"] if row["path"] == "proofs.tex")
         renamed = self.paper / "appendix-proofs.tex"
@@ -415,6 +460,34 @@ class RevisionWorkflowTests(unittest.TestCase):
         after = self.refresh()
         self.assertFalse(self.changes(after)["reuse_candidates"])
         self.assert_no_review_write(lambda: self.reuse(after))
+
+    def test_pdf_page_change_is_not_reused_even_when_page_text_is_identical(self):
+        try:
+            import io
+            from pypdf import PdfReader, PdfWriter
+        except ImportError:
+            self.skipTest("Shared pypdf is required to compare identical extracted PDF pages.")
+        pdf = self.paper / "supplement.pdf"
+        page = PdfReader(io.BytesIO(small_pdf("Repeated page"))).pages[0]
+        writer = PdfWriter()
+        writer.add_page(page)
+        writer.add_page(page)
+        writer.write(pdf)
+        current = self.refresh(extra_files=[pdf])
+        file_id = next(row["id"] for row in current["source_revision"]["files"] if row["path"] == "supplement.pdf")
+        anchor_id = "anchor-item-symmetry"
+        self.refresh(anchor_locations={anchor_id: {"file_id": file_id, "locator": {"page": 1}}})
+        self.compare_new_baseline()
+        after = self.refresh(anchor_locations={anchor_id: {"locator": {"page": 2}}})
+        old = next(row for row in self.before["anchors"] if row["id"] == anchor_id)
+        new = next(row for row in after["anchors"] if row["id"] == anchor_id)
+        self.assertTrue(old["excerpt"])
+        self.assertEqual(new["excerpt"], old["excerpt"])
+        self.assertEqual(after["source_revision"], self.before["source_revision"])
+        report = self.changes(after)
+        self.assertIn(("items", "symmetry"), references(report["changed_targets"]))
+        self.assertNotIn(("items", "symmetry"), references(report["reuse_candidates"]))
+        self.assert_no_review_write(lambda: self.reuse(after, [{"collection": "items", "id": "symmetry"}]))
 
 
 if __name__ == "__main__":

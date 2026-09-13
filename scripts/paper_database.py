@@ -483,6 +483,11 @@ def backup_database(db_path, output_path):
 
 
 def main():
+    # Redirected JSON must not inherit a Windows code page. Keep this at the
+    # CLI boundary so importing the database API leaves caller streams alone.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("init", "get", "apply", "compare", "refresh", "changes", "export", "validate", "render", "backup"):

@@ -80,7 +80,12 @@ def _anchor_content(anchor, files):
         # cannot be matched safely by its extracted text alone.
         result.update(locator=anchor["locator"], file_sha256=source["sha256"] if source else None)
     else:
-        result["locator"] = {key: value for key, value in anchor["locator"].items() if key not in {"start_line", "end_line"}}
+        location_fields = {"start_line", "end_line"}
+        if source and "start_line" in anchor["locator"]:
+            # A page attached to a text passage is navigation metadata, not
+            # the evidence selector. Reuse still requires reviewing its change.
+            location_fields.add("page")
+        result["locator"] = {key: value for key, value in anchor["locator"].items() if key not in location_fields}
     return result
 
 
@@ -97,6 +102,8 @@ def _anchor_changes(before, after):
             entry["status"] = "changed" if old["excerpt"] != new["excerpt"] else "context_changed"
         elif old["locator"] != new["locator"] or old.get("file_id") != new.get("file_id"):
             entry["status"] = "moved"
+            if old["locator"].get("page") != new["locator"].get("page"):
+                entry["note"] = "The text passage is unchanged; check the corrected PDF page before reusing comparisons."
         else:
             continue
         result.append(entry)
@@ -205,6 +212,8 @@ def build_changes(before, after):
         limitations.append("Added or removed source files require a review of scope and context; this helper does not infer file replacements.")
     if any(row["diff_kind"] == "binary" for row in sources):
         limitations.append("Changed PDFs and non-UTF-8 files require direct document review. Targets relying on a changed PDF are not mechanical reuse candidates.")
+    if any(row.get("note") for row in anchors):
+        limitations.append("For location-only changes, check the corrected pages before reviewed reuse; unchanged downstream arguments need not be read again. Other source or record changes still require context review.")
     changed_list = [changes[key] for key in sorted(changes)]
     affected_list = [_reference(old, new, collection, identity) for collection, identity in sorted(affected)]
     return {"schema_version": 1, "from_snapshot": before["snapshot_id"], "to_snapshot": after["snapshot_id"],

@@ -48,6 +48,10 @@ These options can be combined in one refresh. A failed capture or ambiguous re-a
 
 A reuse candidate requires an applicable prior `matched` observation, unchanged recorded content and evidence, and unchanged recorded prerequisite context. Location movement alone may be allowed. Candidates exclude changed or possibly affected targets and a current exact-input `needs_attention` observation. Changed PDF evidence cannot be classified as unchanged merely because extracted text looks the same. Printed labels and page numbers also require attention when numbering or pagination changes.
 
+A page-number correction attached to an unchanged TeX line passage is reported as a location change. Check the corrected page, then use the reuse batch below for eligible comparisons; unchanged downstream arguments do not need to be read again. The exact comparison remains stale until that review is recorded. Changing a PDF anchor's page selects different evidence and is not treated as this kind of correction.
+
+Adding a PDF with `refresh --source <paper.pdf>` changes the captured source revision, so existing comparisons initially become stale. Inspect the added document and the `changes` report; comparisons whose recorded evidence and context are unchanged can use the same reviewed-reuse batch. Adding the file does not check pages attached to TeX anchors. Use separate PDF anchors when recording PDF evidence, as described in [database.md](database.md).
+
 The candidate list does not establish that changed external context is harmless. After inspecting the source diff, select only the candidates for which that conclusion is justified. Submit them through the existing `compare` command:
 
 ```json

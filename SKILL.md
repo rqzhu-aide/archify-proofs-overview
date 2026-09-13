@@ -1,6 +1,8 @@
 ---
 name: archify-proofs-overview
 description: Build an interactive HTML overview of a paper's main assumptions, definitions, lemmas, propositions, theorems, corollaries, and their dependencies. Use for understanding proof organization and navigating major results, not for full mathematical proof verification.
+metadata:
+  version: "1.0.0"
 ---
 
 # Archify Proofs Overview
@@ -29,7 +31,7 @@ Keep `overview.html` at that folder's root. Create optional folders only when ne
 2. Identify the major assumptions, definitions, lemmas, propositions, theorems, and corollaries within the requested scope. Include an external result when it materially explains a proof. Keep intermediate algebra and routine proof steps inside the item descriptions, not as additional overview nodes.
 3. Follow [references/database.md](references/database.md) for source registration, bounded retrieval, record edits, and comparison batches. Initialize from a small schema 1 dataset following [references/authoring.md](references/authoring.md), or import existing schema 2 records. The database becomes authoritative after explicit initialization. The seed JSON is then an import, not a second master. Register separate appendices or local macro files when literal TeX input discovery cannot find them.
 4. Store one item with stable identity and multiple statement/proof passages. Record actual uses with independent IDs, even when their endpoints match. Read relevant statements and proof passages, then submit small JSON edit batches. Scripts generate source hashes, excerpts, revisions, and declaration candidates. They do not infer proof dependencies from citations. Retrieve the relevant item packet rather than repeatedly dumping the database or all captured source files.
-5. Compare summaries and uses against the manuscript, including deterministic versus random quantities, conditioning, hypotheses, quantifiers, and the exact target or conclusion. Record a comparison batch only after doing that comparison. Check the candidate inventory, source freshness, labels, disconnected results, and unresolved questions. Imported synopses are initially unreviewed. A source refresh creates a new captured version and can make previous comparisons stale; it does not update the mathematical interpretation automatically.
+5. Compare summaries and uses against the manuscript, checking explicit premises separately from proof citations. Retain deterministic versus random quantities, conditioning, hypotheses, quantifiers, and the exact target or conclusion. Record a comparison batch only after doing that comparison. Check the candidate inventory, source freshness, labels, disconnected results, and unresolved questions. Imported synopses are initially unreviewed. A source refresh creates a new captured version and can make previous comparisons stale; it does not update the mathematical interpretation automatically.
 6. Validate and render a consistent database snapshot:
 
    ```text

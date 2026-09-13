@@ -1,5 +1,7 @@
 # Archify Proofs Overview
 
+Version [v1.0.0](https://github.com/rqzhu-aide/archify-proofs-overview/tree/v1.0.0).
+
 Turn a paper's assumptions, definitions, lemmas, propositions, theorems, and corollaries into an interactive map, adapted from [Archify](https://github.com/tt-a1i/archify). Follow the written argument through compact nodes, manuscript labels, source passages, and annotated connections.
 
 **This is a proof overview, not mathematical proof verification.** Arrows record how results are used; they do not certify correctness.

@@ -19,7 +19,7 @@ Represent one physical statement once, even if it has several TeX labels or its 
 
 `label` is the compact reader-facing name, for example “Thm 2.3”. `caption` is a short explanation such as “Asymptotic normality”. `statement` contains the mathematical detail, including conditions essential to the result. For a lengthy statement, preserve its meaning in a clearly identified synopsis and point to the exact source for the full statement.
 
-An item `source` identifies where that item is stated. A use `source`, when available, identifies the proof passage establishing that particular use. Source fields are `file` (inherits the paper's file if omitted), `start_line` and `end_line` as a pair, `page` for a reviewed physical PDF page, and `label` for a manuscript label or section reference. Provide a meaningful locator rather than an empty object. A source label can locate material when a verified page or line range is unavailable. Paper file paths should identify the actual supplied artifacts; the root file may be omitted for a supplied excerpt identified by its title. Do not estimate PDF pages from TeX line numbers.
+An item `source` identifies where that item is stated. A use `source`, when available, identifies the proof passage establishing that particular use. Source fields are `file` (inherits the paper's file if omitted), `start_line` and `end_line` as a pair, `page` for a reviewed physical PDF page, and `label` for a manuscript label or section reference. When a TeX key exists, use it in `source.label` for mechanical matching; keep the printed name in the item's `label`. Descriptive locators for unlabeled material remain supported but require source comparison. Provide a meaningful locator rather than an empty object. A source label can locate material when a verified page or line range is unavailable. Paper file paths should identify the actual supplied artifacts; the root file may be omitted for a supplied excerpt identified by its title. Do not estimate PDF pages from TeX line numbers.
 
 Relative source file paths resolve from the JSON dataset's directory, not the current terminal directory or skill directory.
 
@@ -29,7 +29,7 @@ For a larger overview, optional `main_items` is a nonempty list of unique existi
 
 Store each use once. Outgoing and incoming lists, graph layout, and neighbor highlights are computed by the renderer.
 
-For a theorem requiring an assumption and two lemmas, make three use records whose `to` is that theorem. Explain the contribution of each prerequisite in `reason`. These are dependencies of the written argument, not three independent proofs of the theorem. Do not add redundant transitive arrows merely because a dependency can be reached through another item.
+For a theorem requiring an assumption and two lemmas, make three use records whose `to` is that theorem. Explain the contribution of each prerequisite in `reason`. These are dependencies of the written argument, not three independent proofs of the theorem. Check the target's explicit premises separately from its proof citations: an explicitly imposed assumption deserves a direct use even if it is also reachable through a lemma. Do not add other transitive arrows merely because a dependency can be reached through another item.
 
 A useful reason is “Projection preserves the training evaluations while removing the orthogonal contribution to the norm.” “Used in the theorem” is too vague. A general assumption applies to every result only when the paper says so or the proof actually uses it; avoid connecting every assumption to every theorem by default.
 
@@ -41,7 +41,7 @@ Use optional `type` only to distinguish the contribution of an arrow:
 | `definition` | The target uses the source's definition or construction |
 | `proof_argument` | The target reuses an argument inside the source's proof, rather than applying its stated conclusion |
 
-For `proof_argument`, identify the particular bound or argument in `reason` and locate its proof passage when available. A theorem's ratio conclusion and an absolute-error estimate inside its proof are different contributions. A citation alone does not establish either kind of use.
+For `proof_argument`, identify the particular bound or argument in `reason` and locate its proof passage when available. Check which conditions that argument needs at the target and state them in the target's synopsis and use reason; this edge does not import the source theorem's hypotheses wholesale. A theorem's ratio conclusion and an absolute-error estimate inside its proof are different contributions. A citation alone does not establish either kind of use.
 
 Distinguish stated and inferred links in the reason text. For example, “Inferred from the substitution in the proof of Thm 2.3; no explicit lemma citation” makes the evidence level clear. Use an optional `uncertainty` string on an item or use to identify a specific extraction or dependency question. The renderer discloses uncertainty and distinguishes uncertain links; it does not assign a correctness judgment. Omit a speculative link when there is no source basis for it and describe the missing evidence in `scope`. Do not silently delete an apparent cycle; inspect the source and explain unresolved circularity or a representation limitation.
 
@@ -57,7 +57,7 @@ Compare every statement or synopsis against its source before delivery. In parti
 
 A graph of roughly 8 to 12 major items is often easy to read, but this is a presentation target, not a limit. Retain all selected results. Use an explicitly narrower scope when appropriate; never hide results solely to reach a node count.
 
-Keep exact manuscript labels distinct from descriptive captions. An external result should identify the cited theorem or named result and its use location. Do not present an external theorem's full hypotheses as checked unless they were actually reviewed.
+Keep exact manuscript labels distinct from descriptive captions. When available, use the current compiled `.aux` to map TeX keys to printed theorem and equation numbers, checking the mapping against the corresponding PDF. Do not infer numbering by counting theorem environments or displayed formulas; leave unresolved labels explicit. An external result should identify the cited theorem or named result and its use location. Do not present an external theorem's full hypotheses as checked unless they were actually reviewed.
 
 Use LaTeX math delimiters in `statement`, such as `$...$` or `\[...\]`. JSON requires each backslash to be escaped: write `"$X_n\\xrightarrow{p}X$"` in the file. Fix escaping in the data instead of adding paper-specific rendering code. Unsupported math should be surfaced and corrected or explicitly reported, never silently replaced with an inaccurate formula.
 
