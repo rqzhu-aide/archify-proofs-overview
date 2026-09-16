@@ -1,0 +1,1090 @@
+{
+ "render_input_version": 1,
+ "title": "Cycle sample (must fail)",
+ "build": {
+  "core_version": "2.0.0",
+  "revision": 3,
+  "audit_id": null,
+  "built_at": "2026-09-14T00:00:00.000Z",
+  "source_identity": "9c1e2d3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d",
+  "kind": "release"
+ },
+ "projection": {
+  "projection_version": 1,
+  "snapshot_revision": 3,
+  "audit_id": null,
+  "nodes": [
+   {
+    "id": "itm_a",
+    "item_ref": {
+     "collection": "items",
+     "id": "itm_a",
+     "version": 1
+    },
+    "kind": "assumption",
+    "label": "Assumption H",
+    "caption": "Bounded design",
+    "assessment": {
+     "state": "green",
+     "label": "Stated and anchored",
+     "explanation": "The assumption is stated in the source.",
+     "check_refs": [],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "item:itm_a"
+   },
+   {
+    "id": "itm_x",
+    "item_ref": {
+     "collection": "items",
+     "id": "itm_x",
+     "version": 1
+    },
+    "kind": "lemma",
+    "label": "Lemma A",
+    "caption": "First half of the circular argument",
+    "assessment": {
+     "state": "amber",
+     "label": "Depends on a circular premise",
+     "explanation": "Lemma A is used to prove Lemma B, which in turn is used to prove Lemma A.",
+     "check_refs": [],
+     "finding_refs": [
+      "fnd_cycle"
+     ],
+     "missing_obligation_ids": [],
+     "independent_review": "pending"
+    },
+    "detail_key": "item:itm_x"
+   },
+   {
+    "id": "itm_y",
+    "item_ref": {
+     "collection": "items",
+     "id": "itm_y",
+     "version": 1
+    },
+    "kind": "lemma",
+    "label": "Lemma B",
+    "caption": "Second half of the circular argument",
+    "assessment": {
+     "state": "green",
+     "label": "Checked",
+     "explanation": "The primary check passed; the independent review was compromised because the reviewer had seen the primary reasoning.",
+     "check_refs": [],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "compromised"
+    },
+    "detail_key": "item:itm_y"
+   },
+   {
+    "id": "itm_t",
+    "item_ref": {
+     "collection": "items",
+     "id": "itm_t",
+     "version": 1
+    },
+    "kind": "theorem",
+    "label": "Theorem C",
+    "caption": "Main result",
+    "assessment": {
+     "state": "gray",
+     "label": "Not yet checked",
+     "explanation": "No composition check exists.",
+     "check_refs": [],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "item:itm_t"
+   }
+  ],
+  "connections": [
+   {
+    "id": "con_ax",
+    "from": "itm_a",
+    "to": "itm_x",
+    "primary_use_ids": [
+     "use_ax"
+    ],
+    "groups": [],
+    "support_refs": [],
+    "obligation_ids": [
+     "obl_ax"
+    ],
+    "context_refs": [],
+    "assessment": {
+     "state": "green",
+     "label": "Application checked",
+     "explanation": "Bounded design is applied in the stated form.",
+     "check_refs": [],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "conn:con_ax"
+   },
+   {
+    "id": "con_xy",
+    "from": "itm_x",
+    "to": "itm_y",
+    "primary_use_ids": [
+     "use_xy"
+    ],
+    "groups": [],
+    "support_refs": [],
+    "obligation_ids": [
+     "obl_xy"
+    ],
+    "context_refs": [],
+    "assessment": {
+     "state": "green",
+     "label": "Application checked",
+     "explanation": "Lemma A is applied with matching constants.",
+     "check_refs": [],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "conn:con_xy"
+   },
+   {
+    "id": "con_yx",
+    "from": "itm_y",
+    "to": "itm_x",
+    "primary_use_ids": [
+     "use_yx"
+    ],
+    "groups": [],
+    "support_refs": [],
+    "obligation_ids": [
+     "obl_yx"
+    ],
+    "context_refs": [],
+    "assessment": {
+     "state": "red",
+     "label": "Circular application",
+     "explanation": "Lemma B is used inside the proof of Lemma A, which it depends on.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_yx",
+       "version": 1
+      }
+     ],
+     "finding_refs": [
+      "fnd_cycle"
+     ],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "conn:con_yx"
+   },
+   {
+    "id": "con_yt",
+    "from": "itm_y",
+    "to": "itm_t",
+    "primary_use_ids": [
+     "use_yt"
+    ],
+    "groups": [],
+    "support_refs": [],
+    "obligation_ids": [
+     "obl_yt"
+    ],
+    "context_refs": [],
+    "assessment": {
+     "state": "gray",
+     "label": "Not yet checked",
+     "explanation": "No check has been recorded for this application.",
+     "check_refs": [],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "conn:con_yt"
+   }
+  ],
+  "records": [
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_a",
+     "version": 1
+    },
+    "body": {
+     "kind": "assumption",
+     "label": "Assumption H",
+     "caption": "Bounded design",
+     "statement": {
+      "form": "text",
+      "text": "The design vectors satisfy |x_i| <= 1 for every i."
+     },
+     "passages": [],
+     "aliases": [
+      "(H)"
+     ],
+     "uncertainty": null,
+     "origin": "paper",
+     "owner_id": null,
+     "scope_id": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_x",
+     "version": 1
+    },
+    "body": {
+     "kind": "lemma",
+     "label": "Lemma A",
+     "caption": "First half of the circular argument",
+     "statement": {
+      "form": "text",
+      "text": "The empirical Gram matrix is invertible with probability tending to one."
+     },
+     "passages": [],
+     "aliases": [],
+     "uncertainty": null,
+     "origin": "paper",
+     "owner_id": null,
+     "scope_id": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_y",
+     "version": 1
+    },
+    "body": {
+     "kind": "lemma",
+     "label": "Lemma B",
+     "caption": "Second half of the circular argument",
+     "statement": {
+      "form": "text",
+      "text": "The least-squares estimator is consistent."
+     },
+     "passages": [],
+     "aliases": [],
+     "uncertainty": null,
+     "origin": "paper",
+     "owner_id": null,
+     "scope_id": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_t",
+     "version": 1
+    },
+    "body": {
+     "kind": "theorem",
+     "label": "Theorem C",
+     "caption": "Main result",
+     "statement": {
+      "form": "text",
+      "text": "The estimator is asymptotically normal."
+     },
+     "passages": [],
+     "aliases": [],
+     "uncertainty": null,
+     "origin": "paper",
+     "owner_id": null,
+     "scope_id": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_ax",
+     "version": 1
+    },
+    "body": {
+     "from": "itm_a",
+     "to": "itm_x",
+     "type": "invoke",
+     "group_id": null,
+     "reason": "Boundedness controls the operator norm of each summand.",
+     "needed_form": null,
+     "substitutions": [],
+     "evidence_refs": [],
+     "regime": null,
+     "uncertainty": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_xy",
+     "version": 1
+    },
+    "body": {
+     "from": "itm_x",
+     "to": "itm_y",
+     "type": "invoke",
+     "group_id": null,
+     "reason": "Invertibility of the Gram matrix defines the estimator.",
+     "needed_form": null,
+     "substitutions": [],
+     "evidence_refs": [],
+     "regime": null,
+     "uncertainty": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_yx",
+     "version": 1
+    },
+    "body": {
+     "from": "itm_y",
+     "to": "itm_x",
+     "type": "invoke",
+     "group_id": null,
+     "reason": "Consistency of the estimator is used to show that the Gram matrix concentrates.",
+     "needed_form": null,
+     "substitutions": [],
+     "evidence_refs": [],
+     "regime": null,
+     "uncertainty": "The proof of Lemma A cites Lemma B without noting the circularity."
+    }
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_yt",
+     "version": 1
+    },
+    "body": {
+     "from": "itm_y",
+     "to": "itm_t",
+     "type": "invoke",
+     "group_id": null,
+     "reason": "Consistency is the first step of the asymptotic normality argument.",
+     "needed_form": null,
+     "substitutions": [],
+     "evidence_refs": [],
+     "regime": null,
+     "uncertainty": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_yx",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_release_1",
+     "target": {
+      "collection": "uses",
+      "id": "use_yx"
+     },
+     "kind": "application",
+     "role": "primary",
+     "reviewer": "primary-auditor",
+     "protocol_version": "1.0",
+     "state": "final",
+     "outcome": "fail",
+     "reasoning": "Lemma B depends on Lemma A through use_xy, so citing Lemma B inside the proof of Lemma A is circular.",
+     "evidence_refs": [],
+     "conditions": [],
+     "next_action": "Break the cycle by proving concentration of the Gram matrix directly.",
+     "response_id": null,
+     "supersedes": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "findings",
+     "id": "fnd_cycle",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_release_1",
+     "target": {
+      "collection": "uses",
+      "id": "use_yx"
+     },
+     "category": "circularity",
+     "lifecycle": "open",
+     "description": "Lemma A and Lemma B depend on each other.",
+     "evidence_refs": [],
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_yx",
+       "version": 1
+      }
+     ],
+     "affected_uses": [
+      "use_xy",
+      "use_yx"
+     ],
+     "impact_reason": "Neither lemma has a non-circular proof.",
+     "resolution": null
+    }
+   }
+  ],
+  "obligations": [
+   {
+    "id": "obl_ax",
+    "target": {
+     "collection": "uses",
+     "id": "use_ax"
+    },
+    "kind": "application",
+    "role": "primary",
+    "check_refs": [],
+    "assessment": {
+     "state": "green",
+     "label": "Passed",
+     "explanation": "Final primary check passed.",
+     "check_refs": [],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    }
+   },
+   {
+    "id": "obl_xy",
+    "target": {
+     "collection": "uses",
+     "id": "use_xy"
+    },
+    "kind": "application",
+    "role": "primary",
+    "check_refs": [],
+    "assessment": {
+     "state": "green",
+     "label": "Passed",
+     "explanation": "Final primary check passed.",
+     "check_refs": [],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    }
+   },
+   {
+    "id": "obl_yx",
+    "target": {
+     "collection": "uses",
+     "id": "use_yx"
+    },
+    "kind": "application",
+    "role": "primary",
+    "check_refs": [
+     {
+      "collection": "checks",
+      "id": "chk_yx",
+      "version": 1
+     }
+    ],
+    "assessment": {
+     "state": "red",
+     "label": "Failed",
+     "explanation": "The application is circular.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_yx",
+       "version": 1
+      }
+     ],
+     "finding_refs": [
+      "fnd_cycle"
+     ],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    }
+   },
+   {
+    "id": "obl_yt",
+    "target": {
+     "collection": "uses",
+     "id": "use_yt"
+    },
+    "kind": "application",
+    "role": "primary",
+    "check_refs": [],
+    "assessment": {
+     "state": "gray",
+     "label": "Unchecked",
+     "explanation": "No check recorded.",
+     "check_refs": [],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    }
+   }
+  ],
+  "details": {
+   "item:itm_a": {
+    "record_refs": [
+     {
+      "collection": "items",
+      "id": "itm_a",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "statement",
+      "title": "Statement",
+      "kind": "statement",
+      "record_refs": [
+       {
+        "collection": "items",
+        "id": "itm_a",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_ax",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_ax"
+      ],
+      "note": null
+     }
+    ]
+   },
+   "item:itm_x": {
+    "record_refs": [
+     {
+      "collection": "items",
+      "id": "itm_x",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "statement",
+      "title": "Statement",
+      "kind": "statement",
+      "record_refs": [
+       {
+        "collection": "items",
+        "id": "itm_x",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "premises",
+      "title": "Premises used",
+      "kind": "premises",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_ax",
+        "version": 1
+       },
+       {
+        "collection": "uses",
+        "id": "use_yx",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_ax",
+       "obl_yx"
+      ],
+      "note": "The second premise closes a cycle."
+     },
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_xy",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_xy"
+      ],
+      "note": null
+     },
+     {
+      "key": "findings",
+      "title": "Findings",
+      "kind": "findings",
+      "record_refs": [
+       {
+        "collection": "findings",
+        "id": "fnd_cycle",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     }
+    ]
+   },
+   "item:itm_y": {
+    "record_refs": [
+     {
+      "collection": "items",
+      "id": "itm_y",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "statement",
+      "title": "Statement",
+      "kind": "statement",
+      "record_refs": [
+       {
+        "collection": "items",
+        "id": "itm_y",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "premises",
+      "title": "Premises used",
+      "kind": "premises",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_xy",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_xy"
+      ],
+      "note": null
+     },
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_yx",
+        "version": 1
+       },
+       {
+        "collection": "uses",
+        "id": "use_yt",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_yx",
+       "obl_yt"
+      ],
+      "note": null
+     }
+    ]
+   },
+   "item:itm_t": {
+    "record_refs": [
+     {
+      "collection": "items",
+      "id": "itm_t",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "statement",
+      "title": "Statement",
+      "kind": "statement",
+      "record_refs": [
+       {
+        "collection": "items",
+        "id": "itm_t",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "premises",
+      "title": "Premises used",
+      "kind": "premises",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_yt",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_yt"
+      ],
+      "note": null
+     }
+    ]
+   },
+   "conn:con_ax": {
+    "record_refs": [
+     {
+      "collection": "uses",
+      "id": "use_ax",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_ax",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_ax"
+      ],
+      "note": null
+     }
+    ]
+   },
+   "conn:con_xy": {
+    "record_refs": [
+     {
+      "collection": "uses",
+      "id": "use_xy",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_xy",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_xy"
+      ],
+      "note": null
+     }
+    ]
+   },
+   "conn:con_yx": {
+    "record_refs": [
+     {
+      "collection": "uses",
+      "id": "use_yx",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_yx",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_yx"
+      ],
+      "note": null
+     },
+     {
+      "key": "review",
+      "title": "Checks",
+      "kind": "review",
+      "record_refs": [
+       {
+        "collection": "checks",
+        "id": "chk_yx",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "findings",
+      "title": "Findings",
+      "kind": "findings",
+      "record_refs": [
+       {
+        "collection": "findings",
+        "id": "fnd_cycle",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     }
+    ]
+   },
+   "conn:con_yt": {
+    "record_refs": [
+     {
+      "collection": "uses",
+      "id": "use_yt",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_yt",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_yt"
+      ],
+      "note": null
+     }
+    ]
+   }
+  },
+  "record_locations": [
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_a",
+     "version": 1
+    },
+    "detail_key": "item:itm_a",
+    "section_key": "statement"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_ax",
+     "version": 1
+    },
+    "detail_key": "item:itm_a",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_x",
+     "version": 1
+    },
+    "detail_key": "item:itm_x",
+    "section_key": "statement"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_ax",
+     "version": 1
+    },
+    "detail_key": "item:itm_x",
+    "section_key": "premises"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_yx",
+     "version": 1
+    },
+    "detail_key": "item:itm_x",
+    "section_key": "premises"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_xy",
+     "version": 1
+    },
+    "detail_key": "item:itm_x",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "findings",
+     "id": "fnd_cycle",
+     "version": 1
+    },
+    "detail_key": "item:itm_x",
+    "section_key": "findings"
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_y",
+     "version": 1
+    },
+    "detail_key": "item:itm_y",
+    "section_key": "statement"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_xy",
+     "version": 1
+    },
+    "detail_key": "item:itm_y",
+    "section_key": "premises"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_yx",
+     "version": 1
+    },
+    "detail_key": "item:itm_y",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_yt",
+     "version": 1
+    },
+    "detail_key": "item:itm_y",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_t",
+     "version": 1
+    },
+    "detail_key": "item:itm_t",
+    "section_key": "statement"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_yt",
+     "version": 1
+    },
+    "detail_key": "item:itm_t",
+    "section_key": "premises"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_ax",
+     "version": 1
+    },
+    "detail_key": "conn:con_ax",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_xy",
+     "version": 1
+    },
+    "detail_key": "conn:con_xy",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_yx",
+     "version": 1
+    },
+    "detail_key": "conn:con_yx",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_yx",
+     "version": 1
+    },
+    "detail_key": "conn:con_yx",
+    "section_key": "review"
+   },
+   {
+    "ref": {
+     "collection": "findings",
+     "id": "fnd_cycle",
+     "version": 1
+    },
+    "detail_key": "conn:con_yx",
+    "section_key": "findings"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_yt",
+     "version": 1
+    },
+    "detail_key": "conn:con_yt",
+    "section_key": "applications"
+   }
+  ],
+  "summary": {
+   "scope": {
+    "mode": "paper",
+    "target_refs": [],
+    "exclusions": []
+   },
+   "progress": {
+    "process_complete": false,
+    "required_obligations": 4,
+    "completed_current_obligations": 2,
+    "draft_checks": 0,
+    "major_results": 1,
+    "source_unbound_items": 0
+   },
+   "findings": {
+    "open": 1,
+    "resolved": 0,
+    "superseded": 0,
+    "refs": [
+     "fnd_cycle"
+    ]
+   },
+   "source_limits": [],
+   "published_revision": null
+  },
+  "layout": {
+   "mode": "dag",
+   "reasons": []
+  }
+ }
+}

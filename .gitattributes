@@ -1,2 +1,4 @@
 * text=auto eol=lf
 assets/archify/* -text
+scripts/paper_core/** -text
+scripts/paper_audit.py -text

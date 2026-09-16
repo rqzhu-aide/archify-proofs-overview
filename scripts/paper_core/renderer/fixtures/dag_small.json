@@ -1,0 +1,3324 @@
+{
+ "render_input_version": 1,
+ "title": "Adaptive Estimation under Sub-Gaussian Design",
+ "build": {
+  "core_version": "2.0.0",
+  "revision": 7,
+  "audit_id": "aud_2026_09_a",
+  "built_at": "2026-09-13T10:15:00.000Z",
+  "source_identity": "3f9d0c4c5f4a6a2f0b8e0b0d5f4c3a2b1e0f9d8c7b6a5f4e3d2c1b0a9f8e7d6c",
+  "kind": "working"
+ },
+ "projection": {
+  "projection_version": 1,
+  "snapshot_revision": 7,
+  "audit_id": "aud_2026_09_a",
+  "nodes": [
+   {
+    "id": "itm_a1",
+    "item_ref": {
+     "collection": "items",
+     "id": "itm_a1",
+     "version": 1
+    },
+    "kind": "assumption",
+    "label": "Assumption A1",
+    "caption": "Sub-Gaussian noise with variance proxy σ²",
+    "assessment": {
+     "state": "green",
+     "label": "Stated and anchored",
+     "explanation": "The assumption is stated in the source and every application of it has a passing primary check.",
+     "check_refs": [],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "item:itm_a1"
+   },
+   {
+    "id": "itm_d1",
+    "item_ref": {
+     "collection": "items",
+     "id": "itm_d1",
+     "version": 1
+    },
+    "kind": "definition",
+    "label": "Definition 2.1",
+    "caption": "Penalised empirical risk minimiser",
+    "assessment": {
+     "state": "green",
+     "label": "Stated and anchored",
+     "explanation": "The definition is anchored to the source; its one application is checked separately.",
+     "check_refs": [],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "item:itm_d1"
+   },
+   {
+    "id": "itm_e1",
+    "item_ref": {
+     "collection": "items",
+     "id": "itm_e1",
+     "version": 1
+    },
+    "kind": "external_result",
+    "label": "Bernstein inequality",
+    "caption": "Boucheron, Lugosi and Massart (2013), Theorem 2.10",
+    "assessment": {
+     "state": "green",
+     "label": "Cited with a stable reference",
+     "explanation": "External result cited with a stable reference; its use is checked at the application.",
+     "check_refs": [],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "item:itm_e1"
+   },
+   {
+    "id": "itm_l1",
+    "item_ref": {
+     "collection": "items",
+     "id": "itm_l1",
+     "version": 2
+    },
+    "kind": "lemma",
+    "label": "Lemma 3.1",
+    "caption": "Uniform concentration of the empirical process",
+    "assessment": {
+     "state": "green",
+     "label": "Checked and independently reviewed",
+     "explanation": "The primary check passed and the independent review is complete.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_l1_ir",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "complete"
+    },
+    "detail_key": "item:itm_l1"
+   },
+   {
+    "id": "itm_l2",
+    "item_ref": {
+     "collection": "items",
+     "id": "itm_l2",
+     "version": 1
+    },
+    "kind": "lemma",
+    "label": "Lemma 3.2",
+    "caption": "Bias bound under the design condition",
+    "assessment": {
+     "state": "amber",
+     "label": "Awaiting independent review",
+     "explanation": "The primary check passed but the required independent review has not been submitted.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_l2_ir",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "pending"
+    },
+    "detail_key": "item:itm_l2"
+   },
+   {
+    "id": "itm_p1",
+    "item_ref": {
+     "collection": "items",
+     "id": "itm_p1",
+     "version": 1
+    },
+    "kind": "proposition",
+    "label": "Proposition 3.3",
+    "caption": "Oracle inequality for the penalised estimator",
+    "assessment": {
+     "state": "gray",
+     "label": "Not yet checked",
+     "explanation": "No final composition check exists for this proposition and one incoming connection is still a draft.",
+     "check_refs": [],
+     "finding_refs": [],
+     "missing_obligation_ids": [
+      "obl_p1_final"
+     ],
+     "independent_review": "not_required"
+    },
+    "detail_key": "item:itm_p1"
+   },
+   {
+    "id": "itm_t1",
+    "item_ref": {
+     "collection": "items",
+     "id": "itm_t1",
+     "version": 1
+    },
+    "kind": "theorem",
+    "label": "Theorem 4.1",
+    "caption": "Minimax-optimal rate for the penalised estimator",
+    "assessment": {
+     "state": "red",
+     "label": "Final composition fails",
+     "explanation": "Every incoming connection is green, yet the final composition check found that the two regimes of the case split are not reconciled at the boundary n = 2 d log d.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_t1_final",
+       "version": 1
+      },
+      {
+       "collection": "checks",
+       "id": "chk_t1_ir",
+       "version": 1
+      }
+     ],
+     "finding_refs": [
+      "fnd_1"
+     ],
+     "missing_obligation_ids": [],
+     "independent_review": "disputed"
+    },
+    "detail_key": "item:itm_t1"
+   },
+   {
+    "id": "itm_t2",
+    "item_ref": {
+     "collection": "items",
+     "id": "itm_t2",
+     "version": 1
+    },
+    "kind": "theorem",
+    "label": "Theorem 5.1",
+    "caption": "Standalone result without recorded premises",
+    "assessment": {
+     "state": "gray",
+     "label": "No recorded premises",
+     "explanation": "The theorem has no incoming connections and no anchored statement in the source.",
+     "check_refs": [],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "item:itm_t2"
+   }
+  ],
+  "connections": [
+   {
+    "id": "con_1",
+    "from": "itm_a1",
+    "to": "itm_l1",
+    "primary_use_ids": [
+     "use_1"
+    ],
+    "groups": [],
+    "support_refs": [
+     {
+      "collection": "anchors",
+      "id": "anc_1"
+     }
+    ],
+    "obligation_ids": [
+     "obl_con_1"
+    ],
+    "context_refs": [],
+    "assessment": {
+     "state": "green",
+     "label": "Application checked",
+     "explanation": "The sub-Gaussian assumption is applied in the form the lemma needs.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_1",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "conn:con_1"
+   },
+   {
+    "id": "con_2",
+    "from": "itm_e1",
+    "to": "itm_l1",
+    "primary_use_ids": [
+     "use_2"
+    ],
+    "groups": [],
+    "support_refs": [],
+    "obligation_ids": [
+     "obl_con_2"
+    ],
+    "context_refs": [],
+    "assessment": {
+     "state": "gray",
+     "label": "Check still in draft",
+     "explanation": "The constants of the cited inequality are still being compared with the cited edition.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_2",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "conn:con_2"
+   },
+   {
+    "id": "con_3",
+    "from": "itm_d1",
+    "to": "itm_l2",
+    "primary_use_ids": [
+     "use_3"
+    ],
+    "groups": [],
+    "support_refs": [
+     {
+      "collection": "anchors",
+      "id": "anc_2"
+     }
+    ],
+    "obligation_ids": [
+     "obl_con_3"
+    ],
+    "context_refs": [],
+    "assessment": {
+     "state": "red",
+     "label": "Needed form not established",
+     "explanation": "The bias bound uses attainment of the minimiser, which the definition does not provide.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_3",
+       "version": 1
+      }
+     ],
+     "finding_refs": [
+      "fnd_2"
+     ],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "conn:con_3"
+   },
+   {
+    "id": "con_4",
+    "from": "itm_l1",
+    "to": "itm_p1",
+    "primary_use_ids": [
+     "use_4"
+    ],
+    "groups": [],
+    "support_refs": [],
+    "obligation_ids": [
+     "obl_con_4"
+    ],
+    "context_refs": [],
+    "assessment": {
+     "state": "green",
+     "label": "Application checked",
+     "explanation": "The concentration bound is applied with matching constants.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_4",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "conn:con_4"
+   },
+   {
+    "id": "con_5",
+    "from": "itm_l2",
+    "to": "itm_p1",
+    "primary_use_ids": [
+     "use_5"
+    ],
+    "groups": [],
+    "support_refs": [],
+    "obligation_ids": [
+     "obl_con_5"
+    ],
+    "context_refs": [],
+    "assessment": {
+     "state": "amber",
+     "label": "Premise awaiting review",
+     "explanation": "The application passed its primary check; the amber state records that the premise's independent review is pending.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_5",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "pending"
+    },
+    "detail_key": "conn:con_5"
+   },
+   {
+    "id": "con_6",
+    "from": "itm_p1",
+    "to": "itm_t1",
+    "primary_use_ids": [
+     "use_6a",
+     "use_6b"
+    ],
+    "groups": [
+     {
+      "argument_id": "arg_t1",
+      "group_id": "grp_t1_hidden",
+      "use_ids": [
+       "use_6h"
+      ],
+      "obligation_ids": [
+       "obl_grp_t1"
+      ],
+      "assessment": {
+       "state": "green",
+       "label": "Hidden claim discharged",
+       "explanation": "The case split between the two regimes is stated and discharged by the group.",
+       "check_refs": [
+        {
+         "collection": "checks",
+         "id": "chk_6h",
+         "version": 1
+        }
+       ],
+       "finding_refs": [],
+       "missing_obligation_ids": [],
+       "independent_review": "not_required"
+      }
+     }
+    ],
+    "support_refs": [
+     {
+      "collection": "anchors",
+      "id": "anc_3"
+     }
+    ],
+    "obligation_ids": [
+     "obl_con_6"
+    ],
+    "context_refs": [
+     {
+      "collection": "scopes",
+      "id": "scp_t1"
+     }
+    ],
+    "assessment": {
+     "state": "green",
+     "label": "Both applications checked",
+     "explanation": "The oracle inequality is applied once per regime; both applications pass and the hidden case split is discharged.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_6",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "conn:con_6"
+   },
+   {
+    "id": "con_7",
+    "from": "itm_l1",
+    "to": "itm_t1",
+    "primary_use_ids": [
+     "use_7"
+    ],
+    "groups": [],
+    "support_refs": [],
+    "obligation_ids": [
+     "obl_con_7"
+    ],
+    "context_refs": [],
+    "assessment": {
+     "state": "green",
+     "label": "Application checked",
+     "explanation": "Uniform concentration bounds the stochastic term of the final composition.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_7",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "conn:con_7"
+   }
+  ],
+  "records": [
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_a1",
+     "version": 1
+    },
+    "body": {
+     "kind": "assumption",
+     "label": "Assumption A1",
+     "caption": "Sub-Gaussian noise with variance proxy σ²",
+     "statement": {
+      "form": "latex",
+      "text": "The noise variables \\varepsilon_1, \\dots, \\varepsilon_n are independent, centred and sub-Gaussian with variance proxy \\sigma^2."
+     },
+     "passages": [
+      "anc_1"
+     ],
+     "aliases": [
+      "(A1)"
+     ],
+     "uncertainty": null,
+     "origin": "paper",
+     "owner_id": null,
+     "scope_id": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_d1",
+     "version": 1
+    },
+    "body": {
+     "kind": "definition",
+     "label": "Definition 2.1",
+     "caption": "Penalised empirical risk minimiser",
+     "statement": {
+      "form": "latex",
+      "text": "For a penalty \\mathrm{pen}(\\theta) \\ge 0, let \\hat\\theta \\in \\arg\\min_\\theta \\{ R_n(\\theta) + \\mathrm{pen}(\\theta) \\} denote a penalised empirical risk minimiser."
+     },
+     "passages": [
+      "anc_2"
+     ],
+     "aliases": [],
+     "uncertainty": null,
+     "origin": "paper",
+     "owner_id": null,
+     "scope_id": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_e1",
+     "version": 1
+    },
+    "body": {
+     "kind": "external_result",
+     "label": "Bernstein inequality",
+     "caption": "Boucheron, Lugosi and Massart (2013), Theorem 2.10",
+     "statement": {
+      "form": "text",
+      "text": "For independent centred variables with |X_i| <= b and total variance v, the sum exceeds t with probability at most exp(-t^2 / (2 (v + b t / 3)))."
+     },
+     "passages": [],
+     "aliases": [
+      "Bernstein"
+     ],
+     "uncertainty": null,
+     "origin": "external",
+     "owner_id": null,
+     "scope_id": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_l1",
+     "version": 2
+    },
+    "body": {
+     "kind": "lemma",
+     "label": "Lemma 3.1",
+     "caption": "Uniform concentration of the empirical process",
+     "statement": {
+      "form": "latex",
+      "text": "For every \\delta \\in (0,1), with probability at least 1 - \\delta, \\sup_{f \\in \\mathcal{F}} |P_n f - P f| \\le C \\sigma \\sqrt{(d + \\log(1/\\delta))/n}."
+     },
+     "passages": [],
+     "aliases": [],
+     "uncertainty": null,
+     "origin": "paper",
+     "owner_id": null,
+     "scope_id": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_l2",
+     "version": 1
+    },
+    "body": {
+     "kind": "lemma",
+     "label": "Lemma 3.2",
+     "caption": "Bias bound under the design condition",
+     "statement": {
+      "form": "latex",
+      "text": "If n \\ge d \\log d, the bias of \\hat\\theta satisfies \\|\\mathbb{E}\\hat\\theta - \\theta^*\\|_2 \\le C \\sqrt{d/n}."
+     },
+     "passages": [],
+     "aliases": [],
+     "uncertainty": null,
+     "origin": "paper",
+     "owner_id": null,
+     "scope_id": "scp_t1"
+    }
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_p1",
+     "version": 1
+    },
+    "body": {
+     "kind": "proposition",
+     "label": "Proposition 3.3",
+     "caption": "Oracle inequality for the penalised estimator",
+     "statement": {
+      "form": "latex",
+      "text": "With probability at least 1 - \\delta, R(\\hat\\theta) - R(\\theta^*) \\le 2 \\, \\mathrm{pen}(\\theta^*) + C \\sigma^2 (d + \\log(1/\\delta)) / n."
+     },
+     "passages": [],
+     "aliases": [],
+     "uncertainty": null,
+     "origin": "paper",
+     "owner_id": null,
+     "scope_id": "scp_t1"
+    }
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_t1",
+     "version": 1
+    },
+    "body": {
+     "kind": "theorem",
+     "label": "Theorem 4.1",
+     "caption": "Minimax-optimal rate for the penalised estimator",
+     "statement": {
+      "form": "latex",
+      "text": "Under Assumption A1 and the design condition n \\ge d \\log d, the penalised estimator satisfies \\mathbb{E}\\|\\hat\\theta - \\theta^*\\|_2^2 \\le C \\sigma^2 d / n, and this rate is minimax optimal."
+     },
+     "passages": [
+      "anc_3"
+     ],
+     "aliases": [
+      "main theorem"
+     ],
+     "uncertainty": null,
+     "origin": "paper",
+     "owner_id": null,
+     "scope_id": "scp_t1"
+    }
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_t2",
+     "version": 1
+    },
+    "body": {
+     "kind": "theorem",
+     "label": "Theorem 5.1",
+     "caption": "Standalone result without recorded premises",
+     "statement": {
+      "form": "text",
+      "text": "The estimator remains consistent when the penalty is replaced by its data-driven counterpart."
+     },
+     "passages": [],
+     "aliases": [],
+     "uncertainty": "The statement was transcribed from the author's notes; no source passage is bound.",
+     "origin": "author_notes",
+     "owner_id": null,
+     "scope_id": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_1",
+     "version": 1
+    },
+    "body": {
+     "from": "itm_a1",
+     "to": "itm_l1",
+     "type": "invoke",
+     "group_id": null,
+     "reason": "The sub-Gaussian tail of the noise bounds the moment generating function in the chaining step.",
+     "needed_form": null,
+     "substitutions": [],
+     "evidence_refs": [
+      {
+       "collection": "anchors",
+       "id": "anc_1"
+      }
+     ],
+     "regime": null,
+     "uncertainty": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_2",
+     "version": 1
+    },
+    "body": {
+     "from": "itm_e1",
+     "to": "itm_l1",
+     "type": "invoke",
+     "group_id": null,
+     "reason": "Bernstein's inequality controls each fixed f before the union bound over the net.",
+     "needed_form": "The bounded-variable form with b = 2 sigma sqrt(log n).",
+     "substitutions": [
+      {
+       "symbol": "b",
+       "value": "2 \\sigma \\sqrt{\\log n}"
+      },
+      {
+       "symbol": "v",
+       "value": "n \\sigma^2"
+      }
+     ],
+     "evidence_refs": [],
+     "regime": null,
+     "uncertainty": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_3",
+     "version": 1
+    },
+    "body": {
+     "from": "itm_d1",
+     "to": "itm_l2",
+     "type": "unfold",
+     "group_id": null,
+     "reason": "The bias bound expands the first-order condition of the minimiser.",
+     "needed_form": "The minimiser must be attained; the definition only states that the infimum exists.",
+     "substitutions": [],
+     "evidence_refs": [
+      {
+       "collection": "anchors",
+       "id": "anc_2"
+      }
+     ],
+     "regime": null,
+     "uncertainty": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_4",
+     "version": 1
+    },
+    "body": {
+     "from": "itm_l1",
+     "to": "itm_p1",
+     "type": "invoke",
+     "group_id": null,
+     "reason": "The uniform deviation bound controls the empirical excess risk.",
+     "needed_form": null,
+     "substitutions": [],
+     "evidence_refs": [],
+     "regime": null,
+     "uncertainty": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_5",
+     "version": 1
+    },
+    "body": {
+     "from": "itm_l2",
+     "to": "itm_p1",
+     "type": "invoke",
+     "group_id": null,
+     "reason": "The bias bound is added to the stochastic term.",
+     "needed_form": null,
+     "substitutions": [],
+     "evidence_refs": [],
+     "regime": null,
+     "uncertainty": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_6a",
+     "version": 1
+    },
+    "body": {
+     "from": "itm_p1",
+     "to": "itm_t1",
+     "type": "invoke",
+     "group_id": null,
+     "reason": "Regime n >= 2 d log d: the oracle inequality is applied with the deterministic penalty.",
+     "needed_form": null,
+     "substitutions": [],
+     "evidence_refs": [
+      {
+       "collection": "anchors",
+       "id": "anc_3"
+      }
+     ],
+     "regime": "n \\ge 2 d \\log d",
+     "uncertainty": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_6b",
+     "version": 1
+    },
+    "body": {
+     "from": "itm_p1",
+     "to": "itm_t1",
+     "type": "invoke",
+     "group_id": null,
+     "reason": "Regime near the boundary: the oracle inequality is applied with the data-driven penalty.",
+     "needed_form": null,
+     "substitutions": [],
+     "evidence_refs": [
+      {
+       "collection": "anchors",
+       "id": "anc_3"
+      }
+     ],
+     "regime": "d \\log d \\le n < 2 d \\log d",
+     "uncertainty": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_6h",
+     "version": 1
+    },
+    "body": {
+     "from": "itm_p1",
+     "to": "itm_t1",
+     "type": "hidden",
+     "group_id": "grp_t1_hidden",
+     "reason": "The two regimes must cover every n >= d log d; this case split is not stated in the paper.",
+     "needed_form": null,
+     "substitutions": [],
+     "evidence_refs": [],
+     "regime": null,
+     "uncertainty": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_7",
+     "version": 1
+    },
+    "body": {
+     "from": "itm_l1",
+     "to": "itm_t1",
+     "type": "invoke",
+     "group_id": null,
+     "reason": "Uniform concentration bounds the stochastic term in the final composition.",
+     "needed_form": null,
+     "substitutions": [],
+     "evidence_refs": [],
+     "regime": null,
+     "uncertainty": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "groups",
+     "id": "grp_t1_hidden",
+     "version": 1
+    },
+    "body": {
+     "argument_id": "arg_t1",
+     "conclusion": "The regimes n >= 2 d log d and d log d <= n < 2 d log d exhaust the design condition.",
+     "kind": "case_split",
+     "scope_id": "scp_t1",
+     "case_scope_ids": [],
+     "discharges": [
+      "use_6h"
+     ],
+     "rationale": "Both regimes are half-open intervals whose union is [d log d, infinity).",
+     "evidence_refs": []
+    }
+   },
+   {
+    "ref": {
+     "collection": "scopes",
+     "id": "scp_t1",
+     "version": 1
+    },
+    "body": {
+     "argument_id": "arg_t1",
+     "parent_id": null,
+     "assumptions": [
+      "itm_a1"
+     ],
+     "binders": [
+      "n",
+      "d",
+      "\\sigma"
+     ],
+     "conditions": [
+      "n \\ge d \\log d"
+     ],
+     "evidence_refs": []
+    }
+   },
+   {
+    "ref": {
+     "collection": "arguments",
+     "id": "arg_t1",
+     "version": 1
+    },
+    "body": {
+     "target": {
+      "collection": "items",
+      "id": "itm_t1"
+     },
+     "label": "Proof of Theorem 4.1",
+     "origin": "paper",
+     "scope_id": "scp_t1",
+     "final_group_id": "grp_t1_hidden",
+     "evidence_refs": [
+      {
+       "collection": "anchors",
+       "id": "anc_3"
+      }
+     ],
+     "lifecycle": "active"
+    }
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_1",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_2026_09_a",
+     "target": {
+      "collection": "uses",
+      "id": "use_1"
+     },
+     "kind": "application",
+     "role": "primary",
+     "reviewer": "primary-auditor",
+     "protocol_version": "1.0",
+     "state": "final",
+     "outcome": "pass",
+     "reasoning": "The chaining step needs exactly the sub-Gaussian moment generating function bound that Assumption A1 provides.",
+     "evidence_refs": [
+      {
+       "collection": "anchors",
+       "id": "anc_1"
+      }
+     ],
+     "conditions": [
+      "Assumption A1 holds with the same sigma throughout Section 3."
+     ],
+     "next_action": null,
+     "response_id": null,
+     "supersedes": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_2",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_2026_09_a",
+     "target": {
+      "collection": "uses",
+      "id": "use_2"
+     },
+     "kind": "application",
+     "role": "primary",
+     "reviewer": "primary-auditor",
+     "protocol_version": "1.0",
+     "state": "draft",
+     "outcome": null,
+     "reasoning": "Verifying the constants in Theorem 2.10 against the cited edition.",
+     "evidence_refs": [],
+     "conditions": [],
+     "next_action": "Confirm the constant 1/3 in the Bernstein denominator.",
+     "response_id": null,
+     "supersedes": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_3",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_2026_09_a",
+     "target": {
+      "collection": "uses",
+      "id": "use_3"
+     },
+     "kind": "application",
+     "role": "primary",
+     "reviewer": "primary-auditor",
+     "protocol_version": "1.0",
+     "state": "final",
+     "outcome": "fail",
+     "reasoning": "Definition 2.1 only guarantees that the infimum exists; attainment is used without proof when the first-order condition is expanded.",
+     "evidence_refs": [
+      {
+       "collection": "anchors",
+       "id": "anc_2"
+      }
+     ],
+     "conditions": [],
+     "next_action": "Add an attainment argument or restate the definition with argmin nonempty.",
+     "response_id": null,
+     "supersedes": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_4",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_2026_09_a",
+     "target": {
+      "collection": "uses",
+      "id": "use_4"
+     },
+     "kind": "application",
+     "role": "primary",
+     "reviewer": "primary-auditor",
+     "protocol_version": "1.0",
+     "state": "final",
+     "outcome": "pass",
+     "reasoning": "The class F in Lemma 3.1 is the loss class used in the proposition, with the same constant C.",
+     "evidence_refs": [],
+     "conditions": [],
+     "next_action": null,
+     "response_id": null,
+     "supersedes": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_5",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_2026_09_a",
+     "target": {
+      "collection": "uses",
+      "id": "use_5"
+     },
+     "kind": "application",
+     "role": "primary",
+     "reviewer": "primary-auditor",
+     "protocol_version": "1.0",
+     "state": "final",
+     "outcome": "pass",
+     "reasoning": "The bias term is added exactly as stated in Lemma 3.2.",
+     "evidence_refs": [],
+     "conditions": [
+      "Lemma 3.2 must clear independent review before the composition is accepted."
+     ],
+     "next_action": null,
+     "response_id": null,
+     "supersedes": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_6",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_2026_09_a",
+     "target": {
+      "collection": "uses",
+      "id": "use_6a"
+     },
+     "kind": "application",
+     "role": "primary",
+     "reviewer": "primary-auditor",
+     "protocol_version": "1.0",
+     "state": "final",
+     "outcome": "pass",
+     "reasoning": "Both regime applications instantiate Proposition 3.3 with admissible penalties.",
+     "evidence_refs": [
+      {
+       "collection": "anchors",
+       "id": "anc_3"
+      }
+     ],
+     "conditions": [],
+     "next_action": null,
+     "response_id": null,
+     "supersedes": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_6h",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_2026_09_a",
+     "target": {
+      "collection": "groups",
+      "id": "grp_t1_hidden"
+     },
+     "kind": "hidden_claim",
+     "role": "primary",
+     "reviewer": "primary-auditor",
+     "protocol_version": "1.0",
+     "state": "final",
+     "outcome": "pass",
+     "reasoning": "The two half-open regimes cover [d log d, infinity).",
+     "evidence_refs": [],
+     "conditions": [],
+     "next_action": null,
+     "response_id": null,
+     "supersedes": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_7",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_2026_09_a",
+     "target": {
+      "collection": "uses",
+      "id": "use_7"
+     },
+     "kind": "application",
+     "role": "primary",
+     "reviewer": "primary-auditor",
+     "protocol_version": "1.0",
+     "state": "final",
+     "outcome": "pass",
+     "reasoning": "The stochastic term of the composition is exactly the supremum bounded by Lemma 3.1.",
+     "evidence_refs": [],
+     "conditions": [],
+     "next_action": null,
+     "response_id": null,
+     "supersedes": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_t1_final",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_2026_09_a",
+     "target": {
+      "collection": "items",
+      "id": "itm_t1"
+     },
+     "kind": "final_composition",
+     "role": "primary",
+     "reviewer": "primary-auditor",
+     "protocol_version": "1.0",
+     "state": "final",
+     "outcome": "fail",
+     "reasoning": "The regimes n >= 2 d log d and d log d <= n < 2 d log d are treated with different penalties; the constants are not reconciled at the boundary, so the stated rate does not follow for n = 2 d log d.",
+     "evidence_refs": [
+      {
+       "collection": "anchors",
+       "id": "anc_3"
+      }
+     ],
+     "conditions": [
+      "Reconcile the penalty constants at n = 2 d log d.",
+      "State the case split explicitly in the proof."
+     ],
+     "next_action": "Author response required.",
+     "response_id": null,
+     "supersedes": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_t1_ir",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_2026_09_a",
+     "target": {
+      "collection": "items",
+      "id": "itm_t1"
+     },
+     "kind": "independent_review",
+     "role": "independent",
+     "reviewer": "independent-reviewer",
+     "protocol_version": "1.0",
+     "state": "final",
+     "outcome": "dispute",
+     "reasoning": "The boundary case is covered once the penalties are matched, but the paper does not do so; the primary conclusion stands until the author responds.",
+     "evidence_refs": [],
+     "conditions": [],
+     "next_action": null,
+     "response_id": null,
+     "supersedes": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_l1_ir",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_2026_09_a",
+     "target": {
+      "collection": "items",
+      "id": "itm_l1"
+     },
+     "kind": "independent_review",
+     "role": "independent",
+     "reviewer": "independent-reviewer",
+     "protocol_version": "1.0",
+     "state": "final",
+     "outcome": "pass",
+     "reasoning": "Independent re-derivation of the chaining bound agrees with the stated constant.",
+     "evidence_refs": [],
+     "conditions": [],
+     "next_action": null,
+     "response_id": null,
+     "supersedes": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_l2_ir",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_2026_09_a",
+     "target": {
+      "collection": "items",
+      "id": "itm_l2"
+     },
+     "kind": "independent_review",
+     "role": "independent",
+     "reviewer": "independent-reviewer",
+     "protocol_version": "1.0",
+     "state": "draft",
+     "outcome": null,
+     "reasoning": "Review in progress.",
+     "evidence_refs": [],
+     "conditions": [],
+     "next_action": "Submit the review.",
+     "response_id": null,
+     "supersedes": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "findings",
+     "id": "fnd_1",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_2026_09_a",
+     "target": {
+      "collection": "items",
+      "id": "itm_t1"
+     },
+     "category": "gap",
+     "lifecycle": "open",
+     "description": "The final composition of Theorem 4.1 does not reconcile the penalty constants at the regime boundary n = 2 d log d.",
+     "evidence_refs": [
+      {
+       "collection": "anchors",
+       "id": "anc_3"
+      }
+     ],
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_t1_final",
+       "version": 1
+      }
+     ],
+     "affected_uses": [
+      "use_6a",
+      "use_6b"
+     ],
+     "impact_reason": "The stated minimax rate depends on a single constant across both regimes.",
+     "resolution": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "findings",
+     "id": "fnd_2",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_2026_09_a",
+     "target": {
+      "collection": "uses",
+      "id": "use_3"
+     },
+     "category": "unsupported_step",
+     "lifecycle": "open",
+     "description": "Lemma 3.2 uses attainment of the minimiser, which Definition 2.1 does not provide.",
+     "evidence_refs": [
+      {
+       "collection": "anchors",
+       "id": "anc_2"
+      }
+     ],
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_3",
+       "version": 1
+      }
+     ],
+     "affected_uses": [
+      "use_3"
+     ],
+     "impact_reason": "Without attainment the first-order condition may fail to hold.",
+     "resolution": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "anchors",
+     "id": "anc_1",
+     "version": 1
+    },
+    "body": {
+     "source_id": "src_main",
+     "source_version": 3,
+     "locator": {
+      "start_line": 118,
+      "end_line": 124,
+      "page": 4,
+      "label": "Assumption A1"
+     },
+     "excerpt": "Assumption A1 (noise). The errors ε_1, …, ε_n are independent, centred and sub-Gaussian with\nvariance proxy σ^2, i.e. E exp(λ ε_i) ≤ exp(λ^2 σ^2 / 2) for every λ ∈ R.",
+     "excerpt_sha256": "5d2b1c0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c",
+     "method": "exact",
+     "limitation": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "anchors",
+     "id": "anc_2",
+     "version": 1
+    },
+    "body": {
+     "source_id": "src_main",
+     "source_version": 3,
+     "locator": {
+      "start_line": 88,
+      "end_line": 91,
+      "page": 3,
+      "label": "Definition 2.1"
+     },
+     "excerpt": "Definition 2.1. For a penalty pen(θ) ≥ 0 let θ̂ ∈ argmin_θ { R_n(θ) + pen(θ) } denote a penalised\nempirical risk minimiser.",
+     "excerpt_sha256": "0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b",
+     "method": "exact",
+     "limitation": "The source uses argmin without asserting that it is nonempty."
+    }
+   },
+   {
+    "ref": {
+     "collection": "anchors",
+     "id": "anc_3",
+     "version": 1
+    },
+    "body": {
+     "source_id": "src_main",
+     "source_version": 3,
+     "locator": {
+      "start_line": 402,
+      "end_line": 411,
+      "page": 9,
+      "label": "Proof of Theorem 4.1"
+     },
+     "excerpt": "Proof of Theorem 4.1. Combining Proposition 3.3 with Lemma 3.1 gives, for n ≥ d log d,\n    E‖θ̂ − θ*‖² ≤ C σ² d / n.\nThe lower bound follows from Fano's inequality; see Appendix B.",
+     "excerpt_sha256": "c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2",
+     "method": "exact",
+     "limitation": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "source_issues",
+     "id": "sis_1",
+     "version": 1
+    },
+    "body": {
+     "source_id": "src_main",
+     "anchor_id": null,
+     "category": "unbound_item",
+     "description": "Theorem 5.1 has no anchored statement in the source text; the item was added from the author's notes.",
+     "lifecycle": "open",
+     "resolution": null,
+     "reviewer": "primary-auditor"
+    }
+   }
+  ],
+  "obligations": [
+   {
+    "id": "obl_con_1",
+    "target": {
+     "collection": "uses",
+     "id": "use_1"
+    },
+    "kind": "application",
+    "role": "primary",
+    "check_refs": [
+     {
+      "collection": "checks",
+      "id": "chk_1",
+      "version": 1
+     }
+    ],
+    "assessment": {
+     "state": "green",
+     "label": "Passed",
+     "explanation": "Final primary check passed.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_1",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    }
+   },
+   {
+    "id": "obl_con_2",
+    "target": {
+     "collection": "uses",
+     "id": "use_2"
+    },
+    "kind": "application",
+    "role": "primary",
+    "check_refs": [
+     {
+      "collection": "checks",
+      "id": "chk_2",
+      "version": 1
+     }
+    ],
+    "assessment": {
+     "state": "gray",
+     "label": "Draft check",
+     "explanation": "The only check on record is a draft.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_2",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    }
+   },
+   {
+    "id": "obl_con_3",
+    "target": {
+     "collection": "uses",
+     "id": "use_3"
+    },
+    "kind": "application",
+    "role": "primary",
+    "check_refs": [
+     {
+      "collection": "checks",
+      "id": "chk_3",
+      "version": 1
+     }
+    ],
+    "assessment": {
+     "state": "red",
+     "label": "Failed",
+     "explanation": "The primary check failed and an open finding records the gap.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_3",
+       "version": 1
+      }
+     ],
+     "finding_refs": [
+      "fnd_2"
+     ],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    }
+   },
+   {
+    "id": "obl_con_4",
+    "target": {
+     "collection": "uses",
+     "id": "use_4"
+    },
+    "kind": "application",
+    "role": "primary",
+    "check_refs": [
+     {
+      "collection": "checks",
+      "id": "chk_4",
+      "version": 1
+     }
+    ],
+    "assessment": {
+     "state": "green",
+     "label": "Passed",
+     "explanation": "Final primary check passed.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_4",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    }
+   },
+   {
+    "id": "obl_con_5",
+    "target": {
+     "collection": "uses",
+     "id": "use_5"
+    },
+    "kind": "application",
+    "role": "primary",
+    "check_refs": [
+     {
+      "collection": "checks",
+      "id": "chk_5",
+      "version": 1
+     }
+    ],
+    "assessment": {
+     "state": "amber",
+     "label": "Passed with a condition",
+     "explanation": "The check passed conditionally on the pending review of Lemma 3.2.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_5",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "pending"
+    }
+   },
+   {
+    "id": "obl_con_6",
+    "target": {
+     "collection": "uses",
+     "id": "use_6a"
+    },
+    "kind": "application",
+    "role": "primary",
+    "check_refs": [
+     {
+      "collection": "checks",
+      "id": "chk_6",
+      "version": 1
+     }
+    ],
+    "assessment": {
+     "state": "green",
+     "label": "Passed",
+     "explanation": "Final primary check passed for both regime applications.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_6",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    }
+   },
+   {
+    "id": "obl_con_7",
+    "target": {
+     "collection": "uses",
+     "id": "use_7"
+    },
+    "kind": "application",
+    "role": "primary",
+    "check_refs": [
+     {
+      "collection": "checks",
+      "id": "chk_7",
+      "version": 1
+     }
+    ],
+    "assessment": {
+     "state": "green",
+     "label": "Passed",
+     "explanation": "Final primary check passed.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_7",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    }
+   },
+   {
+    "id": "obl_grp_t1",
+    "target": {
+     "collection": "groups",
+     "id": "grp_t1_hidden"
+    },
+    "kind": "hidden_claim",
+    "role": "primary",
+    "check_refs": [
+     {
+      "collection": "checks",
+      "id": "chk_6h",
+      "version": 1
+     }
+    ],
+    "assessment": {
+     "state": "green",
+     "label": "Discharged",
+     "explanation": "The hidden case split is stated and checked.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_6h",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    }
+   },
+   {
+    "id": "obl_t1_final",
+    "target": {
+     "collection": "items",
+     "id": "itm_t1"
+    },
+    "kind": "final_composition",
+    "role": "primary",
+    "check_refs": [
+     {
+      "collection": "checks",
+      "id": "chk_t1_final",
+      "version": 1
+     }
+    ],
+    "assessment": {
+     "state": "red",
+     "label": "Composition fails",
+     "explanation": "The final composition check failed at the regime boundary.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_t1_final",
+       "version": 1
+      }
+     ],
+     "finding_refs": [
+      "fnd_1"
+     ],
+     "missing_obligation_ids": [],
+     "independent_review": "disputed"
+    }
+   },
+   {
+    "id": "obl_t1_ir",
+    "target": {
+     "collection": "items",
+     "id": "itm_t1"
+    },
+    "kind": "independent_review",
+    "role": "independent",
+    "check_refs": [
+     {
+      "collection": "checks",
+      "id": "chk_t1_ir",
+      "version": 1
+     }
+    ],
+    "assessment": {
+     "state": "red",
+     "label": "Independent reviewer disputes the composition",
+     "explanation": "The independent review recorded a dispute with the primary conclusion.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_t1_ir",
+       "version": 1
+      }
+     ],
+     "finding_refs": [
+      "fnd_1"
+     ],
+     "missing_obligation_ids": [],
+     "independent_review": "disputed"
+    }
+   },
+   {
+    "id": "obl_l1_ir",
+    "target": {
+     "collection": "items",
+     "id": "itm_l1"
+    },
+    "kind": "independent_review",
+    "role": "independent",
+    "check_refs": [
+     {
+      "collection": "checks",
+      "id": "chk_l1_ir",
+      "version": 1
+     }
+    ],
+    "assessment": {
+     "state": "green",
+     "label": "Review complete",
+     "explanation": "The independent review agrees with the primary check.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_l1_ir",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "complete"
+    }
+   },
+   {
+    "id": "obl_l2_ir",
+    "target": {
+     "collection": "items",
+     "id": "itm_l2"
+    },
+    "kind": "independent_review",
+    "role": "independent",
+    "check_refs": [
+     {
+      "collection": "checks",
+      "id": "chk_l2_ir",
+      "version": 1
+     }
+    ],
+    "assessment": {
+     "state": "amber",
+     "label": "Review pending",
+     "explanation": "The independent review is still a draft.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_l2_ir",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "pending"
+    }
+   }
+  ],
+  "details": {
+   "item:itm_a1": {
+    "record_refs": [
+     {
+      "collection": "items",
+      "id": "itm_a1",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "statement",
+      "title": "Statement",
+      "kind": "statement",
+      "record_refs": [
+       {
+        "collection": "items",
+        "id": "itm_a1",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_1",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_con_1"
+      ],
+      "note": null
+     },
+     {
+      "key": "sources",
+      "title": "Source anchors",
+      "kind": "sources",
+      "record_refs": [
+       {
+        "collection": "anchors",
+        "id": "anc_1",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": "Anchored to the assumptions paragraph of Section 2."
+     }
+    ]
+   },
+   "item:itm_d1": {
+    "record_refs": [
+     {
+      "collection": "items",
+      "id": "itm_d1",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "statement",
+      "title": "Statement",
+      "kind": "statement",
+      "record_refs": [
+       {
+        "collection": "items",
+        "id": "itm_d1",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_3",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_con_3"
+      ],
+      "note": null
+     },
+     {
+      "key": "sources",
+      "title": "Source anchors",
+      "kind": "sources",
+      "record_refs": [
+       {
+        "collection": "anchors",
+        "id": "anc_2",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     }
+    ]
+   },
+   "item:itm_e1": {
+    "record_refs": [
+     {
+      "collection": "items",
+      "id": "itm_e1",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "statement",
+      "title": "Statement",
+      "kind": "statement",
+      "record_refs": [
+       {
+        "collection": "items",
+        "id": "itm_e1",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_2",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_con_2"
+      ],
+      "note": null
+     },
+     {
+      "key": "limitations",
+      "title": "Limitations",
+      "kind": "limitations",
+      "record_refs": [],
+      "obligation_ids": [],
+      "note": "External result: the statement is copied from the cited reference and is not re-derived here."
+     }
+    ]
+   },
+   "item:itm_l1": {
+    "record_refs": [
+     {
+      "collection": "items",
+      "id": "itm_l1",
+      "version": 2
+     }
+    ],
+    "sections": [
+     {
+      "key": "statement",
+      "title": "Statement",
+      "kind": "statement",
+      "record_refs": [
+       {
+        "collection": "items",
+        "id": "itm_l1",
+        "version": 2
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "premises",
+      "title": "Premises used",
+      "kind": "premises",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_1",
+        "version": 1
+       },
+       {
+        "collection": "uses",
+        "id": "use_2",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_con_1",
+       "obl_con_2"
+      ],
+      "note": null
+     },
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_4",
+        "version": 1
+       },
+       {
+        "collection": "uses",
+        "id": "use_7",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_con_4",
+       "obl_con_7"
+      ],
+      "note": null
+     },
+     {
+      "key": "review",
+      "title": "Independent review",
+      "kind": "review",
+      "record_refs": [
+       {
+        "collection": "checks",
+        "id": "chk_l1_ir",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_l1_ir"
+      ],
+      "note": null
+     }
+    ]
+   },
+   "item:itm_l2": {
+    "record_refs": [
+     {
+      "collection": "items",
+      "id": "itm_l2",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "statement",
+      "title": "Statement",
+      "kind": "statement",
+      "record_refs": [
+       {
+        "collection": "items",
+        "id": "itm_l2",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "premises",
+      "title": "Premises used",
+      "kind": "premises",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_3",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_con_3"
+      ],
+      "note": null
+     },
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_5",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_con_5"
+      ],
+      "note": null
+     },
+     {
+      "key": "review",
+      "title": "Independent review",
+      "kind": "review",
+      "record_refs": [
+       {
+        "collection": "checks",
+        "id": "chk_l2_ir",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_l2_ir"
+      ],
+      "note": "The independent review is still a draft."
+     }
+    ]
+   },
+   "item:itm_p1": {
+    "record_refs": [
+     {
+      "collection": "items",
+      "id": "itm_p1",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "statement",
+      "title": "Statement",
+      "kind": "statement",
+      "record_refs": [
+       {
+        "collection": "items",
+        "id": "itm_p1",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "premises",
+      "title": "Premises used",
+      "kind": "premises",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_4",
+        "version": 1
+       },
+       {
+        "collection": "uses",
+        "id": "use_5",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_con_4",
+       "obl_con_5"
+      ],
+      "note": null
+     },
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_6a",
+        "version": 1
+       },
+       {
+        "collection": "uses",
+        "id": "use_6b",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_con_6"
+      ],
+      "note": null
+     },
+     {
+      "key": "composition",
+      "title": "Final composition",
+      "kind": "composition",
+      "record_refs": [],
+      "obligation_ids": [],
+      "note": "No final composition check has been recorded (missing obligation obl_p1_final)."
+     }
+    ]
+   },
+   "item:itm_t1": {
+    "record_refs": [
+     {
+      "collection": "items",
+      "id": "itm_t1",
+      "version": 1
+     },
+     {
+      "collection": "arguments",
+      "id": "arg_t1",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "statement",
+      "title": "Statement",
+      "kind": "statement",
+      "record_refs": [
+       {
+        "collection": "items",
+        "id": "itm_t1",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "premises",
+      "title": "Premises used",
+      "kind": "premises",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_6a",
+        "version": 1
+       },
+       {
+        "collection": "uses",
+        "id": "use_6b",
+        "version": 1
+       },
+       {
+        "collection": "uses",
+        "id": "use_7",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_con_6",
+       "obl_con_7"
+      ],
+      "note": null
+     },
+     {
+      "key": "coverage",
+      "title": "Argument coverage",
+      "kind": "coverage",
+      "record_refs": [
+       {
+        "collection": "arguments",
+        "id": "arg_t1",
+        "version": 1
+       },
+       {
+        "collection": "scopes",
+        "id": "scp_t1",
+        "version": 1
+       },
+       {
+        "collection": "groups",
+        "id": "grp_t1_hidden",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_grp_t1"
+      ],
+      "note": null
+     },
+     {
+      "key": "composition",
+      "title": "Final composition",
+      "kind": "composition",
+      "record_refs": [
+       {
+        "collection": "checks",
+        "id": "chk_t1_final",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_t1_final"
+      ],
+      "note": "Every incoming connection is green; the composition check fails on its own."
+     },
+     {
+      "key": "findings",
+      "title": "Findings",
+      "kind": "findings",
+      "record_refs": [
+       {
+        "collection": "findings",
+        "id": "fnd_1",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "review",
+      "title": "Independent review",
+      "kind": "review",
+      "record_refs": [
+       {
+        "collection": "checks",
+        "id": "chk_t1_ir",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_t1_ir"
+      ],
+      "note": null
+     },
+     {
+      "key": "sources",
+      "title": "Source anchors",
+      "kind": "sources",
+      "record_refs": [
+       {
+        "collection": "anchors",
+        "id": "anc_3",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     }
+    ]
+   },
+   "item:itm_t2": {
+    "record_refs": [
+     {
+      "collection": "items",
+      "id": "itm_t2",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "statement",
+      "title": "Statement",
+      "kind": "statement",
+      "record_refs": [
+       {
+        "collection": "items",
+        "id": "itm_t2",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "premises",
+      "title": "Premises used",
+      "kind": "premises",
+      "record_refs": [],
+      "obligation_ids": [],
+      "note": "No uses are recorded for this theorem."
+     },
+     {
+      "key": "limitations",
+      "title": "Source limits",
+      "kind": "limitations",
+      "record_refs": [
+       {
+        "collection": "source_issues",
+        "id": "sis_1",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     }
+    ]
+   },
+   "conn:con_1": {
+    "record_refs": [
+     {
+      "collection": "uses",
+      "id": "use_1",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_1",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_con_1"
+      ],
+      "note": null
+     },
+     {
+      "key": "review",
+      "title": "Checks",
+      "kind": "review",
+      "record_refs": [
+       {
+        "collection": "checks",
+        "id": "chk_1",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "sources",
+      "title": "Source anchors",
+      "kind": "sources",
+      "record_refs": [
+       {
+        "collection": "anchors",
+        "id": "anc_1",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     }
+    ]
+   },
+   "conn:con_2": {
+    "record_refs": [
+     {
+      "collection": "uses",
+      "id": "use_2",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_2",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_con_2"
+      ],
+      "note": null
+     },
+     {
+      "key": "review",
+      "title": "Checks",
+      "kind": "review",
+      "record_refs": [
+       {
+        "collection": "checks",
+        "id": "chk_2",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": "Draft check; the connection stays gray until it is finalised."
+     }
+    ]
+   },
+   "conn:con_3": {
+    "record_refs": [
+     {
+      "collection": "uses",
+      "id": "use_3",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_3",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_con_3"
+      ],
+      "note": null
+     },
+     {
+      "key": "review",
+      "title": "Checks",
+      "kind": "review",
+      "record_refs": [
+       {
+        "collection": "checks",
+        "id": "chk_3",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "findings",
+      "title": "Findings",
+      "kind": "findings",
+      "record_refs": [
+       {
+        "collection": "findings",
+        "id": "fnd_2",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     }
+    ]
+   },
+   "conn:con_4": {
+    "record_refs": [
+     {
+      "collection": "uses",
+      "id": "use_4",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_4",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_con_4"
+      ],
+      "note": null
+     },
+     {
+      "key": "review",
+      "title": "Checks",
+      "kind": "review",
+      "record_refs": [
+       {
+        "collection": "checks",
+        "id": "chk_4",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     }
+    ]
+   },
+   "conn:con_5": {
+    "record_refs": [
+     {
+      "collection": "uses",
+      "id": "use_5",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_5",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_con_5"
+      ],
+      "note": null
+     },
+     {
+      "key": "review",
+      "title": "Checks",
+      "kind": "review",
+      "record_refs": [
+       {
+        "collection": "checks",
+        "id": "chk_5",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     }
+    ]
+   },
+   "conn:con_6": {
+    "record_refs": [
+     {
+      "collection": "uses",
+      "id": "use_6a",
+      "version": 1
+     },
+     {
+      "collection": "uses",
+      "id": "use_6b",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_6a",
+        "version": 1
+       },
+       {
+        "collection": "uses",
+        "id": "use_6b",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_con_6"
+      ],
+      "note": null
+     },
+     {
+      "key": "coverage",
+      "title": "Hidden-claim group",
+      "kind": "coverage",
+      "record_refs": [
+       {
+        "collection": "groups",
+        "id": "grp_t1_hidden",
+        "version": 1
+       },
+       {
+        "collection": "uses",
+        "id": "use_6h",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_grp_t1"
+      ],
+      "note": "The group discharges the case split hidden in the second application."
+     },
+     {
+      "key": "review",
+      "title": "Checks",
+      "kind": "review",
+      "record_refs": [
+       {
+        "collection": "checks",
+        "id": "chk_6",
+        "version": 1
+       },
+       {
+        "collection": "checks",
+        "id": "chk_6h",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "sources",
+      "title": "Source anchors",
+      "kind": "sources",
+      "record_refs": [
+       {
+        "collection": "anchors",
+        "id": "anc_3",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     }
+    ]
+   },
+   "conn:con_7": {
+    "record_refs": [
+     {
+      "collection": "uses",
+      "id": "use_7",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_7",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_con_7"
+      ],
+      "note": null
+     },
+     {
+      "key": "review",
+      "title": "Checks",
+      "kind": "review",
+      "record_refs": [
+       {
+        "collection": "checks",
+        "id": "chk_7",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     }
+    ]
+   }
+  },
+  "record_locations": [
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_a1",
+     "version": 1
+    },
+    "detail_key": "item:itm_a1",
+    "section_key": "statement"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_1",
+     "version": 1
+    },
+    "detail_key": "item:itm_a1",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "anchors",
+     "id": "anc_1",
+     "version": 1
+    },
+    "detail_key": "item:itm_a1",
+    "section_key": "sources"
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_d1",
+     "version": 1
+    },
+    "detail_key": "item:itm_d1",
+    "section_key": "statement"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_3",
+     "version": 1
+    },
+    "detail_key": "item:itm_d1",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "anchors",
+     "id": "anc_2",
+     "version": 1
+    },
+    "detail_key": "item:itm_d1",
+    "section_key": "sources"
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_e1",
+     "version": 1
+    },
+    "detail_key": "item:itm_e1",
+    "section_key": "statement"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_2",
+     "version": 1
+    },
+    "detail_key": "item:itm_e1",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_l1",
+     "version": 2
+    },
+    "detail_key": "item:itm_l1",
+    "section_key": "statement"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_1",
+     "version": 1
+    },
+    "detail_key": "item:itm_l1",
+    "section_key": "premises"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_2",
+     "version": 1
+    },
+    "detail_key": "item:itm_l1",
+    "section_key": "premises"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_4",
+     "version": 1
+    },
+    "detail_key": "item:itm_l1",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_7",
+     "version": 1
+    },
+    "detail_key": "item:itm_l1",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_l1_ir",
+     "version": 1
+    },
+    "detail_key": "item:itm_l1",
+    "section_key": "review"
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_l2",
+     "version": 1
+    },
+    "detail_key": "item:itm_l2",
+    "section_key": "statement"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_3",
+     "version": 1
+    },
+    "detail_key": "item:itm_l2",
+    "section_key": "premises"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_5",
+     "version": 1
+    },
+    "detail_key": "item:itm_l2",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_l2_ir",
+     "version": 1
+    },
+    "detail_key": "item:itm_l2",
+    "section_key": "review"
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_p1",
+     "version": 1
+    },
+    "detail_key": "item:itm_p1",
+    "section_key": "statement"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_4",
+     "version": 1
+    },
+    "detail_key": "item:itm_p1",
+    "section_key": "premises"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_5",
+     "version": 1
+    },
+    "detail_key": "item:itm_p1",
+    "section_key": "premises"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_6a",
+     "version": 1
+    },
+    "detail_key": "item:itm_p1",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_6b",
+     "version": 1
+    },
+    "detail_key": "item:itm_p1",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_t1",
+     "version": 1
+    },
+    "detail_key": "item:itm_t1",
+    "section_key": "statement"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_6a",
+     "version": 1
+    },
+    "detail_key": "item:itm_t1",
+    "section_key": "premises"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_6b",
+     "version": 1
+    },
+    "detail_key": "item:itm_t1",
+    "section_key": "premises"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_7",
+     "version": 1
+    },
+    "detail_key": "item:itm_t1",
+    "section_key": "premises"
+   },
+   {
+    "ref": {
+     "collection": "arguments",
+     "id": "arg_t1",
+     "version": 1
+    },
+    "detail_key": "item:itm_t1",
+    "section_key": "coverage"
+   },
+   {
+    "ref": {
+     "collection": "scopes",
+     "id": "scp_t1",
+     "version": 1
+    },
+    "detail_key": "item:itm_t1",
+    "section_key": "coverage"
+   },
+   {
+    "ref": {
+     "collection": "groups",
+     "id": "grp_t1_hidden",
+     "version": 1
+    },
+    "detail_key": "item:itm_t1",
+    "section_key": "coverage"
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_t1_final",
+     "version": 1
+    },
+    "detail_key": "item:itm_t1",
+    "section_key": "composition"
+   },
+   {
+    "ref": {
+     "collection": "findings",
+     "id": "fnd_1",
+     "version": 1
+    },
+    "detail_key": "item:itm_t1",
+    "section_key": "findings"
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_t1_ir",
+     "version": 1
+    },
+    "detail_key": "item:itm_t1",
+    "section_key": "review"
+   },
+   {
+    "ref": {
+     "collection": "anchors",
+     "id": "anc_3",
+     "version": 1
+    },
+    "detail_key": "item:itm_t1",
+    "section_key": "sources"
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_t2",
+     "version": 1
+    },
+    "detail_key": "item:itm_t2",
+    "section_key": "statement"
+   },
+   {
+    "ref": {
+     "collection": "source_issues",
+     "id": "sis_1",
+     "version": 1
+    },
+    "detail_key": "item:itm_t2",
+    "section_key": "limitations"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_1",
+     "version": 1
+    },
+    "detail_key": "conn:con_1",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_1",
+     "version": 1
+    },
+    "detail_key": "conn:con_1",
+    "section_key": "review"
+   },
+   {
+    "ref": {
+     "collection": "anchors",
+     "id": "anc_1",
+     "version": 1
+    },
+    "detail_key": "conn:con_1",
+    "section_key": "sources"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_2",
+     "version": 1
+    },
+    "detail_key": "conn:con_2",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_2",
+     "version": 1
+    },
+    "detail_key": "conn:con_2",
+    "section_key": "review"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_3",
+     "version": 1
+    },
+    "detail_key": "conn:con_3",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_3",
+     "version": 1
+    },
+    "detail_key": "conn:con_3",
+    "section_key": "review"
+   },
+   {
+    "ref": {
+     "collection": "findings",
+     "id": "fnd_2",
+     "version": 1
+    },
+    "detail_key": "conn:con_3",
+    "section_key": "findings"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_4",
+     "version": 1
+    },
+    "detail_key": "conn:con_4",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_4",
+     "version": 1
+    },
+    "detail_key": "conn:con_4",
+    "section_key": "review"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_5",
+     "version": 1
+    },
+    "detail_key": "conn:con_5",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_5",
+     "version": 1
+    },
+    "detail_key": "conn:con_5",
+    "section_key": "review"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_6a",
+     "version": 1
+    },
+    "detail_key": "conn:con_6",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_6b",
+     "version": 1
+    },
+    "detail_key": "conn:con_6",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "groups",
+     "id": "grp_t1_hidden",
+     "version": 1
+    },
+    "detail_key": "conn:con_6",
+    "section_key": "coverage"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_6h",
+     "version": 1
+    },
+    "detail_key": "conn:con_6",
+    "section_key": "coverage"
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_6",
+     "version": 1
+    },
+    "detail_key": "conn:con_6",
+    "section_key": "review"
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_6h",
+     "version": 1
+    },
+    "detail_key": "conn:con_6",
+    "section_key": "review"
+   },
+   {
+    "ref": {
+     "collection": "anchors",
+     "id": "anc_3",
+     "version": 1
+    },
+    "detail_key": "conn:con_6",
+    "section_key": "sources"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_7",
+     "version": 1
+    },
+    "detail_key": "conn:con_7",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_7",
+     "version": 1
+    },
+    "detail_key": "conn:con_7",
+    "section_key": "review"
+   }
+  ],
+  "summary": {
+   "scope": {
+    "mode": "paper",
+    "target_refs": [],
+    "exclusions": []
+   },
+   "progress": {
+    "process_complete": false,
+    "required_obligations": 13,
+    "completed_current_obligations": 8,
+    "draft_checks": 2,
+    "major_results": 2,
+    "source_unbound_items": 1
+   },
+   "findings": {
+    "open": 2,
+    "resolved": 0,
+    "superseded": 0,
+    "refs": [
+     "fnd_1",
+     "fnd_2"
+    ]
+   },
+   "source_limits": [
+    "sis_1"
+   ],
+   "published_revision": 6
+  },
+  "layout": {
+   "mode": "dag",
+   "reasons": []
+  }
+ },
+ "display": {
+  "refs": {
+   "items:itm_l1:2": {
+    "statement_html": "<p>For every <math display=\"inline\" xmlns=\"http://www.w3.org/1998/Math/MathML\" aria-label=\"LaTeX: \\delta \\in (0,1)\" class=\"math-inline\"><semantics><mrow><mi>δ</mi><mo>∈</mo><mo>(</mo><mn>0</mn><mo>,</mo><mn>1</mn><mo>)</mo></mrow><annotation encoding=\"application/x-tex\">\\delta \\in (0,1)</annotation></semantics></math>, with probability at least <math display=\"inline\" xmlns=\"http://www.w3.org/1998/Math/MathML\" aria-label=\"LaTeX: 1 - \\delta\" class=\"math-inline\"><semantics><mrow><mn>1</mn><mo>−</mo><mi>δ</mi></mrow><annotation encoding=\"application/x-tex\">1 - \\delta</annotation></semantics></math>, <math display=\"inline\" xmlns=\"http://www.w3.org/1998/Math/MathML\" aria-label=\"LaTeX: \\sup_{f \\in \\mathcal{F}} |P_n f - P f| \\le C \\sigma \\sqrt{(d + \\log(1/\\delta))/n}\" class=\"math-inline\"><semantics><mrow><munder><mo>sup</mo><mrow><mi>f</mi><mo>∈</mo><mi mathvariant=\"script\">F</mi></mrow></munder><mo stretchy=\"false\">|</mo><msub><mi>P</mi><mi>n</mi></msub><mi>f</mi><mo>−</mo><mi>P</mi><mi>f</mi><mo stretchy=\"false\">|</mo><mo>≤</mo><mi>C</mi><mi>σ</mi><msqrt><mrow><mo>(</mo><mi>d</mi><mo>+</mo><mi>log</mi><mo>(</mo><mn>1</mn><mo>/</mo><mi>δ</mi><mo>)</mo><mo>)</mo><mo>/</mo><mi>n</mi></mrow></msqrt></mrow><annotation encoding=\"application/x-tex\">\\sup_{f \\in \\mathcal{F}} |P_n f - P f| \\le C \\sigma \\sqrt{(d + \\log(1/\\delta))/n}</annotation></semantics></math>.</p>"
+   },
+   "items:itm_t1:1": {
+    "statement_html": "<p>Under Assumption A1 and the design condition <math display=\"inline\" xmlns=\"http://www.w3.org/1998/Math/MathML\" aria-label=\"LaTeX: n \\ge d \\log d\" class=\"math-inline\"><semantics><mrow><mi>n</mi><mo>≥</mo><mi>d</mi><mi>log</mi><mi>d</mi></mrow><annotation encoding=\"application/x-tex\">n \\ge d \\log d</annotation></semantics></math>, the penalised estimator satisfies <math display=\"inline\" xmlns=\"http://www.w3.org/1998/Math/MathML\" aria-label=\"LaTeX: \\mathbb{E}\\|\\hat\\theta - \\theta^*\\|_2^2 \\le C \\sigma^2 d / n\" class=\"math-inline\"><semantics><mrow><mi mathvariant=\"double-struck\">E</mi><mo stretchy=\"false\">‖</mo><mover><mi>θ</mi><mo>^</mo></mover><mo>−</mo><msup><mi>θ</mi><mo>*</mo></msup><msubsup><mo stretchy=\"false\">‖</mo><mn>2</mn><mn>2</mn></msubsup><mo>≤</mo><mi>C</mi><msup><mi>σ</mi><mn>2</mn></msup><mi>d</mi><mo>/</mo><mi>n</mi></mrow><annotation encoding=\"application/x-tex\">\\mathbb{E}\\|\\hat\\theta - \\theta^*\\|_2^2 \\le C \\sigma^2 d / n</annotation></semantics></math>, and this rate is minimax optimal.</p>"
+   },
+   "uses:use_3:1": {
+    "reason_html": "<p>The bias bound expands the first-order condition of the minimiser <math display=\"inline\" xmlns=\"http://www.w3.org/1998/Math/MathML\" aria-label=\"LaTeX: \\hat\\theta\" class=\"math-inline\"><semantics><mrow><mover><mi>θ</mi><mo>^</mo></mover></mrow><annotation encoding=\"application/x-tex\">\\hat\\theta</annotation></semantics></math>.</p>",
+    "needed_form_html": "<p>The minimiser must be <em>attained</em>; the definition only states that the infimum exists.</p>"
+   },
+   "checks:chk_t1_final:1": {
+    "reasoning_html": "<p>The regimes <math display=\"inline\" xmlns=\"http://www.w3.org/1998/Math/MathML\" aria-label=\"LaTeX: n \\ge 2 d \\log d\" class=\"math-inline\"><semantics><mrow><mi>n</mi><mo>≥</mo><mn>2</mn><mi>d</mi><mi>log</mi><mi>d</mi></mrow><annotation encoding=\"application/x-tex\">n \\ge 2 d \\log d</annotation></semantics></math> and <math display=\"inline\" xmlns=\"http://www.w3.org/1998/Math/MathML\" aria-label=\"LaTeX: d \\log d \\le n &lt; 2 d \\log d\" class=\"math-inline\"><semantics><mrow><mi>d</mi><mi>log</mi><mi>d</mi><mo>≤</mo><mi>n</mi><mo>&lt;</mo><mn>2</mn><mi>d</mi><mi>log</mi><mi>d</mi></mrow><annotation encoding=\"application/x-tex\">d \\log d \\le n &lt; 2 d \\log d</annotation></semantics></math> are treated with different penalties; the constants are not reconciled at the boundary, so the stated rate does not follow for <math display=\"inline\" xmlns=\"http://www.w3.org/1998/Math/MathML\" aria-label=\"LaTeX: n = 2 d \\log d\" class=\"math-inline\"><semantics><mrow><mi>n</mi><mo>=</mo><mn>2</mn><mi>d</mi><mi>log</mi><mi>d</mi></mrow><annotation encoding=\"application/x-tex\">n = 2 d \\log d</annotation></semantics></math>.</p>",
+    "conditions_html": [
+     "Reconcile the penalty constants at <math display=\"inline\" xmlns=\"http://www.w3.org/1998/Math/MathML\" aria-label=\"LaTeX: n = 2 d \\log d\" class=\"math-inline\"><semantics><mrow><mi>n</mi><mo>=</mo><mn>2</mn><mi>d</mi><mi>log</mi><mi>d</mi></mrow><annotation encoding=\"application/x-tex\">n = 2 d \\log d</annotation></semantics></math>.",
+     "State the case split explicitly in the proof."
+    ]
+   },
+   "findings:fnd_1:1": {
+    "description_html": "<p>The final composition of Theorem 4.1 does not reconcile the penalty constants at the regime boundary <math display=\"inline\" xmlns=\"http://www.w3.org/1998/Math/MathML\" aria-label=\"LaTeX: n = 2 d \\log d\" class=\"math-inline\"><semantics><mrow><mi>n</mi><mo>=</mo><mn>2</mn><mi>d</mi><mi>log</mi><mi>d</mi></mrow><annotation encoding=\"application/x-tex\">n = 2 d \\log d</annotation></semantics></math>.</p>"
+   },
+   "groups:grp_t1_hidden:1": {
+    "rationale_html": "<p>Both regimes are half-open intervals whose union is <math display=\"inline\" xmlns=\"http://www.w3.org/1998/Math/MathML\" aria-label=\"LaTeX: [d \\log d, \\infty)\" class=\"math-inline\"><semantics><mrow><mo stretchy=\"false\">[</mo><mi>d</mi><mi>log</mi><mi>d</mi><mo>,</mo><mi>∞</mi><mo stretchy=\"false\">)</mo></mrow><annotation encoding=\"application/x-tex\">[d \\log d, \\infty)</annotation></semantics></math>.</p>"
+   }
+  }
+ }
+}

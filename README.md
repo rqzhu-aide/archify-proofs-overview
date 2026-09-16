@@ -1,6 +1,13 @@
 # Archify Proofs Overview
 
-Version [v1.0.0](https://github.com/rqzhu-aide/archify-proofs-overview/tree/v1.0.0).
+Version [v2.0](https://github.com/rqzhu-aide/archify-proofs-overview/tree/v2.0).
+
+This release adds the shared proof-audit database core and reader, coordinated with
+[proofcheck v2.0](https://github.com/rqzhu-aide/stat-paper-skills/tree/v2.0).
+Use [the audit database workflow](references/audit-database.md) to continue from an overview
+into an audit, or to read recorded audit results. Existing overview workflows remain supported.
+The bounded audit pilot and software checks passed; real-browser acceptance of the audit reader
+and performance measurement on a large paper remain outstanding.
 
 Turn a paper's assumptions, definitions, lemmas, propositions, theorems, and corollaries into an interactive map, adapted from [Archify](https://github.com/tt-a1i/archify). Follow the written argument through compact nodes, manuscript labels, source passages, and annotated connections.
 

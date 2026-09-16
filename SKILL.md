@@ -2,7 +2,7 @@
 name: archify-proofs-overview
 description: Build an interactive HTML overview of a paper's main assumptions, definitions, lemmas, propositions, theorems, corollaries, and their dependencies. Use for understanding proof organization and navigating major results, not for full mathematical proof verification.
 metadata:
-  version: "1.0.0"
+  version: "2.0.0"
 ---
 
 # Archify Proofs Overview
@@ -40,6 +40,8 @@ Keep `overview.html` at that folder's root. Create optional folders only when ne
    ```
 
 7. Inspect the HTML when a browser is available, including the longest mathematical statement, selection/search, and a result with several prerequisites. The script checks actual item/use preservation and selected geometry; its receipt does not claim browser or mathematical review. State actual inspection and remaining limitations in the delivery message. Deliver the HTML at the overview folder's root and keep the authoritative database under `data/`. The HTML is shareable by itself; JSON exports are optional.
+
+When the records are going on into a proof audit, or when the proofcheck skill produced the database, use the shared audit core described in [references/audit-database.md](references/audit-database.md). An overview database must be upgraded explicitly with `paper_audit.py migrate-overview` before that core will write to it; keep the backup and do not maintain a second master afterwards.
 
 For a small one-off JSON overview, the existing `proof_overview.py validate <dataset>` and `render <dataset> <output.html>` commands still work without creating a database. Schema 1 does not retain comparison history across rebuilds; use explicit database initialization when reuse or source freshness matters. Use the bundled example only to learn the format, never as evidence about the user's paper.
 

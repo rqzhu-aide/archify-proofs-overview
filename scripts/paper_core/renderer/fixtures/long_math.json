@@ -1,0 +1,1927 @@
+{
+ "render_input_version": 1,
+ "title": "Long Statements and Narrow Viewports",
+ "build": {
+  "core_version": "2.0.0",
+  "revision": 12,
+  "audit_id": "aud_long_1",
+  "built_at": "2026-09-14T00:00:00.000Z",
+  "source_identity": "a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6",
+  "kind": "working"
+ },
+ "projection": {
+  "projection_version": 1,
+  "snapshot_revision": 12,
+  "audit_id": "aud_long_1",
+  "nodes": [
+   {
+    "id": "itm_h",
+    "item_ref": {
+     "collection": "items",
+     "id": "itm_h",
+     "version": 1
+    },
+    "kind": "assumption",
+    "label": "Assumption H (sub-Gaussian design with bounded fourth moments and isotropic covariance)",
+    "caption": "Design condition",
+    "assessment": {
+     "state": "green",
+     "label": "Stated and anchored",
+     "explanation": "The assumption is stated in the source.",
+     "check_refs": [],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "item:itm_h"
+   },
+   {
+    "id": "itm_def",
+    "item_ref": {
+     "collection": "items",
+     "id": "itm_def",
+     "version": 1
+    },
+    "kind": "definition",
+    "label": "Definition 5.1",
+    "caption": "A deliberately long caption that keeps going with many more words than the node box can hold so that the renderer must truncate it to two lines with an ellipsis",
+    "assessment": {
+     "state": "green",
+     "label": "Stated and anchored",
+     "explanation": "The definition is stated in the source.",
+     "check_refs": [],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "item:itm_def"
+   },
+   {
+    "id": "itm_lemA",
+    "item_ref": {
+     "collection": "items",
+     "id": "itm_lemA",
+     "version": 1
+    },
+    "kind": "lemma",
+    "label": "Lemma 5.2",
+    "caption": "Polynomial expansion bound",
+    "assessment": {
+     "state": "green",
+     "label": "Checked",
+     "explanation": "The primary check passed.",
+     "check_refs": [],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "item:itm_lemA"
+   },
+   {
+    "id": "itm_lemB",
+    "item_ref": {
+     "collection": "items",
+     "id": "itm_lemB",
+     "version": 1
+    },
+    "kind": "lemma",
+    "label": "Lemma 5.3",
+    "caption": "Tail control",
+    "assessment": {
+     "state": "green",
+     "label": "Checked",
+     "explanation": "The primary check passed.",
+     "check_refs": [],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "item:itm_lemB"
+   },
+   {
+    "id": "itm_prop",
+    "item_ref": {
+     "collection": "items",
+     "id": "itm_prop",
+     "version": 1
+    },
+    "kind": "proposition",
+    "label": "Proposition 5.4",
+    "caption": "Uniform approximation",
+    "assessment": {
+     "state": "green",
+     "label": "Checked",
+     "explanation": "The primary check passed.",
+     "check_refs": [],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "item:itm_prop"
+   },
+   {
+    "id": "itm_thm",
+    "item_ref": {
+     "collection": "items",
+     "id": "itm_thm",
+     "version": 1
+    },
+    "kind": "theorem",
+    "label": "Theorem 6.1",
+    "caption": "Main approximation theorem",
+    "assessment": {
+     "state": "green",
+     "label": "Composition checked",
+     "explanation": "The final composition check passed and no independent review is required for this release.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_thm_final",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "item:itm_thm"
+   }
+  ],
+  "connections": [
+   {
+    "id": "con_h_lemA",
+    "from": "itm_h",
+    "to": "itm_lemA",
+    "primary_use_ids": [
+     "use_h_lemA"
+    ],
+    "groups": [],
+    "support_refs": [],
+    "obligation_ids": [
+     "obl_h_lemA"
+    ],
+    "context_refs": [],
+    "assessment": {
+     "state": "green",
+     "label": "Application checked",
+     "explanation": "The application passed its primary check.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_h_lemA",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "conn:con_h_lemA"
+   },
+   {
+    "id": "con_def_lemA",
+    "from": "itm_def",
+    "to": "itm_lemA",
+    "primary_use_ids": [
+     "use_def_lemA"
+    ],
+    "groups": [],
+    "support_refs": [],
+    "obligation_ids": [
+     "obl_def_lemA"
+    ],
+    "context_refs": [],
+    "assessment": {
+     "state": "green",
+     "label": "Application checked",
+     "explanation": "The application passed its primary check.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_def_lemA",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "conn:con_def_lemA"
+   },
+   {
+    "id": "con_lemA_lemB",
+    "from": "itm_lemA",
+    "to": "itm_lemB",
+    "primary_use_ids": [
+     "use_lemA_lemB"
+    ],
+    "groups": [],
+    "support_refs": [],
+    "obligation_ids": [
+     "obl_lemA_lemB"
+    ],
+    "context_refs": [],
+    "assessment": {
+     "state": "green",
+     "label": "Application checked",
+     "explanation": "The application passed its primary check.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_lemA_lemB",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "conn:con_lemA_lemB"
+   },
+   {
+    "id": "con_lemB_prop",
+    "from": "itm_lemB",
+    "to": "itm_prop",
+    "primary_use_ids": [
+     "use_lemB_prop"
+    ],
+    "groups": [],
+    "support_refs": [],
+    "obligation_ids": [
+     "obl_lemB_prop"
+    ],
+    "context_refs": [],
+    "assessment": {
+     "state": "green",
+     "label": "Application checked",
+     "explanation": "The application passed its primary check.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_lemB_prop",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "conn:con_lemB_prop"
+   },
+   {
+    "id": "con_prop_thm",
+    "from": "itm_prop",
+    "to": "itm_thm",
+    "primary_use_ids": [
+     "use_prop_thm"
+    ],
+    "groups": [],
+    "support_refs": [],
+    "obligation_ids": [
+     "obl_prop_thm"
+    ],
+    "context_refs": [],
+    "assessment": {
+     "state": "green",
+     "label": "Application checked",
+     "explanation": "The application passed its primary check.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_prop_thm",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "conn:con_prop_thm"
+   },
+   {
+    "id": "con_h_thm",
+    "from": "itm_h",
+    "to": "itm_thm",
+    "primary_use_ids": [
+     "use_h_thm"
+    ],
+    "groups": [],
+    "support_refs": [],
+    "obligation_ids": [
+     "obl_h_thm"
+    ],
+    "context_refs": [],
+    "assessment": {
+     "state": "green",
+     "label": "Application checked",
+     "explanation": "The application passed its primary check.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_h_thm",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    },
+    "detail_key": "conn:con_h_thm"
+   }
+  ],
+  "records": [
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_h",
+     "version": 1
+    },
+    "body": {
+     "kind": "assumption",
+     "label": "Assumption H (sub-Gaussian design with bounded fourth moments and isotropic covariance)",
+     "caption": "Design condition",
+     "statement": {
+      "form": "text",
+      "text": "The design vectors are independent, sub-Gaussian, have bounded fourth moments and identity covariance."
+     },
+     "passages": [],
+     "aliases": [],
+     "uncertainty": null,
+     "origin": "paper",
+     "owner_id": null,
+     "scope_id": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_def",
+     "version": 1
+    },
+    "body": {
+     "kind": "definition",
+     "label": "Definition 5.1",
+     "caption": "A deliberately long caption that keeps going with many more words than the node box can hold so that the renderer must truncate it to two lines with an ellipsis",
+     "statement": {
+      "form": "text",
+      "text": "Let x_1x_2x_3ThetaHatMinimiserOverTheConstraintSetWithPenaltyParameterLambdaEqualsSigmaSqrtOfTwoLogDOverNThetaHatMinimiserOverTheConstraintSetWithPenaltyParameterLambdaEqualsSigmaSqrtOfTwoLogDOverNThetaHatMinimiserOverTheConstraintSetWithPenaltyParameterLambdaEqualsSigmaSqrtOfTwoLogDOverNThetaHatMinimiserOverTheConstraintSetWithPenaltyParameterLambdaEqualsSigmaSqrtOfTwoLogDOverN denote the penalised minimiser over the constraint set; the identifier is written without spaces on purpose."
+     },
+     "passages": [],
+     "aliases": [],
+     "uncertainty": null,
+     "origin": "paper",
+     "owner_id": null,
+     "scope_id": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_lemA",
+     "version": 1
+    },
+    "body": {
+     "kind": "lemma",
+     "label": "Lemma 5.2",
+     "caption": "Polynomial expansion bound",
+     "statement": {
+      "form": "latex",
+      "text": "For every polynomial of degree at most 80 with coefficients bounded by one, f(x) = a_1 x + ... + a_80 x^80 <= C (1 + |x|)^p uniformly on the real line."
+     },
+     "passages": [],
+     "aliases": [],
+     "uncertainty": null,
+     "origin": "paper",
+     "owner_id": null,
+     "scope_id": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_lemB",
+     "version": 1
+    },
+    "body": {
+     "kind": "lemma",
+     "label": "Lemma 5.3",
+     "caption": "Tail control",
+     "statement": {
+      "form": "text",
+      "text": "The tail sum R_m(x) vanishes as m tends to infinity, uniformly on compact sets."
+     },
+     "passages": [],
+     "aliases": [],
+     "uncertainty": null,
+     "origin": "paper",
+     "owner_id": null,
+     "scope_id": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_prop",
+     "version": 1
+    },
+    "body": {
+     "kind": "proposition",
+     "label": "Proposition 5.4",
+     "caption": "Uniform approximation",
+     "statement": {
+      "form": "text",
+      "text": "The truncated expansion approximates f uniformly with an error of order 1/m."
+     },
+     "passages": [],
+     "aliases": [],
+     "uncertainty": null,
+     "origin": "paper",
+     "owner_id": null,
+     "scope_id": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_thm",
+     "version": 1
+    },
+    "body": {
+     "kind": "theorem",
+     "label": "Theorem 6.1",
+     "caption": "Main approximation theorem",
+     "statement": {
+      "form": "text",
+      "text": "Claim 1: for every n >= n_0 and every delta in (0, 1), the estimator theta_hat(n, delta) satisfies the oracle inequality with constant C_1 = 9 and the remainder r_1(n) <= 1/n^2, so that <inequality 1> holds with probability at least 1 - delta & the union bound closes the argument. Claim 2: for every n >= n_0 and every delta in (0, 1), the estimator theta_hat(n, delta) satisfies the oracle inequality with constant C_2 = 3 and the remainder r_2(n) <= 2/n^2, so that <inequality 2> holds with probability at least 1 - delta & the union bound closes the argument. Claim 3: for every n >= n_0 and every delta in (0, 1), the estimator theta_hat(n, delta) satisfies the oracle inequality with constant C_3 = 10 and the remainder r_3(n) <= 3/n^2, so that <inequality 3> holds with probability at least 1 - delta & the union bound closes the argument. Claim 4: for every n >= n_0 and every delta in (0, 1), the estimator theta_hat(n, delta) satisfies the oracle inequality with constant C_4 = 4 and the remainder r_4(n) <= 4/n^2, so that <inequality 4> holds with probability at least 1 - delta & the union bound closes the argument. Claim 5: for every n >= n_0 and every delta in (0, 1), the estimator theta_hat(n, delta) satisfies the oracle inequality with constant C_5 = 11 and the remainder r_5(n) <= 5/n^2, so that <inequality 5> holds with probability at least 1 - delta & the union bound closes the argument. Claim 6: for every n >= n_0 and every delta in (0, 1), the estimator theta_hat(n, delta) satisfies the oracle inequality with constant C_6 = 5 and the remainder r_6(n) <= 6/n^2, so that <inequality 6> holds with probability at least 1 - delta & the union bound closes the argument. Claim 7: for every n >= n_0 and every delta in (0, 1), the estimator theta_hat(n, delta) satisfies the oracle inequality with constant C_7 = 12 and the remainder r_7(n) <= 7/n^2, so that <inequality 7> holds with probability at least 1 - delta & the union bound closes the argument. Claim 8: for every n >= n_0 and every delta in (0, 1), the estimator theta_hat(n, delta) satisfies the oracle inequality with constant C_8 = 6 and the remainder r_8(n) <= 8/n^2, so that <inequality 8> holds with probability at least 1 - delta & the union bound closes the argument."
+     },
+     "passages": [
+      "anc_long"
+     ],
+     "aliases": [],
+     "uncertainty": null,
+     "origin": "paper",
+     "owner_id": null,
+     "scope_id": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_h_lemA",
+     "version": 1
+    },
+    "body": {
+     "from": "itm_h",
+     "to": "itm_lemA",
+     "type": "invoke",
+     "group_id": null,
+     "reason": "itm_h is applied in the proof of itm_lemA.",
+     "needed_form": null,
+     "substitutions": [],
+     "evidence_refs": [],
+     "regime": null,
+     "uncertainty": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_def_lemA",
+     "version": 1
+    },
+    "body": {
+     "from": "itm_def",
+     "to": "itm_lemA",
+     "type": "invoke",
+     "group_id": null,
+     "reason": "itm_def is applied in the proof of itm_lemA.",
+     "needed_form": null,
+     "substitutions": [],
+     "evidence_refs": [],
+     "regime": null,
+     "uncertainty": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_lemA_lemB",
+     "version": 1
+    },
+    "body": {
+     "from": "itm_lemA",
+     "to": "itm_lemB",
+     "type": "invoke",
+     "group_id": null,
+     "reason": "itm_lemA is applied in the proof of itm_lemB.",
+     "needed_form": null,
+     "substitutions": [],
+     "evidence_refs": [],
+     "regime": null,
+     "uncertainty": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_lemB_prop",
+     "version": 1
+    },
+    "body": {
+     "from": "itm_lemB",
+     "to": "itm_prop",
+     "type": "invoke",
+     "group_id": null,
+     "reason": "itm_lemB is applied in the proof of itm_prop.",
+     "needed_form": null,
+     "substitutions": [],
+     "evidence_refs": [],
+     "regime": null,
+     "uncertainty": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_prop_thm",
+     "version": 1
+    },
+    "body": {
+     "from": "itm_prop",
+     "to": "itm_thm",
+     "type": "invoke",
+     "group_id": null,
+     "reason": "itm_prop is applied in the proof of itm_thm.",
+     "needed_form": null,
+     "substitutions": [],
+     "evidence_refs": [],
+     "regime": null,
+     "uncertainty": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_h_thm",
+     "version": 1
+    },
+    "body": {
+     "from": "itm_h",
+     "to": "itm_thm",
+     "type": "invoke",
+     "group_id": null,
+     "reason": "itm_h is applied in the proof of itm_thm.",
+     "needed_form": null,
+     "substitutions": [],
+     "evidence_refs": [],
+     "regime": null,
+     "uncertainty": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_h_lemA",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_long_1",
+     "target": {
+      "collection": "uses",
+      "id": "use_h_lemA"
+     },
+     "kind": "application",
+     "role": "primary",
+     "reviewer": "primary-auditor",
+     "protocol_version": "1.0",
+     "state": "final",
+     "outcome": "pass",
+     "reasoning": "The application use_h_lemA matches the stated form of itm_h.",
+     "evidence_refs": [],
+     "conditions": [],
+     "next_action": null,
+     "response_id": null,
+     "supersedes": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_def_lemA",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_long_1",
+     "target": {
+      "collection": "uses",
+      "id": "use_def_lemA"
+     },
+     "kind": "application",
+     "role": "primary",
+     "reviewer": "primary-auditor",
+     "protocol_version": "1.0",
+     "state": "final",
+     "outcome": "pass",
+     "reasoning": "The application use_def_lemA matches the stated form of itm_def.",
+     "evidence_refs": [],
+     "conditions": [],
+     "next_action": null,
+     "response_id": null,
+     "supersedes": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_lemA_lemB",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_long_1",
+     "target": {
+      "collection": "uses",
+      "id": "use_lemA_lemB"
+     },
+     "kind": "application",
+     "role": "primary",
+     "reviewer": "primary-auditor",
+     "protocol_version": "1.0",
+     "state": "final",
+     "outcome": "pass",
+     "reasoning": "The application use_lemA_lemB matches the stated form of itm_lemA.",
+     "evidence_refs": [],
+     "conditions": [],
+     "next_action": null,
+     "response_id": null,
+     "supersedes": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_lemB_prop",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_long_1",
+     "target": {
+      "collection": "uses",
+      "id": "use_lemB_prop"
+     },
+     "kind": "application",
+     "role": "primary",
+     "reviewer": "primary-auditor",
+     "protocol_version": "1.0",
+     "state": "final",
+     "outcome": "pass",
+     "reasoning": "The application use_lemB_prop matches the stated form of itm_lemB.",
+     "evidence_refs": [],
+     "conditions": [],
+     "next_action": null,
+     "response_id": null,
+     "supersedes": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_prop_thm",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_long_1",
+     "target": {
+      "collection": "uses",
+      "id": "use_prop_thm"
+     },
+     "kind": "application",
+     "role": "primary",
+     "reviewer": "primary-auditor",
+     "protocol_version": "1.0",
+     "state": "final",
+     "outcome": "pass",
+     "reasoning": "The application use_prop_thm matches the stated form of itm_prop.",
+     "evidence_refs": [],
+     "conditions": [],
+     "next_action": null,
+     "response_id": null,
+     "supersedes": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_h_thm",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_long_1",
+     "target": {
+      "collection": "uses",
+      "id": "use_h_thm"
+     },
+     "kind": "application",
+     "role": "primary",
+     "reviewer": "primary-auditor",
+     "protocol_version": "1.0",
+     "state": "final",
+     "outcome": "pass",
+     "reasoning": "The application use_h_thm matches the stated form of itm_h.",
+     "evidence_refs": [],
+     "conditions": [],
+     "next_action": null,
+     "response_id": null,
+     "supersedes": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_thm_final",
+     "version": 1
+    },
+    "body": {
+     "audit_id": "aud_long_1",
+     "target": {
+      "collection": "items",
+      "id": "itm_thm"
+     },
+     "kind": "final_composition",
+     "role": "primary",
+     "reviewer": "primary-auditor",
+     "protocol_version": "1.0",
+     "state": "final",
+     "outcome": "pass",
+     "reasoning": "All premises compose into the stated approximation rate.",
+     "evidence_refs": [
+      {
+       "collection": "anchors",
+       "id": "anc_long"
+      }
+     ],
+     "conditions": [],
+     "next_action": null,
+     "response_id": null,
+     "supersedes": null
+    }
+   },
+   {
+    "ref": {
+     "collection": "anchors",
+     "id": "anc_long",
+     "version": 1
+    },
+    "body": {
+     "source_id": "src_main",
+     "source_version": 1,
+     "locator": {
+      "start_line": 900,
+      "end_line": 900,
+      "page": 21,
+      "label": "Proof of Theorem 6.1"
+     },
+     "excerpt": "Proof of Theorem 6.1. Step 1 applies Lemma 5.2 to the 1-th block of coordinates and collects the constants; Step 2 applies Lemma 5.3 to the 2-th block of coordinates and collects the constants; Step 3 applies Lemma 5.1 to the 3-th block of coordinates and collects the constants; Step 4 applies Lemma 5.2 to the 4-th block of coordinates and collects the constants; Step 5 applies Lemma 5.3 to the 5-th block of coordinates and collects the constants; Step 6 applies Lemma 5.1 to the 6-th block of coordinates and collects the constants; Step 7 applies Lemma 5.2 to the 7-th block of coordinates and collects the constants; ",
+     "excerpt_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "method": "exact",
+     "limitation": "The source line is a single very long paragraph."
+    }
+   }
+  ],
+  "obligations": [
+   {
+    "id": "obl_h_lemA",
+    "target": {
+     "collection": "uses",
+     "id": "use_h_lemA"
+    },
+    "kind": "application",
+    "role": "primary",
+    "check_refs": [
+     {
+      "collection": "checks",
+      "id": "chk_h_lemA",
+      "version": 1
+     }
+    ],
+    "assessment": {
+     "state": "green",
+     "label": "Passed",
+     "explanation": "Final primary check passed.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_h_lemA",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    }
+   },
+   {
+    "id": "obl_def_lemA",
+    "target": {
+     "collection": "uses",
+     "id": "use_def_lemA"
+    },
+    "kind": "application",
+    "role": "primary",
+    "check_refs": [
+     {
+      "collection": "checks",
+      "id": "chk_def_lemA",
+      "version": 1
+     }
+    ],
+    "assessment": {
+     "state": "green",
+     "label": "Passed",
+     "explanation": "Final primary check passed.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_def_lemA",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    }
+   },
+   {
+    "id": "obl_lemA_lemB",
+    "target": {
+     "collection": "uses",
+     "id": "use_lemA_lemB"
+    },
+    "kind": "application",
+    "role": "primary",
+    "check_refs": [
+     {
+      "collection": "checks",
+      "id": "chk_lemA_lemB",
+      "version": 1
+     }
+    ],
+    "assessment": {
+     "state": "green",
+     "label": "Passed",
+     "explanation": "Final primary check passed.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_lemA_lemB",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    }
+   },
+   {
+    "id": "obl_lemB_prop",
+    "target": {
+     "collection": "uses",
+     "id": "use_lemB_prop"
+    },
+    "kind": "application",
+    "role": "primary",
+    "check_refs": [
+     {
+      "collection": "checks",
+      "id": "chk_lemB_prop",
+      "version": 1
+     }
+    ],
+    "assessment": {
+     "state": "green",
+     "label": "Passed",
+     "explanation": "Final primary check passed.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_lemB_prop",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    }
+   },
+   {
+    "id": "obl_prop_thm",
+    "target": {
+     "collection": "uses",
+     "id": "use_prop_thm"
+    },
+    "kind": "application",
+    "role": "primary",
+    "check_refs": [
+     {
+      "collection": "checks",
+      "id": "chk_prop_thm",
+      "version": 1
+     }
+    ],
+    "assessment": {
+     "state": "green",
+     "label": "Passed",
+     "explanation": "Final primary check passed.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_prop_thm",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    }
+   },
+   {
+    "id": "obl_h_thm",
+    "target": {
+     "collection": "uses",
+     "id": "use_h_thm"
+    },
+    "kind": "application",
+    "role": "primary",
+    "check_refs": [
+     {
+      "collection": "checks",
+      "id": "chk_h_thm",
+      "version": 1
+     }
+    ],
+    "assessment": {
+     "state": "green",
+     "label": "Passed",
+     "explanation": "Final primary check passed.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_h_thm",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    }
+   },
+   {
+    "id": "obl_thm_final",
+    "target": {
+     "collection": "items",
+     "id": "itm_thm"
+    },
+    "kind": "final_composition",
+    "role": "primary",
+    "check_refs": [
+     {
+      "collection": "checks",
+      "id": "chk_thm_final",
+      "version": 1
+     }
+    ],
+    "assessment": {
+     "state": "green",
+     "label": "Composition checked",
+     "explanation": "The final composition check passed.",
+     "check_refs": [
+      {
+       "collection": "checks",
+       "id": "chk_thm_final",
+       "version": 1
+      }
+     ],
+     "finding_refs": [],
+     "missing_obligation_ids": [],
+     "independent_review": "not_required"
+    }
+   }
+  ],
+  "details": {
+   "item:itm_h": {
+    "record_refs": [
+     {
+      "collection": "items",
+      "id": "itm_h",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "statement",
+      "title": "Statement",
+      "kind": "statement",
+      "record_refs": [
+       {
+        "collection": "items",
+        "id": "itm_h",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_h_lemA",
+        "version": 1
+       },
+       {
+        "collection": "uses",
+        "id": "use_h_thm",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_h_lemA",
+       "obl_h_thm"
+      ],
+      "note": null
+     }
+    ]
+   },
+   "item:itm_def": {
+    "record_refs": [
+     {
+      "collection": "items",
+      "id": "itm_def",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "statement",
+      "title": "Statement",
+      "kind": "statement",
+      "record_refs": [
+       {
+        "collection": "items",
+        "id": "itm_def",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_def_lemA",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_def_lemA"
+      ],
+      "note": null
+     }
+    ]
+   },
+   "item:itm_lemA": {
+    "record_refs": [
+     {
+      "collection": "items",
+      "id": "itm_lemA",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "statement",
+      "title": "Statement",
+      "kind": "statement",
+      "record_refs": [
+       {
+        "collection": "items",
+        "id": "itm_lemA",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "premises",
+      "title": "Premises used",
+      "kind": "premises",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_h_lemA",
+        "version": 1
+       },
+       {
+        "collection": "uses",
+        "id": "use_def_lemA",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_h_lemA",
+       "obl_def_lemA"
+      ],
+      "note": null
+     },
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_lemA_lemB",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_lemA_lemB"
+      ],
+      "note": null
+     }
+    ]
+   },
+   "item:itm_lemB": {
+    "record_refs": [
+     {
+      "collection": "items",
+      "id": "itm_lemB",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "statement",
+      "title": "Statement",
+      "kind": "statement",
+      "record_refs": [
+       {
+        "collection": "items",
+        "id": "itm_lemB",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "premises",
+      "title": "Premises used",
+      "kind": "premises",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_lemA_lemB",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_lemA_lemB"
+      ],
+      "note": null
+     },
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_lemB_prop",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_lemB_prop"
+      ],
+      "note": null
+     }
+    ]
+   },
+   "item:itm_prop": {
+    "record_refs": [
+     {
+      "collection": "items",
+      "id": "itm_prop",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "statement",
+      "title": "Statement",
+      "kind": "statement",
+      "record_refs": [
+       {
+        "collection": "items",
+        "id": "itm_prop",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "premises",
+      "title": "Premises used",
+      "kind": "premises",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_lemB_prop",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_lemB_prop"
+      ],
+      "note": null
+     },
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_prop_thm",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_prop_thm"
+      ],
+      "note": null
+     }
+    ]
+   },
+   "item:itm_thm": {
+    "record_refs": [
+     {
+      "collection": "items",
+      "id": "itm_thm",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "statement",
+      "title": "Statement",
+      "kind": "statement",
+      "record_refs": [
+       {
+        "collection": "items",
+        "id": "itm_thm",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     },
+     {
+      "key": "premises",
+      "title": "Premises used",
+      "kind": "premises",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_prop_thm",
+        "version": 1
+       },
+       {
+        "collection": "uses",
+        "id": "use_h_thm",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_prop_thm",
+       "obl_h_thm"
+      ],
+      "note": null
+     },
+     {
+      "key": "composition",
+      "title": "Final composition",
+      "kind": "composition",
+      "record_refs": [
+       {
+        "collection": "checks",
+        "id": "chk_thm_final",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_thm_final"
+      ],
+      "note": null
+     },
+     {
+      "key": "sources",
+      "title": "Source anchors",
+      "kind": "sources",
+      "record_refs": [
+       {
+        "collection": "anchors",
+        "id": "anc_long",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": "The excerpt is one very long line."
+     }
+    ]
+   },
+   "conn:con_h_lemA": {
+    "record_refs": [
+     {
+      "collection": "uses",
+      "id": "use_h_lemA",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_h_lemA",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_h_lemA"
+      ],
+      "note": null
+     },
+     {
+      "key": "review",
+      "title": "Checks",
+      "kind": "review",
+      "record_refs": [
+       {
+        "collection": "checks",
+        "id": "chk_h_lemA",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     }
+    ]
+   },
+   "conn:con_def_lemA": {
+    "record_refs": [
+     {
+      "collection": "uses",
+      "id": "use_def_lemA",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_def_lemA",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_def_lemA"
+      ],
+      "note": null
+     },
+     {
+      "key": "review",
+      "title": "Checks",
+      "kind": "review",
+      "record_refs": [
+       {
+        "collection": "checks",
+        "id": "chk_def_lemA",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     }
+    ]
+   },
+   "conn:con_lemA_lemB": {
+    "record_refs": [
+     {
+      "collection": "uses",
+      "id": "use_lemA_lemB",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_lemA_lemB",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_lemA_lemB"
+      ],
+      "note": null
+     },
+     {
+      "key": "review",
+      "title": "Checks",
+      "kind": "review",
+      "record_refs": [
+       {
+        "collection": "checks",
+        "id": "chk_lemA_lemB",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     }
+    ]
+   },
+   "conn:con_lemB_prop": {
+    "record_refs": [
+     {
+      "collection": "uses",
+      "id": "use_lemB_prop",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_lemB_prop",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_lemB_prop"
+      ],
+      "note": null
+     },
+     {
+      "key": "review",
+      "title": "Checks",
+      "kind": "review",
+      "record_refs": [
+       {
+        "collection": "checks",
+        "id": "chk_lemB_prop",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     }
+    ]
+   },
+   "conn:con_prop_thm": {
+    "record_refs": [
+     {
+      "collection": "uses",
+      "id": "use_prop_thm",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_prop_thm",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_prop_thm"
+      ],
+      "note": null
+     },
+     {
+      "key": "review",
+      "title": "Checks",
+      "kind": "review",
+      "record_refs": [
+       {
+        "collection": "checks",
+        "id": "chk_prop_thm",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     }
+    ]
+   },
+   "conn:con_h_thm": {
+    "record_refs": [
+     {
+      "collection": "uses",
+      "id": "use_h_thm",
+      "version": 1
+     }
+    ],
+    "sections": [
+     {
+      "key": "applications",
+      "title": "Applications",
+      "kind": "applications",
+      "record_refs": [
+       {
+        "collection": "uses",
+        "id": "use_h_thm",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [
+       "obl_h_thm"
+      ],
+      "note": null
+     },
+     {
+      "key": "review",
+      "title": "Checks",
+      "kind": "review",
+      "record_refs": [
+       {
+        "collection": "checks",
+        "id": "chk_h_thm",
+        "version": 1
+       }
+      ],
+      "obligation_ids": [],
+      "note": null
+     }
+    ]
+   }
+  },
+  "record_locations": [
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_h",
+     "version": 1
+    },
+    "detail_key": "item:itm_h",
+    "section_key": "statement"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_h_lemA",
+     "version": 1
+    },
+    "detail_key": "item:itm_h",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_h_thm",
+     "version": 1
+    },
+    "detail_key": "item:itm_h",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_def",
+     "version": 1
+    },
+    "detail_key": "item:itm_def",
+    "section_key": "statement"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_def_lemA",
+     "version": 1
+    },
+    "detail_key": "item:itm_def",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_lemA",
+     "version": 1
+    },
+    "detail_key": "item:itm_lemA",
+    "section_key": "statement"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_h_lemA",
+     "version": 1
+    },
+    "detail_key": "item:itm_lemA",
+    "section_key": "premises"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_def_lemA",
+     "version": 1
+    },
+    "detail_key": "item:itm_lemA",
+    "section_key": "premises"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_lemA_lemB",
+     "version": 1
+    },
+    "detail_key": "item:itm_lemA",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_lemB",
+     "version": 1
+    },
+    "detail_key": "item:itm_lemB",
+    "section_key": "statement"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_lemA_lemB",
+     "version": 1
+    },
+    "detail_key": "item:itm_lemB",
+    "section_key": "premises"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_lemB_prop",
+     "version": 1
+    },
+    "detail_key": "item:itm_lemB",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_prop",
+     "version": 1
+    },
+    "detail_key": "item:itm_prop",
+    "section_key": "statement"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_lemB_prop",
+     "version": 1
+    },
+    "detail_key": "item:itm_prop",
+    "section_key": "premises"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_prop_thm",
+     "version": 1
+    },
+    "detail_key": "item:itm_prop",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "items",
+     "id": "itm_thm",
+     "version": 1
+    },
+    "detail_key": "item:itm_thm",
+    "section_key": "statement"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_prop_thm",
+     "version": 1
+    },
+    "detail_key": "item:itm_thm",
+    "section_key": "premises"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_h_thm",
+     "version": 1
+    },
+    "detail_key": "item:itm_thm",
+    "section_key": "premises"
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_thm_final",
+     "version": 1
+    },
+    "detail_key": "item:itm_thm",
+    "section_key": "composition"
+   },
+   {
+    "ref": {
+     "collection": "anchors",
+     "id": "anc_long",
+     "version": 1
+    },
+    "detail_key": "item:itm_thm",
+    "section_key": "sources"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_h_lemA",
+     "version": 1
+    },
+    "detail_key": "conn:con_h_lemA",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_h_lemA",
+     "version": 1
+    },
+    "detail_key": "conn:con_h_lemA",
+    "section_key": "review"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_def_lemA",
+     "version": 1
+    },
+    "detail_key": "conn:con_def_lemA",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_def_lemA",
+     "version": 1
+    },
+    "detail_key": "conn:con_def_lemA",
+    "section_key": "review"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_lemA_lemB",
+     "version": 1
+    },
+    "detail_key": "conn:con_lemA_lemB",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_lemA_lemB",
+     "version": 1
+    },
+    "detail_key": "conn:con_lemA_lemB",
+    "section_key": "review"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_lemB_prop",
+     "version": 1
+    },
+    "detail_key": "conn:con_lemB_prop",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_lemB_prop",
+     "version": 1
+    },
+    "detail_key": "conn:con_lemB_prop",
+    "section_key": "review"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_prop_thm",
+     "version": 1
+    },
+    "detail_key": "conn:con_prop_thm",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_prop_thm",
+     "version": 1
+    },
+    "detail_key": "conn:con_prop_thm",
+    "section_key": "review"
+   },
+   {
+    "ref": {
+     "collection": "uses",
+     "id": "use_h_thm",
+     "version": 1
+    },
+    "detail_key": "conn:con_h_thm",
+    "section_key": "applications"
+   },
+   {
+    "ref": {
+     "collection": "checks",
+     "id": "chk_h_thm",
+     "version": 1
+    },
+    "detail_key": "conn:con_h_thm",
+    "section_key": "review"
+   }
+  ],
+  "summary": {
+   "scope": {
+    "mode": "paper",
+    "target_refs": [],
+    "exclusions": []
+   },
+   "progress": {
+    "process_complete": true,
+    "required_obligations": 7,
+    "completed_current_obligations": 7,
+    "draft_checks": 0,
+    "major_results": 1,
+    "source_unbound_items": 0
+   },
+   "findings": {
+    "open": 0,
+    "resolved": 0,
+    "superseded": 0,
+    "refs": []
+   },
+   "source_limits": [],
+   "published_revision": 12
+  },
+  "layout": {
+   "mode": "dag",
+   "reasons": []
+  }
+ },
+ "display": {
+  "refs": {
+   "items:itm_lemA:1": {
+    "statement_html": "<p>For every polynomial of degree at most 80 with coefficients bounded by one, the following single-line expansion holds uniformly on the real line:</p><p><math display=\"block\" xmlns=\"http://www.w3.org/1998/Math/MathML\" aria-label=\"LaTeX: f(x) = a_{1} x^{1} + a_{2} x^{2} + a_{3} x^{3} + a_{4} x^{4} + a_{5} x^{5} + a_{6} x^{6} + a_{7} x^{7} + a_{8} x^{8} + a_{9} x^{9} + a_{10} x^{10} + a_{11} x^{11} + a_{12} x^{12} + a_{13} x^{13} + a_{14} x^{14} + a_{15} x^{15} + a_{16} x^{16} + a_{17} x^{17} + a_{18} x^{18} + a_{19} x^{19} + a_{20} x^{20} + a_{21} x^{21} + a_{22} x^{22} + a_{23} x^{23} + a_{24} x^{24} + a_{25} x^{25} + a_{26} x^{26} + a_{27} x^{27} + a_{28} x^{28} + a_{29} x^{29} + a_{30} x^{30} + a_{31} x^{31} + a_{32} x^{32} + a_{33} x^{33} + a_{34} x^{34} + a_{35} x^{35} + a_{36} x^{36} + a_{37} x^{37} + a_{38} x^{38} + a_{39} x^{39} + a_{40} x^{40} + a_{41} x^{41} + a_{42} x^{42} + a_{43} x^{43} + a_{44} x^{44} + a_{45} x^{45} + a_{46} x^{46} + a_{47} x^{47} + a_{48} x^{48} + a_{49} x^{49} + a_{50} x^{50} + a_{51} x^{51} + a_{52} x^{52} + a_{53} x^{53} + a_{54} x^{54} + a_{55} x^{55} + a_{56} x^{56} + a_{57} x^{57} + a_{58} x^{58} + a_{59} x^{59} + a_{60} x^{60} + a_{61} x^{61} + a_{62} x^{62} + a_{63} x^{63} + a_{64} x^{64} + a_{65} x^{65} + a_{66} x^{66} + a_{67} x^{67} + a_{68} x^{68} + a_{69} x^{69} + a_{70} x^{70} + a_{71} x^{71} + a_{72} x^{72} + a_{73} x^{73} + a_{74} x^{74} + a_{75} x^{75} + a_{76} x^{76} + a_{77} x^{77} + a_{78} x^{78} + a_{79} x^{79} + a_{80} x^{80} \\le C (1 + |x|)^p\" class=\"math-display\"><semantics><mrow><mi>f</mi><mo>(</mo><mi>x</mi><mo>)</mo><mo>=</mo><msub><mi>a</mi><mn>1</mn></msub><msup><mi>x</mi><mn>1</mn></msup><mo>+</mo><msub><mi>a</mi><mn>2</mn></msub><msup><mi>x</mi><mn>2</mn></msup><mo>+</mo><msub><mi>a</mi><mn>3</mn></msub><msup><mi>x</mi><mn>3</mn></msup><mo>+</mo><msub><mi>a</mi><mn>4</mn></msub><msup><mi>x</mi><mn>4</mn></msup><mo>+</mo><msub><mi>a</mi><mn>5</mn></msub><msup><mi>x</mi><mn>5</mn></msup><mo>+</mo><msub><mi>a</mi><mn>6</mn></msub><msup><mi>x</mi><mn>6</mn></msup><mo>+</mo><msub><mi>a</mi><mn>7</mn></msub><msup><mi>x</mi><mn>7</mn></msup><mo>+</mo><msub><mi>a</mi><mn>8</mn></msub><msup><mi>x</mi><mn>8</mn></msup><mo>+</mo><msub><mi>a</mi><mn>9</mn></msub><msup><mi>x</mi><mn>9</mn></msup><mo>+</mo><msub><mi>a</mi><mn>10</mn></msub><msup><mi>x</mi><mn>10</mn></msup><mo>+</mo><msub><mi>a</mi><mn>11</mn></msub><msup><mi>x</mi><mn>11</mn></msup><mo>+</mo><msub><mi>a</mi><mn>12</mn></msub><msup><mi>x</mi><mn>12</mn></msup><mo>+</mo><msub><mi>a</mi><mn>13</mn></msub><msup><mi>x</mi><mn>13</mn></msup><mo>+</mo><msub><mi>a</mi><mn>14</mn></msub><msup><mi>x</mi><mn>14</mn></msup><mo>+</mo><msub><mi>a</mi><mn>15</mn></msub><msup><mi>x</mi><mn>15</mn></msup><mo>+</mo><msub><mi>a</mi><mn>16</mn></msub><msup><mi>x</mi><mn>16</mn></msup><mo>+</mo><msub><mi>a</mi><mn>17</mn></msub><msup><mi>x</mi><mn>17</mn></msup><mo>+</mo><msub><mi>a</mi><mn>18</mn></msub><msup><mi>x</mi><mn>18</mn></msup><mo>+</mo><msub><mi>a</mi><mn>19</mn></msub><msup><mi>x</mi><mn>19</mn></msup><mo>+</mo><msub><mi>a</mi><mn>20</mn></msub><msup><mi>x</mi><mn>20</mn></msup><mo>+</mo><msub><mi>a</mi><mn>21</mn></msub><msup><mi>x</mi><mn>21</mn></msup><mo>+</mo><msub><mi>a</mi><mn>22</mn></msub><msup><mi>x</mi><mn>22</mn></msup><mo>+</mo><msub><mi>a</mi><mn>23</mn></msub><msup><mi>x</mi><mn>23</mn></msup><mo>+</mo><msub><mi>a</mi><mn>24</mn></msub><msup><mi>x</mi><mn>24</mn></msup><mo>+</mo><msub><mi>a</mi><mn>25</mn></msub><msup><mi>x</mi><mn>25</mn></msup><mo>+</mo><msub><mi>a</mi><mn>26</mn></msub><msup><mi>x</mi><mn>26</mn></msup><mo>+</mo><msub><mi>a</mi><mn>27</mn></msub><msup><mi>x</mi><mn>27</mn></msup><mo>+</mo><msub><mi>a</mi><mn>28</mn></msub><msup><mi>x</mi><mn>28</mn></msup><mo>+</mo><msub><mi>a</mi><mn>29</mn></msub><msup><mi>x</mi><mn>29</mn></msup><mo>+</mo><msub><mi>a</mi><mn>30</mn></msub><msup><mi>x</mi><mn>30</mn></msup><mo>+</mo><msub><mi>a</mi><mn>31</mn></msub><msup><mi>x</mi><mn>31</mn></msup><mo>+</mo><msub><mi>a</mi><mn>32</mn></msub><msup><mi>x</mi><mn>32</mn></msup><mo>+</mo><msub><mi>a</mi><mn>33</mn></msub><msup><mi>x</mi><mn>33</mn></msup><mo>+</mo><msub><mi>a</mi><mn>34</mn></msub><msup><mi>x</mi><mn>34</mn></msup><mo>+</mo><msub><mi>a</mi><mn>35</mn></msub><msup><mi>x</mi><mn>35</mn></msup><mo>+</mo><msub><mi>a</mi><mn>36</mn></msub><msup><mi>x</mi><mn>36</mn></msup><mo>+</mo><msub><mi>a</mi><mn>37</mn></msub><msup><mi>x</mi><mn>37</mn></msup><mo>+</mo><msub><mi>a</mi><mn>38</mn></msub><msup><mi>x</mi><mn>38</mn></msup><mo>+</mo><msub><mi>a</mi><mn>39</mn></msub><msup><mi>x</mi><mn>39</mn></msup><mo>+</mo><msub><mi>a</mi><mn>40</mn></msub><msup><mi>x</mi><mn>40</mn></msup><mo>+</mo><msub><mi>a</mi><mn>41</mn></msub><msup><mi>x</mi><mn>41</mn></msup><mo>+</mo><msub><mi>a</mi><mn>42</mn></msub><msup><mi>x</mi><mn>42</mn></msup><mo>+</mo><msub><mi>a</mi><mn>43</mn></msub><msup><mi>x</mi><mn>43</mn></msup><mo>+</mo><msub><mi>a</mi><mn>44</mn></msub><msup><mi>x</mi><mn>44</mn></msup><mo>+</mo><msub><mi>a</mi><mn>45</mn></msub><msup><mi>x</mi><mn>45</mn></msup><mo>+</mo><msub><mi>a</mi><mn>46</mn></msub><msup><mi>x</mi><mn>46</mn></msup><mo>+</mo><msub><mi>a</mi><mn>47</mn></msub><msup><mi>x</mi><mn>47</mn></msup><mo>+</mo><msub><mi>a</mi><mn>48</mn></msub><msup><mi>x</mi><mn>48</mn></msup><mo>+</mo><msub><mi>a</mi><mn>49</mn></msub><msup><mi>x</mi><mn>49</mn></msup><mo>+</mo><msub><mi>a</mi><mn>50</mn></msub><msup><mi>x</mi><mn>50</mn></msup><mo>+</mo><msub><mi>a</mi><mn>51</mn></msub><msup><mi>x</mi><mn>51</mn></msup><mo>+</mo><msub><mi>a</mi><mn>52</mn></msub><msup><mi>x</mi><mn>52</mn></msup><mo>+</mo><msub><mi>a</mi><mn>53</mn></msub><msup><mi>x</mi><mn>53</mn></msup><mo>+</mo><msub><mi>a</mi><mn>54</mn></msub><msup><mi>x</mi><mn>54</mn></msup><mo>+</mo><msub><mi>a</mi><mn>55</mn></msub><msup><mi>x</mi><mn>55</mn></msup><mo>+</mo><msub><mi>a</mi><mn>56</mn></msub><msup><mi>x</mi><mn>56</mn></msup><mo>+</mo><msub><mi>a</mi><mn>57</mn></msub><msup><mi>x</mi><mn>57</mn></msup><mo>+</mo><msub><mi>a</mi><mn>58</mn></msub><msup><mi>x</mi><mn>58</mn></msup><mo>+</mo><msub><mi>a</mi><mn>59</mn></msub><msup><mi>x</mi><mn>59</mn></msup><mo>+</mo><msub><mi>a</mi><mn>60</mn></msub><msup><mi>x</mi><mn>60</mn></msup><mo>+</mo><msub><mi>a</mi><mn>61</mn></msub><msup><mi>x</mi><mn>61</mn></msup><mo>+</mo><msub><mi>a</mi><mn>62</mn></msub><msup><mi>x</mi><mn>62</mn></msup><mo>+</mo><msub><mi>a</mi><mn>63</mn></msub><msup><mi>x</mi><mn>63</mn></msup><mo>+</mo><msub><mi>a</mi><mn>64</mn></msub><msup><mi>x</mi><mn>64</mn></msup><mo>+</mo><msub><mi>a</mi><mn>65</mn></msub><msup><mi>x</mi><mn>65</mn></msup><mo>+</mo><msub><mi>a</mi><mn>66</mn></msub><msup><mi>x</mi><mn>66</mn></msup><mo>+</mo><msub><mi>a</mi><mn>67</mn></msub><msup><mi>x</mi><mn>67</mn></msup><mo>+</mo><msub><mi>a</mi><mn>68</mn></msub><msup><mi>x</mi><mn>68</mn></msup><mo>+</mo><msub><mi>a</mi><mn>69</mn></msub><msup><mi>x</mi><mn>69</mn></msup><mo>+</mo><msub><mi>a</mi><mn>70</mn></msub><msup><mi>x</mi><mn>70</mn></msup><mo>+</mo><msub><mi>a</mi><mn>71</mn></msub><msup><mi>x</mi><mn>71</mn></msup><mo>+</mo><msub><mi>a</mi><mn>72</mn></msub><msup><mi>x</mi><mn>72</mn></msup><mo>+</mo><msub><mi>a</mi><mn>73</mn></msub><msup><mi>x</mi><mn>73</mn></msup><mo>+</mo><msub><mi>a</mi><mn>74</mn></msub><msup><mi>x</mi><mn>74</mn></msup><mo>+</mo><msub><mi>a</mi><mn>75</mn></msub><msup><mi>x</mi><mn>75</mn></msup><mo>+</mo><msub><mi>a</mi><mn>76</mn></msub><msup><mi>x</mi><mn>76</mn></msup><mo>+</mo><msub><mi>a</mi><mn>77</mn></msub><msup><mi>x</mi><mn>77</mn></msup><mo>+</mo><msub><mi>a</mi><mn>78</mn></msub><msup><mi>x</mi><mn>78</mn></msup><mo>+</mo><msub><mi>a</mi><mn>79</mn></msub><msup><mi>x</mi><mn>79</mn></msup><mo>+</mo><msub><mi>a</mi><mn>80</mn></msub><msup><mi>x</mi><mn>80</mn></msup><mo>≤</mo><mi>C</mi><msup><mrow><mo>(</mo><mn>1</mn><mo>+</mo><mo>|</mo><mi>x</mi><mo>|</mo><mo>)</mo></mrow><mi>p</mi></msup></mrow><annotation encoding=\"application/x-tex\">f(x) = a_{1} x^{1} + a_{2} x^{2} + a_{3} x^{3} + a_{4} x^{4} + a_{5} x^{5} + a_{6} x^{6} + a_{7} x^{7} + a_{8} x^{8} + a_{9} x^{9} + a_{10} x^{10} + a_{11} x^{11} + a_{12} x^{12} + a_{13} x^{13} + a_{14} x^{14} + a_{15} x^{15} + a_{16} x^{16} + a_{17} x^{17} + a_{18} x^{18} + a_{19} x^{19} + a_{20} x^{20} + a_{21} x^{21} + a_{22} x^{22} + a_{23} x^{23} + a_{24} x^{24} + a_{25} x^{25} + a_{26} x^{26} + a_{27} x^{27} + a_{28} x^{28} + a_{29} x^{29} + a_{30} x^{30} + a_{31} x^{31} + a_{32} x^{32} + a_{33} x^{33} + a_{34} x^{34} + a_{35} x^{35} + a_{36} x^{36} + a_{37} x^{37} + a_{38} x^{38} + a_{39} x^{39} + a_{40} x^{40} + a_{41} x^{41} + a_{42} x^{42} + a_{43} x^{43} + a_{44} x^{44} + a_{45} x^{45} + a_{46} x^{46} + a_{47} x^{47} + a_{48} x^{48} + a_{49} x^{49} + a_{50} x^{50} + a_{51} x^{51} + a_{52} x^{52} + a_{53} x^{53} + a_{54} x^{54} + a_{55} x^{55} + a_{56} x^{56} + a_{57} x^{57} + a_{58} x^{58} + a_{59} x^{59} + a_{60} x^{60} + a_{61} x^{61} + a_{62} x^{62} + a_{63} x^{63} + a_{64} x^{64} + a_{65} x^{65} + a_{66} x^{66} + a_{67} x^{67} + a_{68} x^{68} + a_{69} x^{69} + a_{70} x^{70} + a_{71} x^{71} + a_{72} x^{72} + a_{73} x^{73} + a_{74} x^{74} + a_{75} x^{75} + a_{76} x^{76} + a_{77} x^{77} + a_{78} x^{78} + a_{79} x^{79} + a_{80} x^{80} \\le C (1 + |x|)^p</annotation></semantics></math></p><p>and moreover the tail sum <math display=\"inline\" xmlns=\"http://www.w3.org/1998/Math/MathML\" aria-label=\"LaTeX: R_m(x) = \\sum_{k &gt; m} a_k x^k\" class=\"math-inline\"><semantics><mrow><msub><mi>R</mi><mi>m</mi></msub><mo>(</mo><mi>x</mi><mo>)</mo><mo>=</mo><msub><mo>∑</mo><mrow><mi>k</mi><mo>></mo><mi>m</mi></mrow></msub><msub><mi>a</mi><mi>k</mi></msub><msup><mi>x</mi><mi>k</mi></msup></mrow><annotation encoding=\"application/x-tex\">R_m(x) = \\sum_{k &gt; m} a_k x^k</annotation></semantics></math> vanishes as <math display=\"inline\" xmlns=\"http://www.w3.org/1998/Math/MathML\" aria-label=\"LaTeX: m \\to \\infty\" class=\"math-inline\"><semantics><mrow><mi>m</mi><mo>→</mo><mi>∞</mi></mrow><annotation encoding=\"application/x-tex\">m \\to \\infty</annotation></semantics></math>.</p>"
+   },
+   "items:itm_lemB:1": {
+    "statement_html": "<p>The tail sum <math display=\"inline\" xmlns=\"http://www.w3.org/1998/Math/MathML\" aria-label=\"LaTeX: R_m(x)\" class=\"math-inline\"><semantics><mrow><msub><mi>R</mi><mi>m</mi></msub><mo>(</mo><mi>x</mi><mo>)</mo></mrow><annotation encoding=\"application/x-tex\">R_m(x)</annotation></semantics></math> vanishes as <math display=\"inline\" xmlns=\"http://www.w3.org/1998/Math/MathML\" aria-label=\"LaTeX: m \\to \\infty\" class=\"math-inline\"><semantics><mrow><mi>m</mi><mo>→</mo><mi>∞</mi></mrow><annotation encoding=\"application/x-tex\">m \\to \\infty</annotation></semantics></math>, uniformly on compact sets.</p>"
+   }
+  }
+ }
+}
