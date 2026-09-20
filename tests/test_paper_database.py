@@ -36,16 +36,16 @@ class PaperDatabaseTests(unittest.TestCase):
             encoding="utf-8",
         )
         self.dataset = self.base / "overview.json"
-        self.legacy = {
-            "schema_version": 1, "title": "Variance structure", "scope": "A synthetic test fixture.",
+        self.seed = {
+            "schema_version": 3, "title": "Variance structure", "scope": "A synthetic test fixture.",
             "source": {"title": "Synthetic variance argument", "file": "paper.tex"},
             "items": [
-                {"id": "sampling", "kind": "assumption", "label": "Assumption 1", "caption": "Independent observations", "statement": "The observations are independent.", "source": {"start_line": 1, "end_line": 3, "label": "ass:independence"}},
-                {"id": "variance", "kind": "theorem", "label": "Theorem 1", "caption": "Variance of a sum", "statement": "The variance of the sum equals the sum of variances.", "source": {"start_line": 4, "end_line": 6, "label": "thm:variance"}},
+                {"id": "sampling", "kind": "assumption", "label": "Assumption 1", "caption": "Independent observations", "statement": {"text": "The observations are independent.", "form": "synopsis"}, "source": {"start_line": 1, "end_line": 3, "label": "ass:independence"}},
+                {"id": "variance", "kind": "theorem", "label": "Theorem 1", "caption": "Variance of a sum", "statement": {"text": "The variance of the sum equals the sum of variances.", "form": "synopsis"}, "source": {"start_line": 4, "end_line": 6, "label": "thm:variance"}},
             ],
             "uses": [{"from": "sampling", "to": "variance", "reason": "Independence removes the covariance terms.", "source": {"start_line": 7, "end_line": 7}}],
         }
-        self.dataset.write_text(json.dumps(self.legacy), encoding="utf-8")
+        self.dataset.write_text(json.dumps(self.seed), encoding="utf-8")
         self.db = self.base / "paper.sqlite"
         self.initial = database.init_database(self.db, self.dataset)
 
@@ -65,13 +65,13 @@ class PaperDatabaseTests(unittest.TestCase):
         finally:
             connection.close()
 
-    def test_schema1_import_is_explicit_and_preserves_paper(self):
+    def test_native_seed_capture_preserves_paper(self):
         original = self.dataset.read_bytes()
         data = database.export_snapshot(self.db)
-        self.assertEqual(data["schema_version"], 2)
+        self.assertEqual(data["schema_version"], 3)
         self.assertEqual(data["snapshot_id"], self.initial["snapshot_id"])
         self.assertEqual([item["id"] for item in data["items"]], ["sampling", "variance"])
-        self.assertEqual(data["items"][1]["statement"]["text"], self.legacy["items"][1]["statement"])
+        self.assertEqual(data["items"][1]["statement"], self.seed["items"][1]["statement"])
         self.assertEqual(original, self.dataset.read_bytes())
         self.assertEqual(data["observations"], [])
 
@@ -303,6 +303,20 @@ class PaperDatabaseTests(unittest.TestCase):
         self.assertEqual(result["source_status"], "historical_changed")
         self.assertTrue(any("live manuscript differs" in warning for warning in result["warnings"]))
 
+    def test_validation_scans_citations_once_and_preserves_coverage_summary(self):
+        source = self.source.read_text(encoding="utf-8").replace(
+            "Independence removes", r"Assumption \ref{ass:independence} removes")
+        self.source.write_text(source + "See \\ref{thm:variance}.\n", encoding="utf-8")
+        database.refresh_database(self.db, self.initial["snapshot_id"])
+        expected = database._candidate_summary(database.export_snapshot(self.db))
+        self.assertEqual(expected, {"pairs": 1, "not_mechanically_matchable": 0, "missing_uses": 0,
+                                    "unsupported_uses": 0, "unmatched_labels": 0,
+                                    "attributed": 1, "unattributed": 1})
+        with patch.object(records, "citation_candidates", wraps=records.citation_candidates) as scan:
+            result = database.validate_database(self.db)
+        self.assertEqual(scan.call_count, 1)
+        self.assertEqual(result["citation_candidates"], expected)
+
     def test_only_scope_exclusions_can_edit_derived_inventory(self):
         data = database.export_snapshot(self.db)
         database.apply_edits(self.db, {"expected_snapshot": data["snapshot_id"], "set": {"inventory": {"excluded": ["Simulation details are outside this overview."]}}})
@@ -391,6 +405,100 @@ class PaperDatabaseTests(unittest.TestCase):
         self.assertTrue(output.is_file())
         self.assertEqual(database.export_snapshot(self.db)["snapshot_id"], before["snapshot_id"])
         self.assertEqual(self.counts()["builds"], 1)
+
+    def compare_everything(self, note="Compared the bounded synthetic passages."):
+        data = database.export_snapshot(self.db)
+        targets = [{"collection": group, "id": row["id"]}
+                   for group in ("items", "uses") for row in data[group]]
+        database.compare_records(self.db, {"expected_snapshot": data["snapshot_id"], "targets": targets,
+                                           "reviewer": "Synthetic source reviewer", "note": note})
+        return data
+
+    def edit_prerequisite_caption(self, data):
+        item = next(row for row in data["items"] if row["id"] == "sampling")
+        edited = deepcopy(item)
+        edited["caption"] = "Independent observations (clarified)"
+        return database.apply_edits(self.db, {"expected_snapshot": data["snapshot_id"], "edits": [
+            {"collection": "items", "op": "upsert", "id": "sampling", "record": edited}]})
+
+    def test_validate_lists_exact_stale_targets(self):
+        data = self.compare_everything()
+        result = database.validate_database(self.db)
+        self.assertEqual(result["source_comparison"]["stale"], 0)
+        self.assertEqual(result["stale_targets"], [])
+        # Editing the prerequisite stales it, the use digesting it, and the
+        # theorem whose packet digests the prerequisite statement.
+        self.edit_prerequisite_caption(data)
+        result = database.validate_database(self.db)
+        self.assertEqual(result["source_comparison"]["stale"], 3)
+        self.assertEqual(result["stale_targets"], [{"collection": "items", "id": "sampling"},
+                                                   {"collection": "items", "id": "variance"},
+                                                   {"collection": "uses", "id": data["uses"][0]["id"]}])
+        # Partial recomparison leaves exactly the untouched record stale.
+        current = database.export_snapshot(self.db)
+        database.compare_records(self.db, {"expected_snapshot": current["snapshot_id"],
+                                           "targets": [{"collection": "items", "id": "variance"},
+                                                       {"collection": "uses", "id": current["uses"][0]["id"]}],
+                                           "reviewer": "Synthetic source reviewer", "note": "Recompared after the caption edit."})
+        result = database.validate_database(self.db)
+        self.assertEqual(result["stale_targets"], [{"collection": "items", "id": "sampling"}])
+        self.assertEqual(result["source_comparison"]["stale"], 1)
+
+    def test_packet_item_fidelity_is_distinct_from_the_aggregate(self):
+        data = self.compare_everything()
+        self.edit_prerequisite_caption(data)
+        current = database.export_snapshot(self.db)
+        database.compare_records(self.db, {"expected_snapshot": current["snapshot_id"],
+                                           "targets": [{"collection": "items", "id": "variance"},
+                                                       {"collection": "uses", "id": current["uses"][0]["id"]}],
+                                           "reviewer": "Synthetic source reviewer", "note": "Recompared after the caption edit."})
+        packet = database.get_packet(self.db, "variance")
+        self.assertEqual(packet["target_fidelity"], "matched")
+        self.assertEqual(packet["comparison_status"]["stale"], 1)
+        stale_packet = database.get_packet(self.db, "sampling")
+        self.assertEqual(stale_packet["target_fidelity"], "stale")
+        self.assertEqual(stale_packet["comparison_status"]["stale"], 1)
+
+    def test_export_receipt_counts_come_from_the_written_export(self):
+        self.compare_everything()
+        first = database.export_database(self.db, self.base / "export-1.json")
+        self.assertEqual(first["observations"], 3)
+        self.assertEqual(first["source_comparison"]["matched"], 3)
+        self.assertEqual(first["snapshot_id"], self.initial["snapshot_id"])
+        # Appending a comparison keeps the semantic snapshot but must move the receipt.
+        database.compare_records(self.db, {"expected_snapshot": self.initial["snapshot_id"],
+                                           "targets": [{"collection": "items", "id": "variance"}],
+                                           "reviewer": "Synthetic source reviewer", "note": "A second look."})
+        second = database.export_database(self.db, self.base / "export-2.json")
+        self.assertEqual(second["snapshot_id"], first["snapshot_id"])
+        self.assertEqual(second["observations"], 4)
+        exported = json.loads((self.base / "export-2.json").read_text(encoding="utf-8"))
+        self.assertEqual(second["observations"], len(exported["observations"]))
+
+    def test_reads_and_validation_do_not_mutate(self):
+        self.compare_everything()
+        before = (database.export_snapshot(self.db)["snapshot_id"], self.counts())
+        database.validate_database(self.db)
+        database.get_packet(self.db, "variance")
+        database.export_database(self.db, self.base / "export.json")
+        after = (database.export_snapshot(self.db)["snapshot_id"], self.counts())
+        self.assertEqual(before, after)
+
+
+class BundledSeedExampleTests(unittest.TestCase):
+    """The shipped minimal seed must keep initializing against its real source."""
+
+    def test_bundled_seed_initializes_and_validates(self):
+        example = SKILL / "examples" / "representer-theorem"
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "paper-records.sqlite"
+            result = database.init_database(db, example / "seed.json", source_root=example)
+            self.assertEqual((result["items"], result["uses"]), (3, 2))
+            report = database.validate_database(db)
+            self.assertTrue(report["valid"])
+            self.assertEqual(report["source_status"], "current")
+            self.assertEqual(report["source_comparison"]["unreviewed"], 5)
+            self.assertEqual(report["stale_targets"], [])
 
 
 if __name__ == "__main__":

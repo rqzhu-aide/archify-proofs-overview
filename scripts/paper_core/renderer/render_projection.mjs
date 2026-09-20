@@ -385,6 +385,13 @@ export function validateInput(input) {
     validateRefList(summary.scope.target_refs, 'projection.summary.scope.target_refs', false);
     if (!Array.isArray(summary.scope.exclusions)) bad('projection.summary.scope.exclusions must be an array');
   }
+  if (summary.overview_scope !== undefined) {
+    if (!isObject(summary.overview_scope)) bad('projection.summary.overview_scope must be an object');
+    else {
+      if (!(summary.overview_scope.text === null || isString(summary.overview_scope.text))) bad('projection.summary.overview_scope.text must be text or null');
+      if (!Array.isArray(summary.overview_scope.exclusions) || !summary.overview_scope.exclusions.every(isString)) bad('projection.summary.overview_scope.exclusions must be an array of strings');
+    }
+  }
   if (!isObject(summary.progress)) bad('projection.summary.progress must be an object');
   else {
     if (typeof summary.progress.process_complete !== 'boolean') bad('projection.summary.progress.process_complete must be a boolean');
@@ -714,6 +721,12 @@ class Renderer {
     });
     const scope = summary.scope;
     const exclusionItems = scope.exclusions.map((entry) => `<li>${isObject(entry) && isString(entry.collection) && isString(entry.id) ? this.recordLink(entry, false) : `<span class="proof-text">${esc(isString(entry) ? entry : JSON.stringify(entry))}</span>`}</li>`);
+    const overviewScope = summary.overview_scope;
+    const overviewBoundaries = overviewScope ? `<div data-proof-overview-scope>
+<h4>Original overview boundaries</h4>
+${overviewScope.text ? `<p class="proof-text">${esc(overviewScope.text)}</p>` : ''}
+${overviewScope.exclusions.length ? `<h4>Original overview exclusions</h4><ul class="proof-plain-list">${overviewScope.exclusions.map((entry) => `<li class="proof-text">${esc(entry)}</li>`).join('')}</ul>` : ''}
+</div>` : '';
     return `<section id="proof-summary" class="proof-panel" aria-labelledby="proof-summary-heading">
 <h2 id="proof-summary-heading">Audit summary</h2>
 <div class="proof-summary-grid">
@@ -750,12 +763,13 @@ ${limitItems.length ? `<ul class="proof-finding-list">${limitItems.join('')}</ul
 <h3>Scope</h3>
 <dl class="proof-kv">
 <dt>Mode</dt><dd>${esc(scope.mode)}</dd>
-<dt>Targets</dt><dd>${scope.target_refs.length ? scope.target_refs.map((ref) => this.recordLink(ref, false)).join(', ') : '<span class="proof-muted">whole paper</span>'}</dd>
-<dt>Exclusions</dt><dd>${exclusionItems.length ? `<ul class="proof-plain-list">${exclusionItems.join('')}</ul>` : '<span class="proof-muted">none</span>'}</dd>
+<dt>Audit targets</dt><dd>${scope.target_refs.length ? scope.target_refs.map((ref) => this.recordLink(ref, false)).join(', ') : `<span class="proof-muted">${projection.audit_id === null ? 'Recorded items; no audit selected' : 'No explicit audit targets recorded'}</span>`}</dd>
+<dt>Audit exclusions</dt><dd>${exclusionItems.length ? `<ul class="proof-plain-list">${exclusionItems.join('')}</ul>` : '<span class="proof-muted">none recorded</span>'}</dd>
 <dt>Snapshot revision</dt><dd>${projection.snapshot_revision}</dd>
 <dt>Published revision</dt><dd>${summary.published_revision === null ? '<span class="proof-muted">not published</span>' : summary.published_revision}</dd>
 <dt>Audit</dt><dd>${projection.audit_id === null ? '<span class="proof-muted">none</span>' : `<code>${esc(projection.audit_id)}</code>`}</dd>
 </dl>
+${overviewBoundaries}
 </div>
 </div>
 </section>`;

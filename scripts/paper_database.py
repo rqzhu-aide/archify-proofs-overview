@@ -20,6 +20,7 @@ import paper_records as records
 
 
 FORMAT = "archify-paper-database-1"
+AUDIT_FORMAT = "archify-edge-audit-1"
 COLLECTIONS = {"items", "uses", "anchors"}
 
 
@@ -117,7 +118,7 @@ def _store_observations(connection, snapshot_id, observations):
 
 
 def init_database(db_path, dataset_path, extra_files=(), source_root=None):
-    """Import schema 1 or 2, retaining supplied observations without certifying them."""
+    """Capture a schema-3 seed or import a schema-3 export without creating reviews."""
     db_path, dataset_path = Path(db_path).resolve(), Path(dataset_path).resolve()
     manuscript_root = Path(source_root).resolve() if source_root is not None else dataset_path.parent
     data = records.normalize(_read_json(dataset_path), dataset_path.parent, extra_files=extra_files, source_root=manuscript_root)
@@ -162,6 +163,7 @@ def _load_snapshot(connection, snapshot_id=None):
     if row is None:
         raise DatabaseError(f"Unknown snapshot {snapshot_id!r}; select a retained snapshot.")
     data = json.loads(row[0])
+    records.require_schema3(data)
     for source in data["source_revision"]["files"]:
         blob = connection.execute("SELECT content_base64 FROM source_blobs WHERE sha256=?", (source["sha256"],)).fetchone()
         if blob is None:
@@ -174,12 +176,32 @@ def _load_snapshot(connection, snapshot_id=None):
     return data
 
 
+def _read_snapshot(connection, snapshot_id=None):
+    """Read a digest-verified native schema-3 snapshot."""
+    storage_id = snapshot_id or _head(connection)
+    return storage_id, records.validate_records(_load_snapshot(connection, storage_id))
+
+
+def _writable_head(connection):
+    payload = json.loads(connection.execute("SELECT payload FROM snapshots WHERE id=?", (_head(connection),)).fetchone()[0])
+    records.require_schema3(payload)
+
+
+def _require_schema3(db_path):
+    connection = _connect(db_path)
+    try:
+        connection.execute("BEGIN")
+        _writable_head(connection)
+    finally:
+        connection.close()
+
+
 def export_snapshot(db_path, snapshot_id=None):
     """Export immutable semantic content with append-only comparison history."""
     connection = _connect(db_path)
     try:
         connection.execute("BEGIN")
-        return records.validate_records(_load_snapshot(connection, snapshot_id))
+        return _read_snapshot(connection, snapshot_id)[1]
     finally:
         connection.close()
 
@@ -200,23 +222,34 @@ def get_packet(db_path, item_id, snapshot_id=None):
     by_id = {item["id"]: item for item in data["items"]}
     if item_id not in by_id:
         raise DatabaseError(f"Unknown item {item_id!r}.")
-    incoming = [use for use in data["uses"] if use["to"] == item_id]
-    prerequisite_ids = {use["from"] for use in incoming}
+    # Owned intermediate rows and the uses entering them are part of the
+    # item's fidelity context; the packet is incomplete for review without
+    # them. Direct incoming uses stay distinguishable from owned-step uses.
+    selected = records.review_context(data, item_id)
+    owned = selected["owned"]
+    incoming = [use for use in selected["uses"] if use["to"] == item_id]
+    step_uses = [use for use in selected["uses"] if use["to"] != item_id]
+    prerequisite_ids = {use["from"] for use in selected["uses"]}
     prerequisites = [item for item in data["items"] if item["id"] in prerequisite_ids]
-    items = [by_id[item_id]] + prerequisites
+    items = [by_id[item_id]] + owned + prerequisites
     anchor_ids = {passage["anchor_id"] for item in items for passage in item["passages"]}
-    anchor_ids.update(anchor for use in incoming for anchor in use["evidence_refs"])
+    anchor_ids.update(anchor for use in selected["uses"] for anchor in use["evidence_refs"])
     anchors = [anchor for anchor in data["anchors"] if anchor["id"] in anchor_ids]
-    targets = {("items", item["id"]) for item in items} | {("uses", use["id"]) for use in incoming}
+    targets = {("items", item["id"]) for item in items} | {("uses", use["id"]) for use in selected["uses"]}
     history = [observation for observation in data.get("observations", []) if (observation["target"]["collection"], observation["target"]["id"]) in targets]
     applicable = [observation for observation in records.applicable_observations(data)
                   if (observation["target"]["collection"], observation["target"]["id"]) in targets]
-    return {"expected_snapshot": data["snapshot_id"], "item": by_id[item_id], "incoming_uses": incoming,
+    fidelity = records.fidelity_by_row(data)
+    return {"expected_snapshot": data["snapshot_id"], "item": by_id[item_id], "owned_items": owned, "incoming_uses": incoming,
+            "owned_step_uses": step_uses,
             "prerequisite_items": prerequisites, "anchors": anchors,
             "source_revision": {**data["source_revision"], "files": [{key: value for key, value in source.items() if key != "content_base64"} for source in data["source_revision"]["files"]]},
             "target_digests": [{"collection": collection, "id": identifier, "digest": records.target_digest(data, collection, identifier)} for collection, identifier in sorted(targets)],
             "observations": applicable, "observation_history_count": len(history),
-            "source_status": records.source_status(data, _source_root(db_path)), "comparison_status": records.comparison_status(data)}
+            # The selected item's own derived fidelity, distinct from the
+            # database-wide comparison aggregate below.
+            "target_fidelity": fidelity[("items", item_id)],
+            "source_status": records.source_status(data, _source_root(db_path)), "comparison_status": records.comparison_status(data, fidelity)}
 
 
 def _edit_data(data, patch):
@@ -284,6 +317,7 @@ def _publish(db_path, data, expected_snapshot, source_root=None):
     try:
         with connection:
             connection.execute("BEGIN IMMEDIATE")
+            _writable_head(connection)
             _require_head(connection, expected_snapshot)
             snapshot_id = _store_snapshot(connection, data)
             connection.execute("UPDATE current_snapshot SET snapshot_id=? WHERE singleton=1", (snapshot_id,))
@@ -298,6 +332,7 @@ def _publish(db_path, data, expected_snapshot, source_root=None):
 def apply_edits(db_path, patch):
     if not isinstance(patch, dict):
         raise DatabaseError("An edit batch must be an object.")
+    _require_schema3(db_path)
     data = export_snapshot(db_path)
     if patch.get("expected_snapshot") != data["snapshot_id"]:
         raise DatabaseError(f"Stale edit: current snapshot is {data['snapshot_id']}. Retrieve current records before applying the batch.")
@@ -309,6 +344,7 @@ def compare_records(db_path, batch):
     """Record an actual source comparison; the caller supplies its result."""
     if not isinstance(batch, dict) or set(batch) - {"expected_snapshot", "targets", "reviewer", "note", "result", "reuse_from", "changes_reviewed"}:
         raise DatabaseError("A comparison batch supports expected_snapshot, targets, reviewer, note, result, and optional reuse_from with changes_reviewed.")
+    _require_schema3(db_path)
     reuse = 'reuse_from' in batch
     if reuse:
         if not isinstance(batch['reuse_from'], str) or not batch['reuse_from'].strip():
@@ -372,6 +408,7 @@ def compare_records(db_path, batch):
 
 
 def refresh_database(db_path, expected_snapshot, source_root=None, extra_files=(), anchor_locations=None, relocate_exact=False, file_map=None):
+    _require_schema3(db_path)
     data = export_snapshot(db_path)
     if expected_snapshot != data["snapshot_id"]:
         raise DatabaseError(f"Stale refresh: current snapshot is {data['snapshot_id']}.")
@@ -392,39 +429,304 @@ def changes_database(db_path, since_snapshot, snapshot_id=None):
     connection = _connect(db_path)
     try:
         connection.execute('BEGIN')
-        before = records.validate_records(_load_snapshot(connection, since_snapshot))
-        after = records.validate_records(_load_snapshot(connection, snapshot_id))
+        after_id, after = _read_snapshot(connection, snapshot_id)
+        before = _read_snapshot(connection, since_snapshot)[1]
         report = build_changes(before, after)
+        report['from_snapshot'], report['to_snapshot'] = since_snapshot, after_id
     finally:
         connection.close()
     report['live_source_status'] = records.source_status(after, _source_root(db_path))
+    report['citation_candidates'] = _candidate_summary(after)
     return report
 
 
+def _candidate_summary(data):
+    return records.citation_summary(data)
+
+
+def candidates_database(db_path, snapshot_id=None):
+    """Citation candidates from one captured snapshot; proposes reviews, records nothing."""
+    connection = _connect(db_path)
+    try:
+        connection.execute("BEGIN")
+        storage_id, data = _read_snapshot(connection, snapshot_id)
+    finally:
+        connection.close()
+    return records.citation_candidates(data)
+
+
+def scaffold_audits(db_path, output_folder):
+    """Write one empty edge-audit file per major row; never overwrites or records."""
+    data = export_snapshot(db_path)
+    majors = [item["id"] for item in data["items"] if item["kind"] in records.MAJOR_KINDS]
+    folder = Path(output_folder).resolve()
+    if folder == Path(db_path).resolve():
+        raise DatabaseError("Choose an audit folder distinct from the database file.")
+    planned = {item_id: folder / f"{item_id}.json" for item_id in majors}
+    existing = [path for path in planned.values() if path.exists()]
+    if existing:
+        raise DatabaseError(f"Audit file already exists: {existing[0]}. Scaffold never overwrites a possibly filled audit; remove it explicitly or choose a fresh folder.")
+    folder.mkdir(parents=True, exist_ok=True)
+    written = []
+    for item_id in majors:
+        audit = {"audit_format": AUDIT_FORMAT, "target": item_id, "expected_snapshot": data["snapshot_id"],
+                 "candidates_considered": [row["id"] for row in data["items"] if row["id"] != item_id],
+                 "depends_on": [], "dismissed": [],
+                 "note": ("Dispose of every candidate exactly once: depends_on entries take id with optional type, "
+                          "regime, reason, and evidence_refs (existing anchor ids), or a contributions list that "
+                          "names recorded uses by use_id and proposes new ones; dismissed entries take id with an "
+                          "optional note. This file proposes review work; reconcile diffs it against recorded uses "
+                          "and never modifies the database."),
+                 "packet": get_packet(db_path, item_id)}
+        path = planned[item_id]
+        descriptor, name = tempfile.mkstemp(prefix=".audit-", suffix=".json", dir=folder)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                json.dump(audit, stream, ensure_ascii=False, indent=2, allow_nan=False)
+                stream.write("\n")
+            Path(name).replace(path)
+        finally:
+            Path(name).unlink(missing_ok=True)
+        written.append(str(path))
+    return {"output": str(folder), "snapshot_id": data["snapshot_id"], "audits": written,
+            "note": "Scaffold writes audit files only; it records nothing in the database. Fill each file, run reconcile, then record decisions with apply and compare."}
+
+
+def _reconcile_one(audit, path, data, head, items, anchor_ids):
+    context = f"Audit {Path(path).name}"
+    if not isinstance(audit, dict) or audit.get("audit_format") != AUDIT_FORMAT:
+        raise DatabaseError(f"{context}: expected audit_format {AUDIT_FORMAT!r}; scaffold a fresh audit file.")
+    unknown = set(audit) - {"audit_format", "target", "expected_snapshot", "candidates_considered",
+                            "depends_on", "dismissed", "note", "packet"}
+    if unknown:
+        raise DatabaseError(f"{context}: unknown fields {sorted(unknown)}; keep the scaffolded shape.")
+    for key in ("target", "expected_snapshot", "candidates_considered", "depends_on", "dismissed"):
+        if key not in audit:
+            raise DatabaseError(f"{context}: missing {key!r}; keep the scaffolded shape.")
+    target = audit["target"]
+    if not isinstance(target, str) or target not in items or items[target]["kind"] not in records.MAJOR_KINDS:
+        raise DatabaseError(f"{context}: target {target!r} is not a major row in this database.")
+    if audit["expected_snapshot"] != head:
+        raise DatabaseError(f"{context}: stale audit; expected snapshot {audit['expected_snapshot']}, current snapshot is {head}. Re-scaffold or re-check the audit against current records.")
+    candidates = [row_id for row_id in items if row_id != target]
+    offered = audit["candidates_considered"]
+    if not isinstance(offered, list) or len(offered) != len(candidates) or set(offered) != set(candidates):
+        raise DatabaseError(f"{context}: candidates_considered no longer matches the database rows; re-scaffold the audit.")
+    uses_by_id = {use["id"]: use for use in data["uses"]}
+
+    def check_use_description(fields, where):
+        if "type" in fields and fields["type"] not in records.USE_TYPES:
+            raise DatabaseError(f"{where}: unsupported use type {fields['type']!r}.")
+        for key in ("regime", "reason"):
+            if key in fields and not isinstance(fields[key], str):
+                raise DatabaseError(f"{where}: {key} must be text.")
+        refs = fields.get("evidence_refs", [])
+        if not isinstance(refs, list) or any(not isinstance(ref, str) for ref in refs):
+            raise DatabaseError(f"{where}: evidence_refs must be a list of anchor ids.")
+        missing = [ref for ref in refs if ref not in anchor_ids]
+        if missing:
+            raise DatabaseError(f"{where}: unknown anchor {missing[0]!r}; anchor the passage in the database first.")
+
+    disposed = {}
+    named_uses = {}
+    for field in ("depends_on", "dismissed"):
+        entries = audit[field]
+        if not isinstance(entries, list):
+            raise DatabaseError(f"{context}: {field} must be a list.")
+        allowed = {"id", "type", "regime", "reason", "evidence_refs", "contributions"} if field == "depends_on" else {"id", "note"}
+        for index, entry in enumerate(entries, 1):
+            where = f"{context}: {field}/{index}"
+            if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
+                raise DatabaseError(f"{where}: expected an object with a row id.")
+            if set(entry) - allowed:
+                raise DatabaseError(f"{where}: unknown fields {sorted(set(entry) - allowed)}.")
+            row_id = entry["id"]
+            if row_id not in items:
+                raise DatabaseError(f"{where}: {row_id!r} is not a row in this database.")
+            if row_id == target:
+                raise DatabaseError(f"{where}: the target does not audit itself.")
+            if row_id in disposed:
+                raise DatabaseError(f"{where}: {row_id!r} is already listed under {disposed[row_id]}; dispose of each candidate exactly once.")
+            disposed[row_id] = field
+            if field == "depends_on":
+                if "contributions" in entry:
+                    mixed = [key for key in ("type", "regime", "reason", "evidence_refs") if key in entry]
+                    if mixed:
+                        raise DatabaseError(f"{where}: entry-level {', '.join(mixed)} mixed with contributions; put the description inside each contribution or drop contributions.")
+                    contributions = entry["contributions"]
+                    if not isinstance(contributions, list) or not contributions:
+                        raise DatabaseError(f"{where}: contributions must name at least one contribution.")
+                    for position, contribution in enumerate(contributions, 1):
+                        cwhere = f"{where}/contributions/{position}"
+                        if not isinstance(contribution, dict):
+                            raise DatabaseError(f"{cwhere}: expected an object naming a use_id or describing a proposed use.")
+                        if set(contribution) - {"use_id", "type", "regime", "reason", "evidence_refs"}:
+                            raise DatabaseError(f"{cwhere}: unknown fields {sorted(set(contribution) - {'use_id', 'type', 'regime', 'reason', 'evidence_refs'})}.")
+                        if "use_id" in contribution:
+                            if set(contribution) != {"use_id"}:
+                                raise DatabaseError(f"{cwhere}: a use_id stands alone; move type, regime, reason, or evidence_refs into a separate proposed contribution.")
+                            if not isinstance(contribution["use_id"], str):
+                                raise DatabaseError(f"{cwhere}: use_id must be text.")
+                            use_id = contribution["use_id"]
+                            if use_id not in uses_by_id:
+                                raise DatabaseError(f"{cwhere}: {use_id!r} is not a recorded use in this database.")
+                            if use_id in named_uses:
+                                raise DatabaseError(f"{cwhere}: use {use_id!r} is already named under candidate {named_uses[use_id]!r}; name each recorded use once per audit.")
+                            use = uses_by_id[use_id]
+                            if use["from"] != row_id or use["to"] != target:
+                                raise DatabaseError(f"{cwhere}: contribution use {use_id!r} runs {use['from']} → {use['to']}, not {row_id} → {target}; name a use of this pair or propose a new one.")
+                            named_uses[use_id] = row_id
+                        else:
+                            if not set(contribution):
+                                raise DatabaseError(f"{cwhere}: empty contribution; name a recorded use_id or describe a proposed use with type, regime, reason, or evidence_refs.")
+                            check_use_description(contribution, cwhere)
+                else:
+                    check_use_description(entry, where)
+            elif "note" in entry and not isinstance(entry["note"], str):
+                raise DatabaseError(f"{where}: note must be text.")
+    missing = [row_id for row_id in candidates if row_id not in disposed]
+    if missing:
+        raise DatabaseError(f"{context}: candidates not disposed: {', '.join(missing)}. Dispose of every candidate exactly once (|depends_on| + |dismissed| = {len(candidates)}).")
+    by_from = {}
+    for use in data["uses"]:
+        if use["to"] == target:
+            by_from.setdefault(use["from"], []).append(use)
+    missing_edges, suspect, agreements, refinements, ambiguous = [], [], [], [], []
+    for entry in audit["depends_on"]:
+        source = entry["id"]
+        recorded = by_from.get(source, [])
+        if "contributions" in entry:
+            named_ids = [contribution["use_id"] for contribution in entry["contributions"] if "use_id" in contribution]
+            if named_ids:
+                agreements.append({"candidate": source, "matched_uses": named_ids,
+                                   "other_recorded_uses": [use["id"] for use in recorded if use["id"] not in named_ids]})
+            for contribution in entry["contributions"]:
+                if "use_id" not in contribution:
+                    missing_edges.append({"candidate": source,
+                                          "audit": {key: contribution[key] for key in ("type", "regime", "reason", "evidence_refs") if key in contribution}})
+            continue
+        if not recorded:
+            missing_edges.append({"candidate": source,
+                                  "audit": {key: entry[key] for key in ("type", "regime", "reason", "evidence_refs") if key in entry}})
+            continue
+        want_type, want_regime = entry.get("type", "dependency"), entry.get("regime")
+        matched = [use for use in recorded if use["type"] == want_type and use.get("regime") == want_regime]
+        if len(matched) == 1:
+            agreements.append({"candidate": source, "matched_uses": [matched[0]["id"]],
+                               "other_recorded_uses": [use["id"] for use in recorded if use["id"] != matched[0]["id"]]})
+        elif matched:
+            ambiguous.append({"candidate": source, "audit": {"type": want_type, "regime": want_regime},
+                              "matched_uses": [use["id"] for use in matched],
+                              "note": "The entry matches more than one recorded use; name each intended use under contributions with its use_id."})
+        else:
+            refinements.append({"candidate": source, "audit": {"type": want_type, "regime": want_regime},
+                                "recorded": [{"id": use["id"], "type": use["type"], "regime": use.get("regime"),
+                                              "reason": use["reason"]} for use in recorded]})
+    for entry in audit["dismissed"]:
+        for use in by_from.get(entry["id"], []):
+            suspect.append({"use": use["id"], "from": entry["id"], "to": target,
+                            "reason": use["reason"], "dismissal": entry.get("note")})
+    # Coverage must not hide behind pair agreement or all-zero counts: every
+    # recorded use into the target that is neither established nor suspect is
+    # reported as unresolved.
+    established = {use_id for agreement in agreements for use_id in agreement["matched_uses"]}
+    suspect_ids = {row["use"] for row in suspect}
+    unresolved = [{"use": use["id"], "from": use["from"], "to": target, "type": use["type"],
+                   "regime": use.get("regime"), "reason": use["reason"]}
+                  for use in data["uses"]
+                  if use["to"] == target and use["id"] not in established and use["id"] not in suspect_ids]
+    return {"file": str(path), "target": target, "missing_edge_candidates": missing_edges,
+            "suspect_edges": suspect, "agreements": agreements, "refinements": refinements,
+            "ambiguous_entries": ambiguous, "unresolved_uses": unresolved}
+
+
+def reconcile_audits(db_path, audits):
+    """Diff filled edge-audit files against recorded uses; prints rows, writes nothing."""
+    path = Path(audits).resolve()
+    if path.is_dir():
+        files = sorted(path.glob("*.json"))
+        if not files:
+            raise DatabaseError(f"No audit JSON files in {path}; scaffold audit files first.")
+    elif path.is_file():
+        files = [path]
+    else:
+        raise DatabaseError(f"Audit file or folder does not exist: {path}. Scaffold audit files first.")
+    data = export_snapshot(db_path)
+    head = data["snapshot_id"]
+    items = {row["id"]: row for row in data["items"]}
+    anchor_ids = {row["id"] for row in data["anchors"]}
+    reports, seen_targets = [], set()
+    for file in files:
+        report = _reconcile_one(_read_json(file), file, data, head, items, anchor_ids)
+        if report["target"] in seen_targets:
+            raise DatabaseError(f"Audit {file.name}: duplicate audit for target {report['target']!r}; reconcile each target once.")
+        seen_targets.add(report["target"])
+        reports.append(report)
+    agreed, seen_uses = [], set()
+    for report in reports:
+        for agreement in report["agreements"]:
+            for use_id in agreement["matched_uses"]:
+                if use_id not in seen_uses:
+                    seen_uses.add(use_id)
+                    agreed.append({"collection": "uses", "id": use_id})
+    return {"snapshot_id": head, "audits": reports,
+            "counts": {"audits": len(reports),
+                       "missing_edge_candidates": sum(len(r["missing_edge_candidates"]) for r in reports),
+                       "suspect_edges": sum(len(r["suspect_edges"]) for r in reports),
+                       "agreements": sum(len(r["agreements"]) for r in reports),
+                       "refinements": sum(len(r["refinements"]) for r in reports),
+                       "ambiguous_entries": sum(len(r["ambiguous_entries"]) for r in reports),
+                       "unresolved_uses": sum(len(r["unresolved_uses"]) for r in reports)},
+            "compare_skeleton": {"expected_snapshot": head, "targets": agreed} if agreed else None,
+            "unaudited_targets": [row["id"] for row in data["items"]
+                                  if row["kind"] in records.MAJOR_KINDS and row["id"] not in seen_targets],
+            "note": ("Reconcile never modifies the database; it diffs filled audits against recorded uses. Review the "
+                     "cited passages, then record decisions with apply and record comparisons actually performed with "
+                     "compare (the skeleton needs reviewer and note). Refinement fires when type or regime differ; "
+                     "wording differences in reason stay with the reviewer. Recorded uses with no established or "
+                     "suspect disposition stay listed as unresolved_uses per target.")}
+
+
 def validate_database(db_path, snapshot_id=None):
-    data = export_snapshot(db_path, snapshot_id)
-    prepared = records.prepare_records(data, _source_root(db_path))
-    return {"valid": True, "snapshot_id": data["snapshot_id"], "items": len(data["items"]), "uses": len(data["uses"]),
+    connection = _connect(db_path)
+    try:
+        connection.execute("BEGIN")
+        storage_id, data = _read_snapshot(connection, snapshot_id)
+    finally:
+        connection.close()
+    prepared = records.record_report(data, _source_root(db_path))
+    fidelity = records.fidelity_by_row(data)
+    stale_targets = [{"collection": collection, "id": identifier}
+                     for (collection, identifier), status in sorted(fidelity.items()) if status == "stale"]
+    return {"valid": True, "snapshot_id": storage_id, "items": len(data["items"]), "uses": len(data["uses"]),
             "warnings": prepared["warnings"], "graph_mode": prepared["graph_mode"],
+            "uses_without_evidence": prepared["uses_without_evidence"],
+            "citation_candidates": prepared["build_context"]["citation_candidates"],
+            "stale_targets": stale_targets,
             "source_status": prepared["build_context"]["source_status"], "source_comparison": prepared["build_context"]["source_comparison"]}
 
 
 def render_database(db_path, output_path, snapshot_id=None):
     from proof_overview import render_dataset
-    data = export_snapshot(db_path, snapshot_id)
+    connection = _connect(db_path)
+    try:
+        connection.execute("BEGIN")
+        storage_id, data = _read_snapshot(connection, snapshot_id)
+    finally:
+        connection.close()
     receipt = render_dataset(data, _source_root(db_path), Path(output_path), protected_paths=(Path(db_path),))
-    receipt["snapshot_id"] = data["snapshot_id"]
+    receipt["snapshot_id"] = storage_id
     connection = None
     try:
         connection = _connect(db_path, write=True)
         with connection:
             connection.execute("BEGIN IMMEDIATE")
             receipt["current_snapshot"] = _head(connection)
-            if receipt["current_snapshot"] != data["snapshot_id"]:
+            if receipt["current_snapshot"] != storage_id:
                 receipt["snapshot_note"] = "Report represents a retained snapshot; the database has a different current snapshot."
             receipt["build_recorded"] = True
             payload = _json(receipt)
-            connection.execute("INSERT OR IGNORE INTO builds(id,snapshot_id,payload,created_at) VALUES (?,?,?,?)", (hashlib.sha256(payload.encode()).hexdigest(), data["snapshot_id"], payload, _now()))
+            connection.execute("INSERT OR IGNORE INTO builds(id,snapshot_id,payload,created_at) VALUES (?,?,?,?)", (hashlib.sha256(payload.encode()).hexdigest(), storage_id, payload, _now()))
     except (DatabaseError, sqlite3.Error, OSError) as exc:
         # Artifact checks already passed and publication succeeded. Report a
         # bookkeeping limitation without mislabeling it a rendering failure.
@@ -452,6 +754,18 @@ def _write_export(data, output_path, db_path):
     return {"output": str(output_path), "snapshot_id": data.get("snapshot_id"), "authority": "export_snapshot"}
 
 
+def export_database(db_path, output_path, snapshot_id=None):
+    """Write a portable JSON export; the receipt counts exactly what was written.
+
+    Comparison history moves without changing the semantic snapshot, so the
+    snapshot id alone cannot show that a late comparison reached the export.
+    """
+    data = export_snapshot(db_path, snapshot_id)
+    written = _write_export(data, output_path, db_path)
+    return {**written, "observations": len(data.get("observations", [])),
+            "source_comparison": records.comparison_status(data)}
+
+
 def backup_database(db_path, output_path):
     output_path = Path(output_path).resolve()
     if output_path == Path(db_path).resolve() or output_path.exists():
@@ -461,6 +775,7 @@ def backup_database(db_path, output_path):
     destination = None
     created = False
     try:
+        _read_snapshot(source)
         descriptor = os.open(output_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         os.close(descriptor)
         created = True
@@ -490,7 +805,7 @@ def main():
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("init", "get", "apply", "compare", "refresh", "changes", "export", "validate", "render", "backup"):
+    for name in ("init", "get", "apply", "compare", "refresh", "changes", "export", "validate", "render", "backup", "candidates", "scaffold", "reconcile"):
         command = commands.add_parser(name)
         command.add_argument("database", type=Path)
         if name == "init":
@@ -500,15 +815,21 @@ def main():
             command.add_argument("--source-root", type=Path, help="Manuscript root, separate from the seed and output folders")
         if name == "get":
             command.add_argument("item")
+        if name == "reconcile":
+            command.add_argument("audits", type=Path, help="Filled edge-audit JSON file or the folder scaffold wrote")
         if name in ("apply", "compare"):
             command.add_argument("batch", type=Path)
         if name in ("export", "render", "backup"):
             command.add_argument("output", type=Path)
-        if name in ("get", "export", "validate", "render", "changes"):
+        if name == "scaffold":
+            command.add_argument("--output", type=Path, required=True, help="Folder receiving one edge-audit file per major row; existing files are never overwritten")
+        if name in ("get", "export", "validate", "render", "changes", "candidates"):
             command.add_argument("--snapshot")
         if name == 'changes':
             command.add_argument('--since', required=True, help='Retained baseline snapshot to compare')
             command.add_argument('--output', type=Path, help='Save the complete diff and return a compact receipt')
+        if name == 'candidates':
+            command.add_argument('--output', type=Path, help='Save the complete candidate report and return a compact receipt')
         if name == "refresh":
             command.add_argument("--expected-snapshot", required=True)
             command.add_argument("--anchors", type=Path, help="JSON map from stable anchor IDs to corrected locators in the new source")
@@ -542,9 +863,20 @@ def main():
                 written = _write_export(result, output, args.database)
                 result = {'output': written['output'], 'from_snapshot': result['from_snapshot'], 'to_snapshot': result['to_snapshot'],
                           'counts': result['counts'], 'live_source_status': result['live_source_status'],
+                          'citation_candidates': result['citation_candidates'],
                           'context_review_required': True, 'note': 'Read the saved source diff before selecting any reuse candidates. No comparison was carried forward by this command.'}
+        elif args.command == 'candidates':
+            result = candidates_database(args.database, args.snapshot)
+            if args.output:
+                written = _write_export(result, args.output, args.database)
+                result = {'output': written['output'], 'snapshot_id': result['snapshot_id'], 'counts': result['counts'],
+                          'note': result['note']}
+        elif args.command == 'scaffold':
+            result = scaffold_audits(args.database, args.output)
+        elif args.command == 'reconcile':
+            result = reconcile_audits(args.database, args.audits)
         elif args.command == "export":
-            result = _write_export(export_snapshot(args.database, args.snapshot), args.output, args.database)
+            result = export_database(args.database, args.output, args.snapshot)
         elif args.command == "validate":
             result = validate_database(args.database, args.snapshot)
         elif args.command == "render":

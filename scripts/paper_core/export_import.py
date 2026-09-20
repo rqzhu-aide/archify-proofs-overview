@@ -17,7 +17,7 @@ import sqlite3
 import uuid
 from pathlib import Path
 
-from . import (CONTRACT_VERSION, CORE_VERSION, LEGACY_OVERVIEW_FORMAT, LEGACY_OVERVIEW_SCHEMA_VERSION,
+from . import (CONTRACT_VERSION, CORE_VERSION, LEGACY_OVERVIEW_FORMAT, LEGACY_OVERVIEW_SCHEMA_VERSIONS,
                PROJECTION_VERSION, PROTOCOL_VERSION)
 from .acceptance import accept
 from .bindings import BOUND_COLLECTIONS
@@ -174,6 +174,73 @@ def _media_from_legacy(path: str, legacy_media: str) -> str:
     return "other"
 
 
+def _overview_target_digest(payload: dict, collection: str, identity: str) -> str:
+    """Mirror native v3 target_digest without importing the overview runtime.
+
+    Comparison identity includes the row's owned intermediates and their incoming uses.
+    An observation is current only for the context that the overview actually compared.
+    """
+    def digest_row(row: dict) -> dict:
+        return {key: value for key, value in row.items()
+                if not (value is None and key in ("owner", "group", "issue"))}
+
+    records = {row["id"]: row for row in payload[collection]}
+    target = records[identity]
+    items = {row["id"]: row for row in payload["items"]}
+    if collection == "items":
+        owned = [row for row in payload["items"] if row.get("owner") == identity]
+        scope = {identity} | {row["id"] for row in owned}
+        uses = [u for u in payload["uses"] if u["to"] in scope]
+        relevant_items = [target] + owned + [items[u["from"]] for u in uses]
+    else:
+        uses, relevant_items = [target], [items[target["from"]], items[target["to"]]]
+    anchors = {p["anchor_id"] for i in relevant_items for p in i["passages"]}
+    anchors.update(a for u in uses for a in u["evidence_refs"])
+    context = {"target": digest_row(target), "source_revision": payload["source_revision"]["id"],
+               "uses": [digest_row(u) for u in uses], "items": [digest_row(i) for i in relevant_items],
+               "anchors": [a for a in payload["anchors"] if a["id"] in anchors]}
+    return digest(context)
+
+
+def _applicable_observations(legacy: dict) -> set:
+    """Ids of the legacy observations the overview itself would treat as current.
+
+    The overview's rule (paper_records.applicable_observations with fidelity_by_row): per item or
+    use row, the newest observation whose input_snapshot equals the row's current target digest.
+    A row whose observations all review older content is stale, and on an unchanged input a newer
+    needs_attention supersedes an older matched. Only applicable observations migrate as live
+    records; the rest remain available in the archived legacy export only.
+    """
+    payload = legacy["payload"]
+    history = {}
+    for observation in legacy["observations"]:
+        target = observation["target"]
+        history.setdefault((target.get("collection"), target.get("id")), []).append(observation)
+    applicable = set()
+    for collection in ("items", "uses"):
+        for row in payload[collection]:
+            candidates = history.get((collection, row["id"]), [])
+            if not candidates:
+                continue
+            identity = _overview_target_digest(payload, collection, row["id"])
+            newest = next((o for o in reversed(candidates) if o.get("input_snapshot") == identity), None)
+            if newest is not None:
+                applicable.add(newest["id"])
+    return applicable
+
+
+def _unresolved_issue_source(entry: str, payload: dict, file_sources: dict) -> str:
+    """The imported source an inventory note belongs to: its ``path: message`` prefix, else the first file."""
+    prefix = entry.split(":", 1)[0]
+    files = payload["source_revision"]["files"]
+    for f in files:
+        if f["path"] == prefix:
+            return file_sources[f["id"]]
+    # The note still names its own path in the description text; attach it to the first captured
+    # file so the limitation stays queryable instead of vanishing into the archived payload.
+    return file_sources[files[0]["id"]]
+
+
 def _finish_import(db: Database, *, request_id: str, request_digest: str, edits: list, blobs: list,
                    warnings: list) -> dict:
     return accept(db, request_id=request_id, request_digest=request_digest, packet_id=None, edits=edits,
@@ -208,13 +275,16 @@ def _read_legacy_overview(path: Path) -> dict:
         if row is None:
             raise IncompatibleError(f"{path}: current snapshot {snapshot_id} is missing from snapshots")
         payload = json.loads(row["payload"])
-        if payload.get("schema_version") != LEGACY_OVERVIEW_SCHEMA_VERSION:
-            raise IncompatibleError(f"{path}: snapshot schema_version {payload.get('schema_version')!r} is not "
-                                    f"{LEGACY_OVERVIEW_SCHEMA_VERSION}")
+        if type(payload.get("schema_version")) is not int or payload["schema_version"] not in LEGACY_OVERVIEW_SCHEMA_VERSIONS:
+            raise IncompatibleError(f"{path}: migrate-overview accepts native schema-3 overview records only; "
+                                    "start a new v3 overview from the manuscript for older versions")
         blobs = {r["sha256"]: base64.b64decode(r["content_base64"])
                  for r in conn.execute("SELECT sha256, content_base64 FROM source_blobs")}
+        # Comparison history is append-only across snapshots; the birth snapshot
+        # of an observation is provenance, not a filter (paper_database.py reads
+        # the full table the same way).
         observations = [json.loads(r["payload"]) for r in conn.execute(
-            "SELECT payload FROM observations WHERE snapshot_id = ? ORDER BY rowid", (snapshot_id,))]
+            "SELECT payload FROM observations ORDER BY rowid")]
         snapshot_ids = [r["id"] for r in conn.execute("SELECT id FROM snapshots ORDER BY created_at, rowid")]
         builds = conn.execute("SELECT COUNT(*) FROM builds").fetchone()[0]
         return {"metadata": meta, "snapshot_id": snapshot_id, "created_at": row["created_at"], "payload": payload,
@@ -253,6 +323,7 @@ def _overview_edits(paper: Record, legacy: dict, mapper: _IdMapper, limitations:
     edits, blobs = [], []
     anchor_verify = {}
     file_sources = {}
+    file_media = {}
     for f in payload["source_revision"]["files"]:
         data = legacy["blobs"].get(f["sha256"])
         if data is None:
@@ -261,23 +332,38 @@ def _overview_edits(paper: Record, legacy: dict, mapper: _IdMapper, limitations:
             raise IncompatibleError(f"legacy source blob for {f['path']} does not match its recorded sha256")
         source_id = mapper.assign("sources", f["id"], prefer=None, rationale="legacy overview source file")
         blobs.append(data)
+        media = _media_from_legacy(f["path"], f.get("media_type", ""))
         edits.append(_create("sources", source_id, {
-            "paper_id": paper.id, "path": f["path"], "media_type": _media_from_legacy(f["path"], f.get("media_type", "")),
+            "paper_id": paper.id, "path": f["path"], "media_type": media,
             "blob_sha256": f["sha256"], "capture_method": "legacy_overview_import", "limitation": None}))
         file_sources[f["id"]] = source_id
+        file_media[f["id"]] = media
         anchor_verify[f["id"]] = _decode(data)
     anchor_ids = {}
     for a in payload["anchors"]:
-        source_id = file_sources.get(a["file_id"])
+        file_id = a.get("file_id")
+        source_id = file_sources.get(file_id)
         if source_id is None:
-            raise IncompatibleError(f"legacy anchor {a['id']} names unknown file {a['file_id']}")
+            raise IncompatibleError(f"legacy anchor {a['id']} has no registered source file ({file_id!r}); "
+                                    "a contract-3 anchor requires one")
         loc = a["locator"]
+        start, end = loc.get("start_line"), loc.get("end_line")
+        page, label = loc.get("page"), loc.get("label")
+        if (start is None) != (end is None):
+            raise IncompatibleError(f"legacy anchor {a['id']} carries only one of start_line/end_line")
+        if start is None and page is None and label is None:
+            raise IncompatibleError(f"legacy anchor {a['id']} records no line range, page or label")
+        if page is not None and file_media[file_id] != "pdf":
+            raise IncompatibleError(f"legacy anchor {a['id']} reviews page {page} of {file_id}, which is not a "
+                                    "captured PDF; re-anchor it in the overview before migrating")
+        # The locator keeps every recorded field; the method names how the excerpt was established.
+        method = "exact_lines" if start is not None else "label_match" if label is not None else "reviewed_page"
         excerpt = a["excerpt"]
         limitation = None
-        text = anchor_verify.get(a["file_id"])
+        text = anchor_verify.get(file_id)
         if a.get("verification", {}).get("status") != "checked":
             limitation = f"legacy verification status {a.get('verification', {}).get('status')!r}"
-        elif text is not None and _extract_lines(text, loc["start_line"], loc["end_line"]) != excerpt:
+        elif start is not None and text is not None and _extract_lines(text, start, end) != excerpt:
             limitation = "legacy excerpt differs from the captured source lines; re-anchor before reuse"
         if a.get("excerpt_hash") != sha256_bytes(excerpt.encode("utf-8")):
             limitations.append(f"anchor {a['id']}: legacy excerpt_hash did not match the excerpt; recomputed")
@@ -287,8 +373,8 @@ def _overview_edits(paper: Record, legacy: dict, mapper: _IdMapper, limitations:
         anchor_ids[a["id"]] = new_id_
         edits.append(_create("anchors", new_id_, {
             "source_id": source_id, "source_version": 1,
-            "locator": {"start_line": loc["start_line"], "end_line": loc["end_line"], "page": None, "label": None},
-            "excerpt": excerpt, "excerpt_sha256": sha256_bytes(excerpt.encode("utf-8")), "method": "exact_lines",
+            "locator": {"start_line": start, "end_line": end, "page": page, "label": label},
+            "excerpt": excerpt, "excerpt_sha256": sha256_bytes(excerpt.encode("utf-8")), "method": method,
             "limitation": limitation}))
     item_ids = {}
     passages_of = {it["id"]: it.get("passages", []) for it in payload["items"]}
@@ -296,11 +382,13 @@ def _overview_edits(paper: Record, legacy: dict, mapper: _IdMapper, limitations:
         item_ids[it["id"]] = mapper.assign("items", it["id"], rationale="legacy overview item")
     for it in payload["items"]:
         kind = it["kind"]
-        uncertainty = None
+        uncertainty = it.get("issue")
         if kind not in ITEM_KINDS:
-            uncertainty = f"legacy kind {kind!r} has no contract-3 equivalent; recorded as proposition"
-            limitations.append(f"item {it['id']}: {uncertainty}")
-            kind = "proposition"
+            raise IncompatibleError(f"overview item {it['id']} has unsupported kind {kind!r}; "
+                                    "correct the item before handoff")
+        owner = it.get("owner")
+        if owner is not None and owner not in item_ids:
+            raise IncompatibleError(f"legacy item {it['id']} names unknown owner {owner!r}")
         passages = []
         for p in it.get("passages", []):
             if p["anchor_id"] not in anchor_ids:
@@ -308,20 +396,64 @@ def _overview_edits(paper: Record, legacy: dict, mapper: _IdMapper, limitations:
             passages.append({"role": p["role"], "anchor_id": anchor_ids[p["anchor_id"]]})
         edits.append(_create("items", item_ids[it["id"]], {
             "kind": kind, "label": it["label"], "caption": it.get("caption") or "", "statement": it["statement"],
-            "passages": passages, "aliases": [], "uncertainty": uncertainty, "origin": "source",
-            "owner_id": None, "scope_id": None}))
+            "passages": passages, "aliases": list(it.get("aliases") or []), "uncertainty": uncertainty or None,
+            "origin": "source", "owner_id": item_ids.get(owner), "scope_id": None}))
     use_ids = {}
     for u in payload["uses"]:
         for end in ("from", "to"):
             if u[end] not in item_ids:
                 raise IncompatibleError(f"legacy use {u['id']} names unknown item {u[end]}")
         use_ids[u["id"]] = mapper.assign("uses", u["id"], rationale="legacy overview use")
+    # An overview group has no argument or scope behind it; it migrates as a
+    # provenance group (both null) whose conclusion is the member uses' shared
+    # target. A group id spanning several conclusions yields one record each.
+    group_ids = {}
+    for u in payload["uses"]:
+        group = u.get("group")
+        if group is None:
+            continue
+        key = (group["id"], u["to"])
+        if key in group_ids:
+            continue
+        if any(old == group["id"] for old, _ in group_ids):
+            limitations.append(f"use {u['id']}: overview group {group['id']!r} spans several conclusions; "
+                               "it migrates as one groups record per conclusion")
+        group_id = mapper.assign("groups", group["id"], rationale="legacy overview use group")
+        group_ids[key] = group_id
+        edits.append(_create("groups", group_id, {
+            "argument_id": None, "conclusion": {"collection": "items", "id": item_ids[u["to"]]},
+            "kind": group["kind"], "scope_id": None, "case_scope_ids": [], "discharges": [],
+            "rationale": f"Overview {group['kind']} group {group['id']!r} imported from {LEGACY_OVERVIEW_FORMAT}; "
+                         "an audit has not assigned it to an argument.",
+            "evidence_refs": []}))
+    for u in payload["uses"]:
+        evidence_refs = []
+        for ref in u.get("evidence_refs", []):
+            if ref in anchor_ids:
+                evidence_refs.append(anchor_ids[ref])
+            else:
+                limitations.append(f"use {u['id']}: evidence anchor {ref} is not an imported anchor; dropped")
+        group = u.get("group")
         edits.append(_create("uses", use_ids[u["id"]], {
             "from": {"collection": "items", "id": item_ids[u["from"]]},
-            "to": {"collection": "items", "id": item_ids[u["to"]]}, "type": u["type"], "group_id": None,
+            "to": {"collection": "items", "id": item_ids[u["to"]]}, "type": u["type"],
+            "group_id": group_ids.get((group["id"], u["to"])) if group else None,
             "reason": u.get("reason") or "Legacy overview use; no reason was recorded.", "needed_form": None,
-            "substitutions": [], "evidence_refs": [anchor_ids[a] for a in u.get("evidence_refs", []) if a in anchor_ids],
-            "regime": None, "uncertainty": None}))
+            "substitutions": [], "evidence_refs": evidence_refs,
+            "regime": u.get("regime") or None, "uncertainty": u.get("issue") or None}))
+    inventory = payload.get("inventory") or {}
+    for entry in inventory.get("unresolved", []):
+        # Each legacy unresolved-inventory entry becomes an open source issue, so the coverage
+        # restriction stays queryable after migration. Entries that report an unavailable input
+        # or source file are missing sources; the rest record another resolution limit.
+        category = "missing_source" if ("input" in entry or "source" in entry) else "other_resolution"
+        edits.append(_create("source_issues", new_id("source_issues"), {
+            "source_id": _unresolved_issue_source(entry, payload, file_sources), "anchor_id": None,
+            "category": category, "description": entry, "lifecycle": "open", "resolution": None,
+            "reviewer": "migrate-overview"}))
+    noted_observation_fields = False
+    applicable = _applicable_observations(legacy)
+    archived_observations = 0
     for o in legacy["observations"]:
         target = o["target"]
         if target.get("collection") == "items" and target.get("id") in item_ids:
@@ -331,6 +463,11 @@ def _overview_edits(paper: Record, legacy: dict, mapper: _IdMapper, limitations:
         else:
             limitations.append(f"observation {o['id']}: target {target} is not an imported item or use; skipped")
             continue
+        if o["id"] not in applicable:
+            # Stale or superseded review history stays historical: it remains in the archived
+            # legacy export, never as a live observation bound to the current record versions.
+            archived_observations += 1
+            continue
         result = o["result"] if o["result"] in ("matched", "needs_attention") else "needs_attention"
         note = o.get("note") or ""
         if result != o["result"]:
@@ -339,10 +476,30 @@ def _overview_edits(paper: Record, legacy: dict, mapper: _IdMapper, limitations:
             result = "needs_attention"
             note = f"[legacy result 'matched' on an item without passages] {note}".strip()
             limitations.append(f"observation {o['id']}: matched result on a passage-less item recorded as needs_attention")
+        provenance = " ".join(f"[legacy {field} {o[field]}]" for field in ("created_at", "input_snapshot", "carried_from")
+                              if o.get(field) is not None)
+        if provenance:
+            note = f"{provenance} {note}".strip()
+            noted_observation_fields = True
+        evidence_refs = []
+        for ref in o.get("evidence_refs", []):
+            if ref in anchor_ids:
+                evidence_refs.append(anchor_ids[ref])
+            else:
+                limitations.append(f"observation {o['id']}: evidence anchor {ref} is not an imported anchor; dropped")
         obs_id = mapper.assign("observations", o["id"], rationale="legacy overview observation")
-        edits.append(_create("observations", obs_id, {
-            "target": new_target, "result": result,
-            "reviewer": o.get("reviewer") or "legacy-overview", "note": note, "evidence_refs": []}))
+        obs_body = {"target": new_target, "result": result,
+                    "reviewer": o.get("reviewer") or "legacy-overview", "note": note,
+                    "evidence_refs": evidence_refs}
+        if isinstance(o.get("created_at"), str) and o["created_at"]:
+            obs_body["created_at"] = o["created_at"]
+        edits.append(_create("observations", obs_id, obs_body))
+    if noted_observation_fields:
+        limitations.append("legacy observation fields created_at, input_snapshot and carried_from have no "
+                           "contract-3 home; each observation preserves them in its note")
+    if archived_observations:
+        limitations.append(f"{archived_observations} historical observations archived, not imported: they "
+                           "reviewed older or superseded content")
     main_items = []
     kinds = {it["id"]: it["kind"] for it in payload["items"]}
     for old in payload.get("main_items", []):
@@ -352,13 +509,15 @@ def _overview_edits(paper: Record, legacy: dict, mapper: _IdMapper, limitations:
             limitations.append(f"main item {old} is not an imported major result; dropped from main_items")
     body = dict(paper.body)
     body["main_items"] = main_items
+    body["scope"] = payload.get("scope")
+    body["exclusions"] = list(inventory.get("excluded", []))
     edits.append({"op": "replace", "collection": "papers", "id": paper.id, "expected_version": paper.version,
                   "body": body})
     return edits, blobs
 
 
 def migrate_overview(db_path, *, backup) -> dict:
-    """Upgrade a legacy overview database in place: back it up, then rebuild it as storage format 2."""
+    """Upgrade a legacy overview database in place: back it up, then rebuild it as storage format 3."""
     db_path, backup = Path(db_path), Path(backup)
     if not db_path.is_file():
         raise InvalidRequest(f"database not found: {db_path}")
@@ -400,7 +559,10 @@ def migrate_overview(db_path, *, backup) -> dict:
             db.set_metadata("legacy_overview_snapshot_ids", json.dumps(legacy["snapshot_ids"]))
             db.set_metadata("legacy_overview_backup", json.dumps(backup_info))
             counts = {c: sum(1 for e in edits if e["collection"] == c and e["op"] == "create")
-                      for c in ("sources", "anchors", "items", "uses", "observations")}
+                      for c in ("sources", "anchors", "items", "uses", "groups", "observations")}
+            opened = sum(1 for e in edits if e["collection"] == "source_issues" and e["op"] == "create")
+            if opened:
+                counts["source_issues"] = opened
             remapped, paper_id = mapper.remapped, paper.id
         os.replace(temp, db_path)
     except Exception:

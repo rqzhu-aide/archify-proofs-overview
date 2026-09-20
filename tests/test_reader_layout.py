@@ -32,7 +32,8 @@ class ReaderLayoutTests(unittest.TestCase):
         cls.temporary = tempfile.TemporaryDirectory()
         cls.base = Path(cls.temporary.name)
         data = {
-            "schema_version": 2, "graph_mode": "dag", "title": "Reader width fixture",
+            "schema_version": 3, "graph_mode": "dag", "title": "Reader width fixture",
+            "details": [], "detail_uses": [],
             "scope": "Synthetic layout fixture; no mathematical assessment.",
             "source": {"title": "Layout fixture"}, "main_items": ["result"],
             "items": [

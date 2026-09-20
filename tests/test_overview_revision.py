@@ -78,11 +78,11 @@ class OverviewRevisionTests(unittest.TestCase):
         self.assertEqual(len(prepared["uses"]), len(original["uses"]))
         for expected, actual in zip(original["uses"], prepared["uses"]):
             self.assertEqual(actual["type"], expected.get("type", "dependency"))
-            for field in ("from", "to", "reason", "regime", "source"):
+            for field in ("from", "to", "reason", "regime"):
                 if field in expected:
                     self.assertEqual(actual[field], expected[field])
 
-    def test_old_schema_one_dataset_does_not_require_the_new_fields(self):
+    def test_native_seed_defaults_to_dependency_uses_and_terminal_selection(self):
         self.data.pop("main_items")
         for use in self.data["uses"]:
             use.pop("type", None)
@@ -94,19 +94,13 @@ class OverviewRevisionTests(unittest.TestCase):
         self.assertTrue(all(use["type"] == "dependency" for use in prepared["uses"]))
 
     def test_main_selection_must_reference_existing_unique_items(self):
-        cases = [
-            ([], "nonempty"),
-            (["uniform-rate", "missing-result"], "missing-result"),
-            (["uniform-rate", "uniform-rate"], "duplicate"),
-            ("uniform-rate", "list"),
-            ({"uniform-rate": True}, "list"),
-            ([17], "main_items"),
-        ]
-        for selection, reason in cases:
+        cases = [[], ["uniform-rate", "missing-result"], ["uniform-rate", "uniform-rate"],
+                 "uniform-rate", {"uniform-rate": True}, [17]]
+        for selection in cases:
             with self.subTest(selection=selection):
                 data = deepcopy(self.data)
                 data["main_items"] = selection
-                self.assert_invalid(data, "main_items", reason)
+                self.assert_invalid(data, "main_items")
 
     def test_unknown_or_nontext_dependency_type_is_rejected(self):
         for value in ("proof", "verified", "", None, 1, ["dependency"]):

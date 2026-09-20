@@ -22,7 +22,11 @@ CHECK_TARGETS = {
 GLOBAL_TASK_KINDS = ("global_consistency", "adversarial", "method_interface")
 MAJOR_KINDS = ("assumption", "definition", "lemma", "proposition", "theorem",
                "corollary", "external_result")
-ITEM_KINDS = MAJOR_KINDS + ("intermediate_result",)
+# Intermediate rows live inside a major row's statement or proof and must name
+# it as owner. ``intermediate_result`` is the audit core's own kind; the other
+# three are the overview vocabulary (feature overview-bridge/1).
+INTERMEDIATE_KINDS = ("intermediate_result", "equation", "claim", "derivation")
+ITEM_KINDS = MAJOR_KINDS + INTERMEDIATE_KINDS
 OUTCOMES = ("supported", "gap", "refuted", "inconclusive")
 
 
@@ -152,15 +156,19 @@ class Arr(T):
 
 
 class Obj(T):
-    def __init__(self, fields, nullable=False, local=None):
+    def __init__(self, fields, nullable=False, local=None, optional=()):
         self.fields, self.nullable, self.local = dict(fields), nullable, local
+        # Optional fields may be absent; when present they validate like any other field.
+        self.optional = frozenset(optional)
+        if not self.optional <= set(self.fields):
+            raise ValueError("optional names must be declared fields")
 
     def check(self, value, path, errors):
         if not isinstance(value, dict):
             errors.append(f"{path or '/'}: expected object")
             return
         unknown = sorted(set(value) - set(self.fields))
-        missing = [name for name in self.fields if name not in value]
+        missing = [name for name in self.fields if name not in value and name not in self.optional]
         for name in unknown:
             errors.append(f"{path}{pointer(name)}: unknown field")
         for name in missing:
@@ -283,9 +291,9 @@ REF_OBJECT = Obj({"collection": Enum(COLLECTIONS), "id": Id()})
 
 
 def _items_local(v):
-    if v["kind"] == "intermediate_result" and v["owner_id"] is None:
+    if v["kind"] in INTERMEDIATE_KINDS and v["owner_id"] is None:
         yield "an intermediate result needs exactly one owner_id"
-    if v["kind"] != "intermediate_result" and v["owner_id"] is not None:
+    if v["kind"] not in INTERMEDIATE_KINDS and v["owner_id"] is not None:
         yield "a major item has owner_id null"
 
 
@@ -295,9 +303,11 @@ def _arguments_local(v):
 
 
 def _groups_local(v):
+    if (v["argument_id"] is None) != (v["scope_id"] is None):
+        yield "a provenance group has argument_id and scope_id both null; an argument group keeps both"
     if v["kind"] == "joint" and v["case_scope_ids"]:
         yield "a joint group has empty case_scope_ids"
-    if v["kind"] == "cases" and not v["case_scope_ids"]:
+    if v["kind"] == "cases" and v["scope_id"] is not None and not v["case_scope_ids"]:
         yield "a cases group needs nonempty case_scope_ids"
     if len(set(v["case_scope_ids"])) != len(v["case_scope_ids"]):
         yield "case_scope_ids must be distinct"
@@ -387,8 +397,13 @@ def _identity_maps_local(v):
 
 
 BODY_SCHEMAS = {
+    # Overview bridging (feature overview-bridge/1): migrate-overview carries the legacy
+    # scope text and the explicit inventory exclusions onto the paper record; databases
+    # authored without a legacy overview omit both optional fields.
     "papers": Obj({"title": Str(nonempty=True), "source_root": Str(nonempty=True),
-                   "main_items": Arr(Id("items")), "report_paths": Arr(Str(nonempty=True))}),
+                   "main_items": Arr(Id("items")), "report_paths": Arr(Str(nonempty=True)),
+                   "scope": Str(nullable=True), "exclusions": Arr(Str(nonempty=True))},
+                  optional=("scope", "exclusions")),
     "sources": Obj({"paper_id": Id("papers"), "path": Str(nonempty=True),
                     "media_type": Enum(("tex", "pdf", "bib", "text", "other")), "blob_sha256": Hash(),
                     "capture_method": Str(nonempty=True), "limitation": Str(nullable=True)}),
@@ -397,8 +412,13 @@ BODY_SCHEMAS = {
                     "method": Enum(("exact_lines", "label_match", "exact_relocation", "reviewed_page",
                                     "reviewed_span")),
                     "limitation": Str(nullable=True)}),
+    # Overview bridging (feature overview-bridge/1): migrate-overview keeps the legacy
+    # comparison timestamp so chronological precedence stays machine-readable; comparisons
+    # recorded after the migration omit the optional field and order by revision and id.
     "observations": Obj({"target": REF, "result": Enum(("matched", "needs_attention")),
-                         "reviewer": Str(nonempty=True), "note": Str(), "evidence_refs": Arr(Id("anchors"))}),
+                         "reviewer": Str(nonempty=True), "note": Str(), "evidence_refs": Arr(Id("anchors")),
+                         "created_at": Str(nonempty=True)},
+                        optional=("created_at",)),
     "source_issues": Obj({"source_id": Id("sources"), "anchor_id": Id("anchors", nullable=True),
                           "category": Enum(("unresolved_branch", "ambiguous_label", "missing_source",
                                             "missing_citation", "locator_limit", "other_resolution")),
@@ -422,8 +442,8 @@ BODY_SCHEMAS = {
     "arguments": Obj({"target": TARGET, "label": Str(nonempty=True), "origin": ORIGIN, "scope_id": Id("scopes"),
                       "final_group_id": Id("groups", nullable=True), "evidence_refs": Arr(Id("anchors")),
                       "lifecycle": Enum(("draft", "registered", "retired"))}, local=_arguments_local),
-    "groups": Obj({"argument_id": Id("arguments"), "conclusion": TARGET, "kind": Enum(("joint", "cases")),
-                   "scope_id": Id("scopes"), "case_scope_ids": Arr(Id("scopes")), "discharges": Arr(Id("scopes")),
+    "groups": Obj({"argument_id": Id("arguments", nullable=True), "conclusion": TARGET, "kind": Enum(("joint", "cases")),
+                   "scope_id": Id("scopes", nullable=True), "case_scope_ids": Arr(Id("scopes")), "discharges": Arr(Id("scopes")),
                    "rationale": Str(nonempty=True), "evidence_refs": Arr(Id("anchors"))}, local=_groups_local),
     "uses": Obj({"from": TARGET, "to": TARGET, "type": Enum(("dependency", "definition", "proof_argument")),
                  "group_id": Id("groups", nullable=True), "reason": Str(nonempty=True),

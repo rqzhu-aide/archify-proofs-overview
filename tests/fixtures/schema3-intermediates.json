@@ -1,0 +1,273 @@
+{
+  "schema_version": 3,
+  "title": "Synthetic intermediate-steps fixture",
+  "scope": "Synthetic structure for projection tests: two assumptions, one lemma with intermediate steps, and one theorem. No real mathematics is asserted.",
+  "source_revision": {
+    "id": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "title": "Synthetic declarations supplied with the test fixture",
+    "created_at": "2026-09-18T02:12:21+00:00",
+    "files": []
+  },
+  "anchors": [
+    {
+      "id": "anchor-item-independence",
+      "source_revision": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "locator": {
+        "label": "Assumption 1"
+      },
+      "excerpt": "",
+      "excerpt_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "verification": {
+        "status": "unverified",
+        "method": "entered_locator",
+        "note": "The entered label has not been matched to a TeX label; printed labels need source comparison. No file content is registered for this locator."
+      }
+    },
+    {
+      "id": "anchor-item-moments",
+      "source_revision": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "locator": {
+        "label": "Assumption 2"
+      },
+      "excerpt": "",
+      "excerpt_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "verification": {
+        "status": "unverified",
+        "method": "entered_locator",
+        "note": "The entered label has not been matched to a TeX label; printed labels need source comparison. No file content is registered for this locator."
+      }
+    },
+    {
+      "id": "anchor-item-key-bound",
+      "source_revision": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "locator": {
+        "label": "Lemma 1"
+      },
+      "excerpt": "",
+      "excerpt_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "verification": {
+        "status": "unverified",
+        "method": "entered_locator",
+        "note": "The entered label has not been matched to a TeX label; printed labels need source comparison. No file content is registered for this locator."
+      }
+    },
+    {
+      "id": "anchor-item-main-result",
+      "source_revision": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "locator": {
+        "label": "Theorem 1"
+      },
+      "excerpt": "",
+      "excerpt_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "verification": {
+        "status": "unverified",
+        "method": "entered_locator",
+        "note": "The entered label has not been matched to a TeX label; printed labels need source comparison. No file content is registered for this locator."
+      }
+    },
+    {
+      "id": "anchor-use-a61e0dd0e2dc6489",
+      "source_revision": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "locator": {
+        "label": "Proof of Lemma 1"
+      },
+      "excerpt": "",
+      "excerpt_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "verification": {
+        "status": "unverified",
+        "method": "entered_locator",
+        "note": "The entered label has not been matched to a TeX label; printed labels need source comparison. No file content is registered for this locator."
+      }
+    },
+    {
+      "id": "anchor-use-6d2c5b4f133e56f4",
+      "source_revision": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "locator": {
+        "label": "Proof of Lemma 1"
+      },
+      "excerpt": "",
+      "excerpt_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "verification": {
+        "status": "unverified",
+        "method": "entered_locator",
+        "note": "The entered label has not been matched to a TeX label; printed labels need source comparison. No file content is registered for this locator."
+      }
+    },
+    {
+      "id": "anchor-use-e010f28b22255258",
+      "source_revision": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "locator": {
+        "label": "Proof of Theorem 1"
+      },
+      "excerpt": "",
+      "excerpt_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "verification": {
+        "status": "unverified",
+        "method": "entered_locator",
+        "note": "The entered label has not been matched to a TeX label; printed labels need source comparison. No file content is registered for this locator."
+      }
+    }
+  ],
+  "items": [
+    {
+      "id": "independence",
+      "kind": "assumption",
+      "label": "Assumption 1",
+      "caption": "Independent observations",
+      "statement": {
+        "text": "The observations $X_1,\\ldots,X_n$ are independent.",
+        "form": "synopsis"
+      },
+      "passages": [
+        {
+          "role": "statement",
+          "anchor_id": "anchor-item-independence"
+        }
+      ]
+    },
+    {
+      "id": "moments",
+      "kind": "assumption",
+      "label": "Assumption 2",
+      "caption": "Finite second moments",
+      "statement": {
+        "text": "The observations have finite second moments.",
+        "form": "synopsis"
+      },
+      "passages": [
+        {
+          "role": "statement",
+          "anchor_id": "anchor-item-moments"
+        }
+      ]
+    },
+    {
+      "id": "key-bound",
+      "kind": "lemma",
+      "label": "Lemma 1",
+      "caption": "Key variance bound",
+      "statement": {
+        "text": "The centered sum obeys the stated variance bound.",
+        "form": "synopsis"
+      },
+      "passages": [
+        {
+          "role": "statement",
+          "anchor_id": "anchor-item-key-bound"
+        }
+      ]
+    },
+    {
+      "id": "main-result",
+      "kind": "theorem",
+      "label": "Theorem 1",
+      "caption": "Convergence rate",
+      "statement": {
+        "text": "The estimator converges at the stated rate.",
+        "form": "synopsis"
+      },
+      "passages": [
+        {
+          "role": "statement",
+          "anchor_id": "anchor-item-main-result"
+        }
+      ]
+    },
+    {
+      "id": "eq-key-display",
+      "kind": "equation",
+      "label": "Display (2)",
+      "caption": "Squared-sum display",
+      "statement": {
+        "text": "$s_n^2 = n^{-1}\\sum_i X_i^2$.",
+        "form": "synopsis"
+      },
+      "passages": [
+        {
+          "role": "evidence",
+          "anchor_id": "anchor-item-key-bound"
+        }
+      ],
+      "owner": "key-bound",
+      "issue": "Is the normalization $n^{-1}$ or $n^{-2}$?"
+    },
+    {
+      "id": "claim-pairwise",
+      "kind": "claim",
+      "label": "Claim 1",
+      "caption": "Pairwise cancellation",
+      "statement": {
+        "text": "The cross terms vanish pairwise.",
+        "form": "synopsis"
+      },
+      "passages": [
+        {
+          "role": "evidence",
+          "anchor_id": "anchor-item-key-bound"
+        }
+      ],
+      "owner": "key-bound"
+    }
+  ],
+  "uses": [
+    {
+      "from": "independence",
+      "to": "key-bound",
+      "reason": "Independence removes the cross terms.",
+      "id": "use-a61e0dd0e2dc6489",
+      "type": "dependency",
+      "evidence_refs": [
+        "anchor-use-a61e0dd0e2dc6489"
+      ],
+      "group": {
+        "id": "prereqs",
+        "kind": "joint"
+      }
+    },
+    {
+      "from": "moments",
+      "to": "key-bound",
+      "reason": "Finite moments bound each diagonal term.",
+      "id": "use-6d2c5b4f133e56f4",
+      "type": "dependency",
+      "evidence_refs": [
+        "anchor-use-6d2c5b4f133e56f4"
+      ],
+      "group": {
+        "id": "prereqs",
+        "kind": "joint"
+      }
+    },
+    {
+      "from": "key-bound",
+      "to": "main-result",
+      "reason": "Insert the key bound into the rate argument.",
+      "id": "use-e010f28b22255258",
+      "type": "dependency",
+      "evidence_refs": [
+        "anchor-use-e010f28b22255258"
+      ]
+    },
+    {
+      "id": "use-display-in-theorem",
+      "from": "eq-key-display",
+      "to": "main-result",
+      "type": "dependency",
+      "reason": "The theorem inserts the displayed bound at the key step.",
+      "evidence_refs": [
+        "anchor-item-key-bound"
+      ]
+    }
+  ],
+  "observations": [],
+  "inventory": {
+    "method": "literal_tex_declarations",
+    "declarations": [],
+    "unresolved": [],
+    "excluded": [],
+    "note": "Candidate inventory only. Custom macros, unnumbered prose, and proof meaning require source comparison."
+  },
+  "main_items": [
+    "main-result"
+  ]
+}

@@ -16,8 +16,15 @@ from pathlib import Path
 
 from overview_math import render_text
 
-KINDS = {"assumption", "definition", "lemma", "proposition", "theorem", "corollary", "external_result"}
+MAJOR_KINDS = ("assumption", "definition", "lemma", "proposition", "theorem", "corollary", "external_result")
+INTERMEDIATE_KINDS = ("equation", "claim", "derivation")
+KINDS = frozenset(MAJOR_KINDS + INTERMEDIATE_KINDS)  # Record validation only; inventories and displays use MAJOR_KINDS.
 USE_TYPES = {"dependency", "definition", "proof_argument"}
+
+# Heading words normalize to a major kind in declaration order; a
+# condition-style declaration is an assumption. This restates the audit
+# core's KIND_WORDS idea locally so the scanner needs no cross-skill import.
+HEADING_WORDS = tuple((kind, kind) for kind in MAJOR_KINDS if kind != 'external_result') + (('condition', 'assumption'),)
 
 
 class RecordError(ValueError):
@@ -106,18 +113,68 @@ def _uncomment(text):
     return re.sub(r'(?<!\\)%[^\n]*', '', text)
 
 
+_TEX_SUFFIXES = {'.tex', '.ltx', '.sty', '.cls'}
+_TEX_MARKER_RE = re.compile(r'\\(?:documentclass|newtheorem\*?)\b|\\begin\s*\{document\}')
+
+
+def _is_tex_content(text, path):
+    """TeX by suffix, or a conservative manuscript marker in the decoded content."""
+    if Path(path).suffix.lower() in _TEX_SUFFIXES:
+        return True
+    return bool(_TEX_MARKER_RE.search(text))
+
+
+def _tex_by_content_note(path):
+    return (path + ": treated as TeX by content: a manuscript marker "
+            "(\\documentclass, \\newtheorem, or \\begin{document}) occurs under a non-TeX "
+            "file extension; declaration and citation scans include it.")
+
+
+_ENV_TOKEN_RE = re.compile(r'\\(begin|end)\s*\{([^{}]+)\}')
+
+
+def _environment_spans(text):
+    """Pair \\begin/\\end tokens with a stack; unmatched tokens pair with nothing.
+
+    Ported from the audit core's declaration scanner (paper_core sources.py) so
+    nested environments pair with their own \\end instead of the next one
+    sharing the name. Returns (env, begin start/end, end start/end) offset
+    tuples sorted by begin offset.
+    """
+    stack, spans = [], []
+    for match in _ENV_TOKEN_RE.finditer(text):
+        kind, env = match.group(1), match.group(2)
+        if kind == 'begin':
+            stack.append((env, match.start(), match.end()))
+            continue
+        for depth in range(len(stack) - 1, -1, -1):
+            if stack[depth][0] == env:
+                _, bstart, bend = stack[depth]
+                del stack[depth:]
+                spans.append((env, bstart, bend, match.start(), match.end()))
+                break
+    spans.sort(key=lambda span: span[1])
+    return spans
+
+
+def _line_of(text, offset):
+    return text.count('\n', 0, offset) + 1
+
+
 def _capture(paths, base_dir):
     """Capture supplied files and literal local TeX inputs, never a directory crawl."""
     base_dir = Path(base_dir).resolve()
     seeds = [(Path(p) if Path(p).is_absolute() else base_dir / p).resolve() for p in paths]
     roots = []
     for seed in seeds:
-        if seed.suffix.lower() == '.tex':
-            try:
-                if re.search(r'\\documentclass\b', _uncomment(seed.read_text(encoding='utf-8-sig'))):
-                    roots.append(seed.parent)
-            except (OSError, UnicodeError):
-                pass  # The capture below supplies the actionable source error.
+        if seed.suffix.lower() == '.pdf':
+            continue
+        try:
+            seed_text = _uncomment(seed.read_text(encoding='utf-8-sig'))
+        except (OSError, UnicodeError):
+            continue  # The capture below supplies the actionable source error.
+        if _is_tex_content(seed_text, seed) and re.search(r'\\documentclass\b', seed_text):
+            roots.append(seed.parent)
     roots = list(dict.fromkeys(roots)) or ([seeds[0].parent] if seeds else [])
 
     def root_for(path):
@@ -143,13 +200,18 @@ def _capture(paths, base_dir):
         captured[path] = {'id': 'file-' + _sha(display_path.encode())[:16], 'path': display_path,
                           'media_type': media, 'sha256': _sha(raw),
                           'content_base64': base64.b64encode(raw).decode('ascii')}
-        if path.suffix.lower() not in {'.tex', '.sty', '.cls', '.ltx'}:
+        if path.suffix.lower() == '.pdf':
             continue
         try:
             text = _uncomment(raw.decode('utf-8-sig'))
         except UnicodeError:
-            unresolved.append(f"{display_path}: source discovery requires UTF-8; register relevant inputs explicitly.")
+            if path.suffix.lower() in _TEX_SUFFIXES:
+                unresolved.append(f"{display_path}: source discovery requires UTF-8; register relevant inputs explicitly.")
             continue
+        if not _is_tex_content(text, path):
+            continue
+        if path.suffix.lower() not in _TEX_SUFFIXES:
+            unresolved.append(_tex_by_content_note(display_path))
         for match in re.finditer(r'\\(?:input|include|subfile)\s*\{([^{}]+)\}', text):
             name = match.group(1).strip()
             if '\\' in name or '#' in name:
@@ -231,39 +293,80 @@ def _binding(locator, file_row, context):
     return excerpt, verification
 
 
+def _declared_kinds(source_revision, unresolved):
+    """Environment-name knowledge shared by the inventory and citation scans.
+
+    Returns (names, texts, sniffed): the theorem-like environment map, the
+    uncommented text of every TeX-treated file, and the paths treated as TeX
+    by content alone. TeX-suffix files fail loudly on undecodable bytes; other
+    files are scanned only when a conservative manuscript marker is present.
+    """
+    names = {kind: kind for kind in MAJOR_KINDS if kind != 'external_result'}
+    names.update({'thm': 'theorem', 'lem': 'lemma', 'prop': 'proposition',
+                  'cor': 'corollary', 'ass': 'assumption', 'defn': 'definition'})
+    texts, sniffed = {}, []
+    for file in source_revision['files']:
+        if Path(file['path']).suffix.lower() in _TEX_SUFFIXES:
+            text = _uncomment(_source_text(file))
+        elif file['media_type'] == 'application/pdf':
+            continue
+        else:
+            try:
+                decoded = _source_bytes(file).decode('utf-8-sig')
+            except UnicodeError:
+                continue  # Not UTF-8 text; nothing scanable. Hash problems still raise.
+            if not _is_tex_content(decoded, file['path']):
+                continue
+            sniffed.append(file['path'])
+            unresolved.append(_tex_by_content_note(file['path']))
+            text = _uncomment(decoded)
+        texts[file['id']] = text
+        for env, heading in re.findall(r'\\newtheorem\*?\{([^{}]+)\}(?:\[[^]]*\])?\{([^{}]+)\}', text):
+            if re.fullmatch(r'(?:remark|example|note|notation|convention)s?', heading.strip(), re.IGNORECASE):
+                continue  # Known minor environments are outside this candidate inventory.
+            kind = next((kind for word, kind in HEADING_WORDS
+                         if re.search(r'\b' + re.escape(word) + r's?\b', heading.lower())), None)
+            if kind:
+                names[env] = kind
+            else:
+                unresolved.append(f"{file['path']}: theorem environment {env!r} has an unfamiliar heading; compare its declarations manually.")
+    return names, texts, sniffed
+
+
+def _statement_anchor_rows(items, anchors, file_id, label_map, labels, start_line):
+    """Rows owning a declaration span: its labels' rows, else the statement anchor enclosing its first line."""
+    rows = {label_map[label] for label in labels if label in label_map}
+    if rows:
+        return rows
+    matched = set()
+    for item in items:
+        for passage in item['passages']:
+            anchor = anchors[passage['anchor_id']]
+            if passage['role'] != 'statement' or anchor.get('file_id') != file_id:
+                continue
+            loc = anchor['locator']
+            if loc.get('start_line', 0) <= start_line <= loc.get('end_line', -1):
+                matched.add(item['id'])
+    return matched
+
+
 def _inventory(source_revision, items, anchors, unresolved=()):
     declarations = []
     anchor_map = {a['id']: a for a in anchors}
-    names = {kind: kind for kind in KINDS if kind != 'external_result'}
-    names.update({'thm': 'theorem', 'lem': 'lemma', 'prop': 'proposition',
-                  'cor': 'corollary', 'ass': 'assumption', 'defn': 'definition'})
     unresolved = list(unresolved)
-    texts = {}
+    names, texts, _sniffed = _declared_kinds(source_revision, unresolved)
     for file in source_revision['files']:
-        if Path(file['path']).suffix.lower() in {'.tex', '.ltx', '.sty', '.cls'}:
-            text = _uncomment(_source_text(file))
-            texts[file['id']] = text
-            for env, heading in re.findall(r'\\newtheorem\*?\{([^{}]+)\}(?:\[[^]]*\])?\{([^{}]+)\}', text):
-                if re.fullmatch(r'(?:remark|example|note|notation|convention)s?', heading.strip(), re.IGNORECASE):
-                    continue  # Known minor environments are outside this candidate inventory.
-                kind = next((k for k in KINDS if re.search(r'\b' + re.escape(k) + r'\b', heading.lower())), None)
-                if kind:
-                    names[env] = kind
-                else:
-                    unresolved.append(f"{file['path']}: theorem environment {env!r} has an unfamiliar heading; compare its declarations manually.")
-    for file in source_revision['files']:
-        if Path(file['path']).suffix.lower() not in {'.tex', '.ltx'}:
+        # Declarations live in documents, not in class/style files: TeX-suffixed
+        # documents plus any file treated as TeX by content.
+        if file['id'] not in texts or Path(file['path']).suffix.lower() in {'.sty', '.cls'}:
             continue
         text = texts[file['id']]
-        for match in re.finditer(r'\\begin\{([^{}]+)\}', text):
-            env = match.group(1)
+        for env, bstart, bend, estart, eend in _environment_spans(text):
             if env.rstrip('*') not in names:
                 continue
-            end_match = re.search(r'\\end\{' + re.escape(env) + r'\}', text[match.end():])
-            end = match.end() + end_match.end() if end_match else match.end()
-            start_line = text.count('\n', 0, match.start()) + 1
-            end_line = text.count('\n', 0, end) + 1
-            labels = re.findall(r'\\label\s*\{([^{}]+)\}', text[match.start():end])
+            start_line = _line_of(text, bstart)
+            end_line = _line_of(text, eend)
+            labels = re.findall(r'\\label\s*\{([^{}]+)\}', text[bstart:eend])
             matches = []
             for item in items:
                 for passage in item['passages']:
@@ -281,18 +384,329 @@ def _inventory(source_revision, items, anchors, unresolved=()):
             'note': 'Candidate inventory only. Custom macros, unnumbered prose, and proof meaning require source comparison.'}
 
 
-def normalize(data, base_dir, extra_files=(), source_root=None):
-    """Loss-aware schema-1 import; imports never fabricate completed comparisons."""
+_REF_RE = re.compile(r'\\(eqref|autoref|[cC]ref|ref)\s*\{([^{}]+)\}')
+_SECTION_RE = re.compile(r'\\(section|subsection|subsubsection)\s*\*?\s*(?:\[[^\]]*\])?\s*\{')
+_SECTION_LEVELS = {'section': 1, 'subsection': 2, 'subsubsection': 3}
+_PROOF_OF_RE = re.compile(r'proof\s+of\b', re.IGNORECASE)
+_HEADING_REF_RE = re.compile(r'\\ref\s*\{([^{}]+)\}')
+_PROOF_LABEL_RE = re.compile(r'\\label\s*\{proof[:-]([^{}]+)\}')
+
+
+def _braced_end(text, open_index):
+    """Offset just past the brace group opening at open_index; None if unbalanced."""
+    depth = 0
+    for index in range(open_index, len(text)):
+        char = text[index]
+        if char == '{' and (index == 0 or text[index - 1] != '\\'):
+            depth += 1
+        elif char == '}' and text[index - 1] != '\\':
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return None
+
+
+def _label_suffix(label):
+    """A label minus its own kind prefix: thm:fixed_point -> fixed_point."""
+    for separator in (':', '-'):
+        head, found, tail = label.partition(separator)
+        if found and head and tail:
+            return tail
+    return label
+
+
+def _proof_section_spans(text, label_map, suffix_map):
+    """Proof sections attributed by heading conventions, in priority order.
+
+    A sectioning command (starred or not) whose title carries 'proof of'
+    followed by \\ref{key} attributes the span through the next same-or-higher
+    heading to key's row; failing that, a \\label{proof:suffix} (or proof-
+    suffix) on the heading line attributes it to the row whose label reduces
+    to suffix. Recognized but unresolvable headings still yield ownerless
+    spans, so occurrences inside classify as proof context. Returns (start,
+    end, owner, 'proof') tuples.
+    """
+    headings = []
+    for match in _SECTION_RE.finditer(text):
+        close = _braced_end(text, match.end() - 1)
+        if close is not None:
+            headings.append((_SECTION_LEVELS[match.group(1)], match.start(),
+                             text[match.end():close - 1], close))
+    spans = []
+    for index, (level, start, title, title_end) in enumerate(headings):
+        end = len(text)
+        for other_level, other_start, _title, _end in headings[index + 1:]:
+            if other_level <= level:
+                end = other_start
+                break
+        document_end = text.find('\\end{document}', title_end)
+        if document_end != -1:
+            end = min(end, document_end)
+        owner, proofish = None, False
+        proof_of = _PROOF_OF_RE.search(title)
+        if proof_of:
+            proofish = True
+            ref = _HEADING_REF_RE.search(title, proof_of.start())
+            if ref:
+                owner = label_map.get(ref.group(1).strip())
+        if owner is None:
+            line_end = text.find('\n', title_end)
+            marker = _PROOF_LABEL_RE.search(text[start:line_end if line_end != -1 else len(text)])
+            if marker:
+                proofish = True
+                owner = suffix_map.get(marker.group(1).strip())
+        if owner is not None or proofish:
+            spans.append((start, end, owner, 'proof'))
+    return spans
+
+
+def citation_summary(data):
+    """Compact scan summary for validate/render receipts; the full report lists lines."""
+    report = citation_candidates(data)
+    if not report['coverage']['applicable']:
+        return 'not applicable (no TeX sources captured)'
+    counts = report['counts']
+    return {'pairs': counts['pairs'],
+            'not_mechanically_matchable': counts['not_mechanically_matchable'],
+            'missing_uses': counts['missing_uses'], 'unsupported_uses': counts['unsupported_uses'],
+            'unmatched_labels': counts['unmatched_labels'],
+            'attributed': report['attribution']['attributed'],
+            'unattributed': report['attribution']['unattributed']}
+
+
+def citation_candidates(data):
+    """\\ref-family citation evidence for the rows of one captured snapshot.
+
+    The label-to-row map comes from statement-passage anchors carrying TeX
+    labels; occurrence contexts come from environment spans in the captured
+    bytes (statement/proof of an attributed row, else narrative). Proof spans
+    are attributed by the nearest enclosing 'proof of' section heading, then
+    by a proof:<suffix> label convention, then by whitespace adjacency to a
+    declaration. The lists propose reviews; no citation is itself a recorded
+    use.
+    """
+    data = validate_records(data)
+    items = data['items']
+    anchors = {a['id']: a for a in data['anchors']}
+    claimed = {}
+    for item in items:
+        for passage in item['passages']:
+            if passage['role'] != 'statement':
+                continue
+            label = anchors[passage['anchor_id']]['locator'].get('label')
+            if label:
+                claimed.setdefault(label, set()).add(item['id'])
+    label_map = {label: next(iter(rows)) for label, rows in claimed.items() if len(rows) == 1}
+    collisions = [{'label': label, 'rows': sorted(rows)}
+                  for label, rows in sorted(claimed.items()) if len(rows) > 1]
+    suffix_rows = {}
+    for label, row in label_map.items():
+        suffix_rows.setdefault(_label_suffix(label), set()).add(row)
+    suffix_map = {suffix: next(iter(rows)) for suffix, rows in suffix_rows.items() if len(rows) == 1}
+    matchable = set(label_map.values())
+    order = {row['id']: index for index, row in enumerate(items)}
+    # Authored proof-passage ranges can locate prose arguments whose headings
+    # the source parser does not recognize. Declaration contexts and statement
+    # ranges always outrank an enclosing proof range.
+    passage_lines = {}
+    for item in items:
+        for passage in item['passages']:
+            anchor = anchors[passage['anchor_id']]
+            start = anchor['locator'].get('start_line')
+            if anchor.get('file_id') is None or start is None or passage['role'] not in ('statement', 'proof'):
+                continue
+            passage_lines.setdefault((anchor['file_id'], passage['role']), []).append(
+                (start, anchor['locator']['end_line'], item['id']))
+    names, texts, sniffed = _declared_kinds(data['source_revision'], [])
+    text_files_total = sum(1 for file in data['source_revision']['files'] if file['media_type'] != 'application/pdf')
+    coverage = {'files_scanned': len(texts), 'text_files_total': text_files_total,
+                'applicable': bool(texts), 'tex_by_content': sniffed}
+    if not coverage['applicable']:
+        return {'snapshot_id': data['snapshot_id'], 'source_revision': data['source_revision']['id'],
+                'note': ('Not applicable: no captured source is treated as TeX '
+                         f"(0 of {text_files_total} captured text files; PDFs carry no \\ref commands). "
+                         'Review the recorded rows through get packets and compare batches, and disclose the '
+                         'missing citation evidence as a coverage limit. Register the manuscript TeX sources for '
+                         'citation evidence; the optional scaffold/reconcile edge audit also works from the '
+                         'recorded rows alone and needs no TeX.'),
+                'coverage': coverage, 'attribution': None, 'counts': None, 'pairs': None, 'missing_uses': None,
+                'unsupported_uses': None, 'unattributed_occurrences': [], 'unmatched_labels': [],
+                'not_mechanically_matchable': [{'id': row['id'], 'kind': row['kind'], 'label': row['label']}
+                                               for row in items if row['id'] not in matchable],
+                'label_collisions': collisions}
+    pairs, unattributed, unmatched = {}, [], {}
+    for file in data['source_revision']['files']:
+        text = texts.get(file['id'])
+        if text is None:
+            continue
+        declarations, proof_spans = [], []
+        for env, bstart, bend, estart, eend in _environment_spans(text):
+            if env.rstrip('*') in names:
+                labels = re.findall(r'\\label\s*\{([^{}]+)\}', text[bstart:eend])
+                rows = _statement_anchor_rows(items, anchors, file['id'], label_map, labels, _line_of(text, bstart))
+                declarations.append((bstart, eend, next(iter(rows)) if len(rows) == 1 else None))
+            elif env == 'proof':
+                proof_spans.append((bstart, eend))
+        contexts = [(bstart, eend, owner, 'statement') for bstart, eend, owner in declarations]
+        sections = _proof_section_spans(text, label_map, suffix_map)
+        for pstart, pend in proof_spans:
+            enclosing = [span for span in sections if span[2] is not None and span[0] <= pstart < span[1]]
+            if enclosing:
+                # A heading-attributed proof section outranks the whitespace
+                # adjacency fallback for the proof environments it contains.
+                owner = max(enclosing, key=lambda span: span[0])[2]
+            else:
+                prior = [(eend, owner) for bstart, eend, owner in declarations
+                         if eend <= pstart and not text[eend:pstart].strip()]
+                owner = max(prior, key=lambda entry: entry[0])[1] if prior else None
+            contexts.append((pstart, pend, owner, 'proof'))
+        contexts.extend(sections)
+        proof_ranges = passage_lines.get((file['id'], 'proof'), [])
+        statement_ranges = passage_lines.get((file['id'], 'statement'), [])
+        for match in _REF_RE.finditer(text):
+            containing = [span for span in contexts if span[0] <= match.start() < span[1]]
+            if containing:
+                citing, context = max(containing, key=lambda span: span[0])[2:]
+            else:
+                citing, context = None, 'narrative'
+            line = _line_of(text, match.start())
+            for label in (part.strip() for part in match.group(2).split(',')):
+                if not label:
+                    continue
+                occurrence = {'file_id': file['id'], 'path': file['path'], 'line': line,
+                              'command': '\\' + match.group(1), 'label': label, 'context': context}
+                cited = label_map.get(label)
+                if cited is None:
+                    unmatched.setdefault(label, []).append(occurrence)
+                elif citing is None:
+                    recovered = None
+                    if context != 'statement':
+                        owners = {row for start, end, row in proof_ranges if start <= line <= end}
+                        in_statement = any(start <= line <= end for start, end, _ in statement_ranges)
+                        if len(owners) == 1 and not in_statement:
+                            recovered = next(iter(owners))
+                    if recovered is None:
+                        unattributed.append(dict(occurrence, cited=cited))
+                    elif recovered != cited:
+                        pairs.setdefault((recovered, cited), []).append(dict(occurrence, attribution='proof_passage'))
+                    # A row citing itself is not a dependency candidate, whether
+                    # the owner came from source parsing or authored ranges.
+                elif citing != cited:
+                    pairs.setdefault((citing, cited), []).append(occurrence)
+    uses_by_pair = {}
+    for use in data['uses']:
+        uses_by_pair.setdefault((use['to'], use['from']), []).append(use)
+    pair_rows = []
+    for (citing, cited), occurrences in pairs.items():
+        occurrences.sort(key=lambda row: (row['path'], row['line'], row['label'], row['command']))
+        recorded = [use['id'] for use in uses_by_pair.get((citing, cited), [])]
+        pair_rows.append({'citing': citing, 'cited': cited, 'recorded_uses': recorded, 'occurrences': occurrences})
+    pair_rows.sort(key=lambda row: (order[row['citing']], order[row['cited']]))
+    missing = [row for row in pair_rows if not row['recorded_uses']]
+    unsupported = []
+    for use in data['uses']:
+        if (use['to'], use['from']) in pairs:
+            continue
+        if 'infer' in (use['reason'] + ' ' + (use.get('issue') or '')).lower():
+            continue
+        unsupported.append({'id': use['id'], 'from': use['from'], 'to': use['to'],
+                            'reason': use['reason'], 'cited_matchable': use['from'] in matchable})
+    not_matchable = [{'id': row['id'], 'kind': row['kind'], 'label': row['label']}
+                     for row in items if row['id'] not in matchable]
+    unattributed.sort(key=lambda row: (row['path'], row['line'], row['label'], row['command']))
+    unmatched_rows = [{'label': label, 'occurrences': sorted(occurrences, key=lambda row: (row['path'], row['line'], row['command']))}
+                      for label, occurrences in sorted(unmatched.items())]
+    attributed = sum(len(row['occurrences']) for row in pair_rows)
+    recovered = sum(1 for row in pair_rows for occurrence in row['occurrences']
+                    if occurrence.get('attribution') == 'proof_passage')
+    note = 'A citation is evidence to review, not a recorded use; contribution, type, and regime require reading.'
+    if recovered:
+        note += (f' {recovered} occurrences were attributed through authored proof-passage ranges, only where '
+                 'exactly one recorded proof passage contains the reference.')
+    if unattributed:
+        note += (f" {len(unattributed)} matched occurrences are unattributed, mostly main-text narrative "
+                 'or unmarked proof sections; they were not used to form pairs.')
+    if unsupported:
+        note += (f' {len(unsupported)} recorded uses are not corroborated by this scan; that is missing '
+                 'citation evidence, not a false dependency.')
+    return {'snapshot_id': data['snapshot_id'], 'source_revision': data['source_revision']['id'],
+            'note': note,
+            'coverage': coverage,
+            'attribution': {'attributed': attributed, 'unattributed': len(unattributed)},
+            'counts': {'pairs': len(pair_rows),
+                       'occurrences': sum(len(row['occurrences']) for row in pair_rows) + len(unattributed),
+                       'missing_uses': len(missing), 'unsupported_uses': len(unsupported),
+                       'unmatched_labels': len(unmatched_rows), 'not_mechanically_matchable': len(not_matchable)},
+            'pairs': pair_rows,
+            'missing_uses': [{key: row[key] for key in ('citing', 'cited', 'occurrences')} for row in missing],
+            'unsupported_uses': unsupported,
+            'unattributed_occurrences': unattributed,
+            'unmatched_labels': unmatched_rows,
+            'not_mechanically_matchable': not_matchable,
+            'label_collisions': collisions}
+
+
+def require_schema3(data):
     if not isinstance(data, dict):
         raise RecordError('Paper records: expected a JSON object.')
-    if data.get('schema_version') == 2:
+    if type(data.get('schema_version')) is not int or data['schema_version'] != 3:
+        raise RecordError('Paper records: schema_version must be 3. Start a fresh schema-3 seed or supply a captured schema-3 export; older versions are not supported.')
+
+
+def normalize(data, base_dir, extra_files=(), source_root=None):
+    """Capture a native schema-3 seed or validate a captured schema-3 export.
+
+    A seed has source locators and structured statements. An export has a
+    source_revision and retained observations. Capture never creates reviews.
+    """
+    require_schema3(data)
+    if 'source' in data and 'source_revision' in data:
+        raise RecordError('Paper records: choose a compact seed with source or a captured export with source_revision, never both.')
+    if 'source_revision' in data:
+        captured = validate_records(data)
         if extra_files:
-            return refresh_sources(validate_records(data), source_root or base_dir, extra_files=extra_files)
-        return validate_records(data)
-    import proof_overview
-    prepared = proof_overview.validate_data(data, Path(base_dir), allow_cycles=True)
+            return refresh_sources(captured, source_root or base_dir, extra_files=extra_files)
+        return captured
+    _fields(data, ('schema_version', 'title', 'scope', 'source', 'items', 'uses'), ('main_items',), 'Seed')
     root = data['source']
-    source_objects = [root] + [i['source'] for i in data['items']] + [u['source'] for u in data['uses'] if 'source' in u]
+    _fields(root, ('title',), ('file',), 'Seed source')
+    _text(root['title'], 'Seed source.title')
+    if 'file' in root:
+        _text(root['file'], 'Seed source.file')
+    source_objects, item_passages = [root], []
+
+    def located(source, context):
+        _fields(source, (), ('file', 'label', 'page', 'start_line', 'end_line'), context)
+        if 'file' in source:
+            _text(source['file'], context + '.file')
+        source_objects.append(source)
+        return source
+
+    for item in _rows(data['items'], 'Seed items'):
+        _fields(item, ('id', 'kind', 'label', 'caption', 'statement'),
+                ('source', 'passages', 'owner', 'aliases', 'issue'), 'Seed item')
+        _id(item['id'], 'Seed item.id')
+        passages = []
+        if 'source' in item:
+            passages.append(('statement', located(item['source'], 'Item source')))
+        for passage in _rows(item.get('passages', []), 'Seed item passages'):
+            _fields(passage, ('role', 'source'), (), 'Seed passage')
+            passages.append((passage['role'], located(passage['source'], 'Passage source')))
+        if not passages:
+            raise RecordError(f"Item {item['id']}: provide source or at least one passage with a source locator.")
+        item_passages.append(passages)
+    reserved_ids = set()
+    for use in _rows(data['uses'], 'Seed uses'):
+        _fields(use, ('from', 'to', 'reason'), ('id', 'type', 'regime', 'group', 'issue', 'source'), 'Seed use')
+        for endpoint in ('from', 'to'):
+            _id(use[endpoint], 'Seed use.' + endpoint)
+        if 'id' in use:
+            _id(use['id'], 'Seed use.id')
+            if use['id'] in reserved_ids:
+                raise RecordError(f"Use {use['id']}: duplicate identity. Distinct uses need distinct IDs.")
+            reserved_ids.add(use['id'])
+        if 'source' in use:
+            located(use['source'], 'Use source')
     capture_base = Path(source_root or base_dir).resolve()
     # Seed references are relative to the seed. Captured paths are relative to
     # the manuscript root, which can differ from the output/work directory.
@@ -301,9 +715,14 @@ def normalize(data, base_dir, extra_files=(), source_root=None):
     files, unresolved = _capture(paths, capture_base)
     revision = {'id': _source_digest(files), 'title': root['title'], 'created_at': _now(), 'files': files}
     by_path = {(capture_base / f['path']).resolve(): f for f in files}
-    anchors = []
+    anchors, anchor_ids = [], set()
 
     def anchor(source, identity):
+        stem, suffix = identity, 1
+        while identity in anchor_ids:
+            suffix += 1
+            identity = f'{stem}-{suffix}'
+        anchor_ids.add(identity)
         file_name = source.get('file', root.get('file'))
         file = by_path.get((Path(base_dir) / file_name).resolve()) if file_name else None
         loc = {k: v for k, v in source.items() if k != 'file'}
@@ -316,31 +735,40 @@ def normalize(data, base_dir, extra_files=(), source_root=None):
         return identity
 
     items, uses = [], []
-    for item in data['items']:
-        row = {k: copy.deepcopy(v) for k, v in item.items() if k not in {'source', 'statement'}}
-        row['statement'] = {'text': item['statement'], 'form': 'synopsis'}
-        row['passages'] = [{'role': 'statement', 'anchor_id': anchor(item['source'], 'anchor-item-' + item['id'])}]
+    for item, passages in zip(data['items'], item_passages):
+        row = {k: copy.deepcopy(v) for k, v in item.items() if k not in {'source', 'passages'}}
+        row['passages'] = [{'role': role, 'anchor_id': anchor(source, 'anchor-item-' + item['id'] + (f'-{index}' if index else ''))}
+                           for index, (role, source) in enumerate(passages)]
         items.append(row)
-    for use, prepared_use in zip(data['uses'], prepared['uses']):
+    for use in data['uses']:
         row = {k: copy.deepcopy(v) for k, v in use.items() if k != 'source'}
-        row['id'] = prepared_use['id']
+        if 'id' not in row:
+            stem = 'use-' + _sha((row['from'] + '\0' + row['to']).encode())[:16]
+            identity, suffix = stem, 1
+            while identity in reserved_ids:
+                suffix += 1
+                identity = f'{stem}-{suffix}'
+            row['id'] = identity
+            reserved_ids.add(identity)
         row.setdefault('type', 'dependency')
         row['evidence_refs'] = [anchor(use['source'], 'anchor-' + row['id'])] if 'source' in use else []
         uses.append(row)
-    result = {'schema_version': 2, 'title': data['title'], 'scope': data['scope'],
+    result = {'schema_version': 3, 'title': data['title'], 'scope': data['scope'],
               'source_revision': revision, 'anchors': anchors, 'items': items, 'uses': uses,
-              'observations': [], 'inventory': _inventory(revision, items, anchors, unresolved)}
+              'observations': []}
     if 'main_items' in data:
         result['main_items'] = copy.deepcopy(data['main_items'])
+    result = validate_records(result)
+    result.pop('snapshot_id')
+    result['inventory'] = _inventory(revision, items, anchors, unresolved)
     return validate_records(result)
 
 
 def validate_records(data):
     """Validate content, captured evidence and references; allow cyclic mappings."""
+    require_schema3(data)
     _fields(data, ('schema_version', 'title', 'scope', 'source_revision', 'anchors', 'items', 'uses', 'observations'),
             ('snapshot_id', 'inventory', 'main_items'), 'Paper records')
-    if type(data['schema_version']) is not int or data['schema_version'] != 2:
-        raise RecordError('Paper records: supported schema_version is 2.')
     result = copy.deepcopy(data)
     for key in ('title', 'scope'):
         _text(result[key], key)
@@ -396,7 +824,8 @@ def validate_records(data):
         anchor_map[row['id']] = row
     item_map = {}
     for row in _rows(result['items'], 'Items'):
-        _fields(row, ('id', 'kind', 'label', 'caption', 'statement', 'passages'), ('aliases', 'uncertainty'), 'Item')
+        _fields(row, ('id', 'kind', 'label', 'caption', 'statement', 'passages'),
+                ('aliases', 'issue', 'owner'), 'Item')
         _id(row['id'], 'Item.id')
         for key in ('kind', 'label', 'caption'):
             _text(row[key], 'Item.' + key)
@@ -426,14 +855,23 @@ def validate_records(data):
             _text(alias, row['label'] + ' alias')
         if len(set(aliases)) != len(aliases):
             raise RecordError(f"{row['label']}: duplicate alias.")
-        if 'uncertainty' in row:
-            _text(row['uncertainty'], row['label'] + ' uncertainty')
+        if row.get('issue') is not None:
+            _text(row['issue'], row['label'] + ' issue')
         item_map[row['id']] = row
     if not item_map:
         raise RecordError('Paper records: retain at least one major item.')
+    for row in result['items']:
+        owner = row.get('owner')
+        if row['kind'] in INTERMEDIATE_KINDS:
+            if not isinstance(owner, str) or item_map.get(owner, {}).get('kind') not in MAJOR_KINDS:
+                raise RecordError(f"{row['label']}: an intermediate {row['kind']} needs owner naming an existing major item. Re-own or remove it before removing its owner.")
+        elif owner is not None:
+            raise RecordError(f"{row['label']}: a major item does not take an owner; remove the field.")
     use_map = {}
+    group_kinds = {}
     for row in _rows(result['uses'], 'Uses'):
-        _fields(row, ('id', 'from', 'to', 'type', 'reason', 'evidence_refs'), ('regime', 'uncertainty'), 'Use')
+        _fields(row, ('id', 'from', 'to', 'type', 'reason', 'evidence_refs'),
+                ('regime', 'issue', 'group'), 'Use')
         _id(row['id'], 'Use.id')
         if row['id'] in use_map:
             raise RecordError(f"Use {row['id']}: duplicate identity. Distinct uses need distinct IDs.")
@@ -445,9 +883,19 @@ def validate_records(data):
         if row['type'] not in USE_TYPES:
             raise RecordError(f"Use {row['id']}: unsupported use type.")
         _text(row['reason'], 'Use.reason')
-        for key in ('regime', 'uncertainty'):
-            if key in row:
-                _text(row[key], 'Use.' + key)
+        if 'regime' in row:
+            _text(row['regime'], 'Use.regime')
+        if row.get('issue') is not None:
+            _text(row['issue'], 'Use.issue')
+        group = row.get('group')
+        if group is not None:
+            _fields(group, ('id', 'kind'), (), f"Use {row['id']} group")
+            _text(group['id'], f"Use {row['id']} group.id")
+            if group['kind'] not in ('joint', 'cases'):
+                raise RecordError(f"Use {row['id']}: group kind must be joint or cases.")
+            prior = group_kinds.setdefault(group['id'], group['kind'])
+            if prior != group['kind']:
+                raise RecordError(f"Use {row['id']}: group {group['id']!r} is already recorded as {prior!r}; one group id keeps one consistent kind.")
         refs = _rows(row['evidence_refs'], 'Use evidence_refs')
         if any(not isinstance(ref, str) or ref not in anchor_map for ref in refs) or len(set(refs)) != len(refs):
             raise RecordError(f"Use {row['id']}: evidence references must be distinct existing anchor IDs.")
@@ -456,6 +904,8 @@ def validate_records(data):
         main = _rows(result['main_items'], 'main_items')
         if not main or any(not isinstance(k, str) or k not in item_map for k in main) or len(set(main)) != len(main):
             raise RecordError('main_items: choose distinct existing item IDs, or omit the field.')
+        if any(item_map[k]['kind'] not in MAJOR_KINDS for k in main):
+            raise RecordError('main_items: intermediate rows stay inside their owner; choose major items only.')
     observation_ids = set()
     observation_map = {}
     for obs in _rows(result['observations'], 'Observations'):
@@ -493,7 +943,7 @@ def validate_records(data):
             _fields(decl, ('file_id', 'kind', 'start_line', 'end_line', 'labels', 'item_ids'), (), 'Inventory declaration')
             _text(decl['file_id'], 'Inventory file_id')
             _text(decl['kind'], 'Inventory kind')
-            if decl['file_id'] not in file_map or decl['kind'] not in KINDS:
+            if decl['file_id'] not in file_map or decl['kind'] not in MAJOR_KINDS:
                 raise RecordError('Inventory declaration: unknown source file or kind.')
             _binding({'start_line': decl['start_line'], 'end_line': decl['end_line']}, file_map[decl['file_id']], 'Inventory declaration')
             for field in ('labels', 'item_ids'):
@@ -607,6 +1057,34 @@ def update_inventory(data):
     return validate_records(result)
 
 
+def _digest_row(row):
+    # Explicit null optional fields have the same meaning as absent fields.
+    return {key: value for key, value in row.items() if not (value is None and key in ('owner', 'group', 'issue'))}
+
+
+def review_context(data, item_id):
+    """Bounded review context of one row, shared by digests, packets, revisions.
+
+    S = the row plus its directly owned intermediate rows. The context is the
+    rows in S, every use whose target is in S, those uses' prerequisite rows,
+    and the passages/evidence anchors they involve. Row order is target, owned
+    rows in record order, then prerequisites in use order (duplicates
+    retained), so a row without intermediate context keeps its previous
+    selection exactly. Per-use comparison targets keep their own policy.
+    """
+    items = {row['id']: row for row in data['items']}
+    if item_id not in items:
+        raise RecordError(f"Review context target items/{item_id} is absent.")
+    owned = [row for row in data['items'] if row.get('owner') == item_id]
+    scope = {item_id} | {row['id'] for row in owned}
+    uses = [use for use in data['uses'] if use['to'] in scope]
+    context_items = [items[item_id]] + owned + [items[use['from']] for use in uses]
+    anchor_ids = {passage['anchor_id'] for row in context_items for passage in row['passages']}
+    anchor_ids.update(ref for use in uses for ref in use['evidence_refs'])
+    return {'target': items[item_id], 'owned': owned, 'scope': scope,
+            'uses': uses, 'items': context_items, 'anchor_ids': anchor_ids}
+
+
 def target_digest(data, collection, identity):
     _text(collection, 'Comparison collection')
     if collection not in {'items', 'uses'}:
@@ -615,16 +1093,17 @@ def target_digest(data, collection, identity):
     if identity not in records:
         raise RecordError(f"Comparison target {collection}/{identity} is absent.")
     target = records[identity]
-    items = {row['id']: row for row in data['items']}
-    context = {'target': target, 'source_revision': data['source_revision']['id']}
+    context = {'target': _digest_row(target), 'source_revision': data['source_revision']['id']}
     if collection == 'items':
-        uses = [u for u in data['uses'] if u['to'] == identity]
-        relevant_items = [target] + [items[u['from']] for u in uses]
+        selected = review_context(data, identity)
+        uses, relevant_items, anchors = selected['uses'], selected['items'], selected['anchor_ids']
     else:
+        items = {row['id']: row for row in data['items']}
         uses, relevant_items = [target], [items[target['from']], items[target['to']]]
-    anchors = {p['anchor_id'] for i in relevant_items for p in i['passages']}
-    anchors.update(a for u in uses for a in u['evidence_refs'])
-    context.update(uses=uses, items=relevant_items, anchors=[a for a in data['anchors'] if a['id'] in anchors])
+        anchors = {p['anchor_id'] for i in relevant_items for p in i['passages']}
+        anchors.update(a for u in uses for a in u['evidence_refs'])
+    context.update(uses=[_digest_row(u) for u in uses], items=[_digest_row(i) for i in relevant_items],
+                   anchors=[a for a in data['anchors'] if a['id'] in anchors])
     return _digest(context)
 
 
@@ -661,16 +1140,24 @@ def applicable_observations(data):
     return applicable
 
 
-def comparison_status(data):
+def fidelity_by_row(data):
+    """Per-row review fidelity: newest applicable observation, else stale or unreviewed."""
     latest = {(o['target']['collection'], o['target']['id']): o for o in applicable_observations(data)}
-    counts = {'matched': 0, 'needs_attention': 0, 'unreviewed': 0, 'stale': 0,
-              'total': len(data['items']) + len(data['uses'])}
+    fidelity = {}
     for collection in ('items', 'uses'):
         for row in data[collection]:
             observation = latest.get((collection, row['id']))
-            status = 'unreviewed' if observation is None else (
+            fidelity[(collection, row['id'])] = 'unreviewed' if observation is None else (
                 'stale' if observation['input_snapshot'] != target_digest(data, collection, row['id']) else observation['result'])
-            counts[status] += 1
+    return fidelity
+
+
+def comparison_status(data, fidelity=None):
+    fidelity = fidelity if fidelity is not None else fidelity_by_row(data)
+    counts = {'matched': 0, 'needs_attention': 0, 'unreviewed': 0, 'stale': 0,
+              'total': len(data['items']) + len(data['uses'])}
+    for status in fidelity.values():
+        counts[status] += 1
     return {'status': 'complete' if counts['matched'] == counts['total'] else 'incomplete', **counts}
 
 
@@ -685,12 +1172,90 @@ def source_status(data, base_dir):
                 'current' if statuses else 'unregistered')
 
 
+def record_report(data, base_dir):
+    """Structural/source diagnostics for validated records, without math rendering."""
+    report = {'warnings': []}
+    major_ids = {row['id'] for row in data['items'] if row['kind'] in MAJOR_KINDS}
+    # Layout constraints do not invalidate the paper dataset. The cycle check
+    # consumes graph edges only; detail edges never affect the layout (R4b).
+    incoming = {key: 0 for key in major_ids}
+    outgoing = {key: [] for key in major_ids}
+    for use in data['uses']:
+        if use['from'] not in major_ids or use['to'] not in major_ids:
+            continue
+        incoming[use['to']] += 1
+        outgoing[use['from']].append(use['to'])
+    ready = [key for key in incoming if incoming[key] == 0]
+    for key in ready:
+        for target in outgoing[key]:
+            incoming[target] -= 1
+            if not incoming[target]:
+                ready.append(target)
+    report['graph_mode'] = 'dag' if len(ready) == len(incoming) else 'index'
+    if report['graph_mode'] == 'index':
+        report['warnings'].append('The combined dependency map contains a cycle. All items and uses are retained in the index; this layout limitation does not establish a circular proof. Compare the directions and alternative regimes with the manuscript.')
+    freshness = source_status(data, base_dir)
+    if freshness != 'current':
+        report['warnings'].append({'historical_changed': 'The live manuscript differs from this captured source version. This overview displays historical records; refresh and compare them before calling it current.',
+                                     'historical_unavailable': 'Some live source files are unavailable. This overview uses its captured historical source version.',
+                                     'unregistered': 'No source files are registered. Entered locators and completeness need source comparison.'}[freshness])
+    status = comparison_status(data)
+    if status['status'] != 'complete':
+        report['warnings'].append(f"Source comparison is incomplete: {status['unreviewed']} records unreviewed, {status['stale']} comparisons stale, {status['needs_attention']} needing attention. These are overview comparisons, not proof verdicts.")
+    unlocated = sorted(row['id'] for row in data['uses'] if not row['evidence_refs'])
+    report['uses_without_evidence'] = unlocated
+    if unlocated:
+        report['warnings'].append(f"{len(unlocated)} uses have no located evidence passages. Locate the supporting passage in the captured source or disclose the gap; validation output lists their IDs.")
+    unverified = sum(a['verification']['status'] != 'checked' for a in data['anchors'])
+    if unverified:
+        methods = [set(part.strip() for part in a['verification']['method'].split(','))
+                   for a in data['anchors']]
+        checks = [(sum(method in found for found in methods), label)
+                  for method, label in (('line_range', 'text line ranges'),
+                                        ('pdf_page_bounds', 'PDF page bounds'),
+                                        ('tex_label', 'TeX labels'))]
+        checked = ', '.join(f'{count} {label}' for count, label in checks if count)
+        summary = 'Source locator checks: ' + checked if checked else 'No mechanical source locator checks are recorded'
+        labels = sum('label' in a['locator'] and 'tex_label' not in found
+                     for a, found in zip(data['anchors'], methods))
+        pages = sum('page' in a['locator'] and 'pdf_page_bounds' not in found
+                    for a, found in zip(data['anchors'], methods))
+        pending = []
+        if labels:
+            pending.append(f'{labels} entered/printed labels not mechanically matched')
+        if pages:
+            pending.append(f'{pages} PDF page locations not checked')
+        details = f" ({'; '.join(pending)})" if pending else ''
+        report['warnings'].append(f"{summary}; {unverified} anchors still have locator details requiring source comparison{details}. Location checks do not establish that a passage states the recorded claim.")
+    inventory = data.get('inventory', {})
+    missing = sum(not d['item_ids'] for d in inventory.get('declarations', []))
+    if missing:
+        report['warnings'].append(f"{missing} detected declarations are not matched to overview items. Check the selected scope and candidate inventory.")
+    report['warnings'].extend(inventory.get('unresolved', []))
+    report['warnings'].extend('Scope exclusion: ' + note for note in inventory.get('excluded', []))
+    report['build_context'] = {'input_snapshot': data['snapshot_id'], 'source_revision': data['source_revision']['id'],
+                                 'source_status': freshness, 'source_comparison': status,
+                                 'citation_candidates': citation_summary(data),
+                                 'mathematical_assessment': 'not_performed'}
+    report['inventory'] = {k: v for k, v in inventory.items() if k != 'declarations'}
+    return report
+
+
 def prepare_records(data, base_dir):
+    """The single database-to-display projection.
+
+    Major rows become graph items; intermediate rows become owner-tagged,
+    id-sorted details; uses split into graph edges (both endpoints major) and
+    detail uses (at least one intermediate endpoint). Detail rows and edges
+    never enter the layout, the cycle check, or the terminal selection.
+    """
     data = validate_records(data)
     files = {f['id']: f for f in data['source_revision']['files']}
     anchors = {a['id']: a for a in data['anchors']}
-    prepared = {'schema_version': 2, 'title': data['title'], 'scope': data['scope'],
-                'source': {'title': data['source_revision']['title']}, 'items': [], 'uses': [], 'warnings': []}
+    prepared = {'schema_version': 3, 'title': data['title'], 'scope': data['scope'],
+                'source': {'title': data['source_revision']['title']},
+                'items': [], 'details': [], 'uses': [], 'detail_uses': [], 'warnings': []}
+    fidelity = fidelity_by_row(data)
 
     def passage(identity, role):
         anchor = anchors[identity]
@@ -706,64 +1271,54 @@ def prepare_records(data, base_dir):
             display.append(f"lines {loc['start_line']}-{loc['end_line']}")
         return {'role': role, 'anchor_id': identity, 'source_display': ' · '.join(display),
                 'source_excerpt': anchor['excerpt'], 'verification': anchor['verification'],
-                'source_file': files[anchor['file_id']]['path'] if anchor.get('file_id') else None}
+                'source_file': files[anchor['file_id']]['path'] if anchor.get('file_id') else None,
+                'source_media_type': files[anchor['file_id']]['media_type'] if anchor.get('file_id') else None}
 
-    for item in data['items']:
+    def prepare_item(item):
         row = copy.deepcopy(item)
         row['statement_form'] = row['statement']['form']
         row['statement'] = row['statement']['text']
-        row['statement_html'] = render_text(row['statement'])
+        row['statement_diagnostics'] = []
+        row['statement_html'] = render_text(row['statement'], diagnostics=row['statement_diagnostics'])
         row['source_passages'] = [passage(p['anchor_id'], p['role']) for p in row['passages']]
         primary = next((p for p in row['source_passages'] if p['role'] == 'statement'), row['source_passages'][0])
         row.update({k: primary[k] for k in ('source_display', 'source_excerpt')})
-        prepared['items'].append(row)
-    for use in data['uses']:
+        row['fidelity'] = fidelity[('items', row['id'])]
+        return row
+
+    def prepare_use(use):
         row = copy.deepcopy(use)
-        row['reason_html'] = render_text(row['reason'])
+        row['reason_diagnostics'] = []
+        row['reason_html'] = render_text(row['reason'], diagnostics=row['reason_diagnostics'])
         row['source_passages'] = [passage(a, 'evidence') for a in row['evidence_refs']]
         if row['source_passages']:
             row.update({k: row['source_passages'][0][k] for k in ('source_display', 'source_excerpt')})
-        prepared['uses'].append(row)
+        row['fidelity'] = fidelity[('uses', row['id'])]
+        return row
+
+    prepared['items'] = [prepare_item(item) for item in data['items'] if item['kind'] in MAJOR_KINDS]
+    prepared['details'] = sorted((prepare_item(item) for item in data['items'] if item['kind'] in INTERMEDIATE_KINDS),
+                                 key=lambda row: row['id'])
+    major_ids = {row['id'] for row in prepared['items']}
+    for use in data['uses']:
+        row = prepare_use(use)
+        target = 'uses' if use['from'] in major_ids and use['to'] in major_ids else 'detail_uses'
+        prepared[target].append(row)
     if 'main_items' in data:
         prepared['main_items'] = data['main_items'][:]
-    # Layout constraints do not invalidate the paper dataset.
-    incoming = {i['id']: 0 for i in data['items']}
-    outgoing = {key: [] for key in incoming}
-    for use in data['uses']:
-        incoming[use['to']] += 1
-        outgoing[use['from']].append(use['to'])
-    ready = [key for key in incoming if incoming[key] == 0]
-    for key in ready:
-        for target in outgoing[key]:
-            incoming[target] -= 1
-            if not incoming[target]:
-                ready.append(target)
-    prepared['graph_mode'] = 'dag' if len(ready) == len(incoming) else 'index'
-    if prepared['graph_mode'] == 'index':
-        prepared['warnings'].append('The combined dependency map contains a cycle. All items and uses are retained in the index; this layout limitation does not establish a circular proof. Compare the directions and alternative regimes with the manuscript.')
-    freshness = source_status(data, base_dir)
-    if freshness != 'current':
-        prepared['warnings'].append({'historical_changed': 'The live manuscript differs from this captured source version. This overview displays historical records; refresh and compare them before calling it current.',
-                                     'historical_unavailable': 'Some live source files are unavailable. This overview uses its captured historical source version.',
-                                     'unregistered': 'No source files are registered. Entered locators and completeness need source comparison.'}[freshness])
-    status = comparison_status(data)
-    if status['status'] != 'complete':
-        prepared['warnings'].append(f"Source comparison is incomplete: {status['unreviewed']} records unreviewed, {status['stale']} comparisons stale, {status['needs_attention']} needing attention. These are overview comparisons, not proof verdicts.")
-    unverified = sum(a['verification']['status'] != 'checked' for a in data['anchors'])
-    if unverified:
-        line_checked = sum('start_line' in a['locator'] for a in data['anchors'])
-        prepared['warnings'].append(f"Source line ranges checked for {line_checked} of {len(data['anchors'])} anchors; {unverified} anchors still have locator details requiring source comparison. See passage details for unresolved labels or PDF pages. Location checks do not establish that a passage states the recorded claim.")
-    inventory = data.get('inventory', {})
-    missing = sum(not d['item_ids'] for d in inventory.get('declarations', []))
-    if missing:
-        prepared['warnings'].append(f"{missing} detected declarations are not matched to overview items. Check the selected scope and candidate inventory.")
-    prepared['warnings'].extend(inventory.get('unresolved', []))
-    prepared['warnings'].extend('Scope exclusion: ' + note for note in inventory.get('excluded', []))
-    for row in prepared['items'] + prepared['uses']:
-        if 'class="math-fallback"' in row.get('statement_html', row.get('reason_html', '')):
-            prepared['warnings'].append(f"{row.get('label', 'A dependency reason')}: some LaTeX could not be typeset; the original expression remains visibly labeled.")
-    prepared['build_context'] = {'input_snapshot': data['snapshot_id'], 'source_revision': data['source_revision']['id'],
-                                 'source_status': freshness, 'source_comparison': status,
-                                 'mathematical_assessment': 'not_performed'}
-    prepared['inventory'] = {k: v for k, v in inventory.items() if k != 'declarations'}
+    prepared.update(record_report(data, base_dir))
+    diagnostics = []
+    for row in prepared['items'] + prepared['details'] + prepared['uses'] + prepared['detail_uses']:
+        for field in ('statement', 'reason'):
+            for entry in row.get(field + '_diagnostics', []):
+                diagnostics.append({'collection': 'items' if 'kind' in row else 'uses',
+                                    'id': row['id'], 'field': field, **entry})
+            row.pop(field + '_diagnostics', None)
+    prepared['math_diagnostics'] = diagnostics
+    if diagnostics:
+        located = '; '.join(f"{entry['id']} ({entry['field']}): {entry['reason']}" for entry in diagnostics[:5])
+        prepared['warnings'].append(
+            f"{len(diagnostics)} LaTeX expressions could not be typeset; the original expressions remain visibly "
+            f"labeled. {located}{'; …' if len(diagnostics) > 5 else ''} The render receipt's math_diagnostics "
+            "lists every failure with its record id, field, excerpt, and reason.")
     return prepared

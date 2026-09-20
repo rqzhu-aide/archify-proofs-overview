@@ -18,6 +18,9 @@ const kinds = {
 };
 const box = { w: 170, h: 64, column: 275, row: 108, margin: 36 };
 const useTypes = { dependency: 'Dependency', definition: 'Definition', proof_argument: 'Proof argument' };
+// Intermediate kinds are never nodes: the major-only palette above keeps
+// rejecting them as items, and they validate as owner-tagged details only.
+const detailKinds = { equation: 'Equation', claim: 'Claim', derivation: 'Derivation' };
 
 function jsonForScript(value) {
   return JSON.stringify(value).replaceAll('<', '\\u003c').replaceAll('>', '\\u003e').replaceAll('&', '\\u0026');
@@ -38,8 +41,12 @@ function replaceTemplateOnce(template, original, replacement) {
 }
 
 function preparedDataset(input) {
-  if (!input || !Array.isArray(input.items) || !Array.isArray(input.uses) || !input.items.length) {
+  if (!input || input.schema_version !== 3) throw new Error('Prepared input requires schema_version 3.');
+  if (!Array.isArray(input.items) || !Array.isArray(input.uses) || !input.items.length) {
     throw new Error('Prepared input needs nonempty items and a uses array.');
+  }
+  if (!Array.isArray(input.details) || !Array.isArray(input.detail_uses)) {
+    throw new Error('Prepared input needs details and detail_uses arrays, empty when no intermediate steps are recorded.');
   }
   const ids = new Set();
   for (const item of input.items) {
@@ -64,9 +71,63 @@ function preparedDataset(input) {
     if (use.regime !== undefined && (typeof use.regime !== 'string' || !use.regime.trim())) throw new Error(`Dependency ${id} needs a nonempty regime.`);
     return { ...use, id, type };
   });
+  const detailIds = new Set();
+  const details = input.details.map((detail) => {
+    if (!detail || !/^[a-zA-Z][a-zA-Z0-9_.:-]*$/.test(detail.id || '') || ids.has(detail.id) || detailIds.has(detail.id)) {
+      throw new Error('Each detail needs a unique safe identifier distinct from every item.');
+    }
+    if (!Object.hasOwn(detailKinds, detail.kind) || !detail.label || typeof detail.statement_html !== 'string') {
+      throw new Error(`Detail ${detail.id} needs an intermediate kind (equation, claim, or derivation), label, and prepared statement_html.`);
+    }
+    if (!ids.has(detail.owner)) throw new Error(`Detail ${detail.id} needs an owner naming an existing major item.`);
+    detailIds.add(detail.id);
+    return detail;
+  });
+  details.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const endpoints = new Set([...ids, ...detailIds]);
+  const detailUses = input.detail_uses.map((use, index) => {
+    // An intermediate row may reference itself: the edge stays an annotation
+    // in its owner's panel and never enters the graph. The major-major check
+    // below still rejects a self reference between two (identical) major items.
+    if (!use || !endpoints.has(use.from) || !endpoints.has(use.to) || !use.reason) {
+      throw new Error(`Detail use ${index + 1} needs endpoints among items and details, and a reason.`);
+    }
+    if (ids.has(use.from) && ids.has(use.to)) {
+      throw new Error(`Detail use ${use.id || index + 1} joins two major items; record it as an ordinary use.`);
+    }
+    const id = use.id || `detail-use-${index + 1}`;
+    if (!/^[a-zA-Z][a-zA-Z0-9_.:-]*$/.test(id) || useIds.has(id)) throw new Error('Detail use identifiers must be safe and distinct from graph use identifiers.');
+    useIds.add(id);
+    const type = use.type || 'dependency';
+    if (!Object.hasOwn(useTypes, type)) throw new Error(`Detail use ${id} has an unsupported type.`);
+    if (use.regime !== undefined && (typeof use.regime !== 'string' || !use.regime.trim())) throw new Error(`Detail use ${id} needs a nonempty regime.`);
+    return { ...use, id, type };
+  });
+  const groupKinds = new Map();
+  for (const use of [...uses, ...detailUses]) {
+    if (use.group === undefined || use.group === null) continue;
+    if (typeof use.group.id !== 'string' || !use.group.id.trim() || !['joint', 'cases'].includes(use.group.kind)) {
+      throw new Error(`Use ${use.id} needs a group with a name and kind joint or cases.`);
+    }
+    const prior = groupKinds.get(use.group.id);
+    if (prior !== undefined && prior !== use.group.kind) {
+      throw new Error(`Group ${use.group.id} mixes ${prior} and ${use.group.kind}; one group id keeps one consistent kind.`);
+    }
+    groupKinds.set(use.group.id, use.group.kind);
+  }
   if (input.main_items !== undefined && (!Array.isArray(input.main_items) || !input.main_items.length || new Set(input.main_items).size !== input.main_items.length || input.main_items.some((id) => !ids.has(id)))) throw new Error('main_items must contain distinct existing item identifiers.');
   if (input.graph_mode !== undefined && !['dag', 'index'].includes(input.graph_mode)) throw new Error('graph_mode must be dag or index.');
-  return { ...input, uses };
+  if (input.math_diagnostics !== undefined && (!Array.isArray(input.math_diagnostics) || input.math_diagnostics.some((entry) => !entry || typeof entry.id !== 'string' || typeof entry.field !== 'string' || typeof entry.reason !== 'string' || typeof entry.excerpt !== 'string'))) throw new Error('math_diagnostics entries need id, field, excerpt, and reason strings.');
+  return { ...input, uses, details, detail_uses: detailUses };
+}
+
+// Detail rows ride along with both graph shapes so panels can render them
+// without touching layout: detailsByOwner is id-sorted, detailUses untouched.
+function detailIndex(data) {
+  const details = new Map((data.details || []).map((row) => [row.id, row]));
+  const detailsByOwner = new Map(data.items.map((item) => [item.id, []]));
+  for (const row of details.values()) detailsByOwner.get(row.owner).push(row);
+  return { details, detailsByOwner, detailUses: data.detail_uses || [] };
 }
 
 function indexGraph(data) {
@@ -74,7 +135,7 @@ function indexGraph(data) {
   const incoming = new Map(data.items.map((item) => [item.id, []]));
   const outgoing = new Map(data.items.map((item) => [item.id, []]));
   data.uses.forEach((use) => { incoming.get(use.to).push(use); outgoing.get(use.from).push(use); });
-  return { nodes, incoming, outgoing };
+  return { nodes, incoming, outgoing, ...detailIndex(data) };
 }
 
 // Longest-path layers preserve prerequisite direction. Ordering uses stable
@@ -139,7 +200,7 @@ function layoutGraph(data) {
   });
   const rankCount = Math.max(...components.map((component) => component.ranks.length));
   return {
-    nodes, components, incoming, outgoing, longUses,
+    nodes, components, incoming, outgoing, longUses, ...detailIndex(data),
     width: box.margin * 2 + (rankCount - 1) * box.column + box.w,
     height: top - 68 + box.margin,
   };
@@ -240,14 +301,18 @@ function renderSvg(data, graph) {
   const qualifiers = [];
   const edges = data.uses.map((use, index) => {
     const points = edgePoints(use, graph);
-    const uncertain = Boolean(use.uncertainty);
-    const qualification = `${useTypes[use.type]}${use.regime ? `; only in regime: ${use.regime}` : ''}`;
-    const description = `${graph.nodes.get(use.from).label} to ${graph.nodes.get(use.to).label}. ${qualification}: ${use.reason}${uncertain ? ` Uncertain: ${use.uncertainty}` : ''}`;
-    if (use.type !== 'dependency' || use.regime) {
-      const labels = [use.type !== 'dependency' ? useTypes[use.type] : '', use.regime ? `If: ${use.regime}` : ''].filter(Boolean).map((label) => textUnits(label) > 17 ? `${label.slice(0, 15)}…` : label);
+    const issued = Boolean(use.issue);
+    const group = use.group || null;
+    // R3 badge fallback: grouped uses keep their own paths and disclose the
+    // group with a badge; the forked single-arrowhead connector spike is
+    // deferred. Every use id therefore appears exactly once in the SVG.
+    const qualification = `${useTypes[use.type]}${use.regime ? `; only in regime: ${use.regime}` : ''}${group ? `; ${group.kind === 'joint' ? 'required jointly' : 'alternative case'}: ${group.id}` : ''}`;
+    const description = `${graph.nodes.get(use.from).label} to ${graph.nodes.get(use.to).label}. ${qualification}: ${use.reason}${issued ? ` Issue: ${use.issue}` : ''}`;
+    if (use.type !== 'dependency' || use.regime || group) {
+      const labels = [use.type !== 'dependency' ? useTypes[use.type] : '', use.regime ? `If: ${use.regime}` : '', group ? `${group.kind === 'joint' ? 'Joint' : 'Case'}: ${group.id}` : ''].filter(Boolean).map((label) => textUnits(label) > 17 ? `${label.slice(0, 15)}…` : label);
       qualifiers.push({ use, description, labels, points });
     }
-    return `<path data-edge-from="${esc(use.from)}" data-edge-to="${esc(use.to)}" data-edge-key="${index}" data-edge-id="${esc(use.id)}" data-use-type="${esc(use.type)}"${use.regime ? ` data-use-regime="${esc(use.regime)}"` : ''} data-edge-label="${esc(`${qualification}: ${use.reason}`)}" data-composition-points="${points.map((point) => point.join(',')).join(';')}" class="proof-edge a-default${uncertain ? ' proof-uncertain' : ''}${use.type === 'proof_argument' ? ' proof-argument-edge' : ''}" d="${roundedPath(points)}" stroke-width="1.6" marker-end="url(#proof-arrow)"><title>${esc(description)}</title></path>`;
+    return `<path data-edge-from="${esc(use.from)}" data-edge-to="${esc(use.to)}" data-edge-key="${index}" data-edge-id="${esc(use.id)}" data-use-type="${esc(use.type)}"${use.regime ? ` data-use-regime="${esc(use.regime)}"` : ''} data-edge-label="${esc(`${qualification}: ${use.reason}`)}" data-composition-points="${points.map((point) => point.join(',')).join(';')}" class="proof-edge a-default${issued ? ' proof-uncertain' : ''}${use.type === 'proof_argument' ? ' proof-argument-edge' : ''}" d="${roundedPath(points)}" stroke-width="1.6" marker-end="url(#proof-arrow)"><title>${esc(description)}</title></path>`;
   }).join('\n');
   const nodes = [...graph.nodes.values()].map((node) => {
     const caption = captionLines(node.caption), cx = node.x + box.w / 2;
@@ -335,10 +400,35 @@ function representationReceipt(data, html, graphMode) {
       if (Object.hasOwn(attrs, 'data-proof-index-use')) uses.push({ id: attrs['data-proof-index-use'], from: attrs['data-proof-from'], to: attrs['data-proof-to'] });
     }
   }
+  // Detail rows and detail edges live inside their owner's static index
+  // article; the interactive panel duplicates them inside inert templates.
+  const stripped = html.replace(/<template\b[\s\S]*?<\/template>/g, '');
+  const articles = {};
+  for (const match of stripped.matchAll(/<article\b[^>]*id="proof-index-item-[^"]*"[\s\S]*?<\/article>/g)) {
+    articles[attributes(match[0].match(/<article\b[^>]*>/)[0])['data-proof-index-item']] = match[0];
+  }
+  const details = [], detailUses = [];
+  for (const match of stripped.matchAll(/<[a-z]+\b[^>]*>/g)) {
+    const attrs = attributes(match[0]);
+    if (Object.hasOwn(attrs, 'data-proof-detail')) details.push(attrs['data-proof-detail']);
+    if (Object.hasOwn(attrs, 'data-proof-detail-use')) detailUses.push({ id: attrs['data-proof-detail-use'], from: attrs['data-proof-from'], to: attrs['data-proof-to'] });
+  }
+  const detailRows = new Map((data.details || []).map((row) => [row.id, row]));
+  // Mirror of the rendering rule: an edge is annotated at its detail "from"
+  // endpoint, or at its detail "to" endpoint when only that end is a detail.
+  const detailUseOwner = (use) => (detailRows.has(use.from) ? detailRows.get(use.from) : detailRows.get(use.to) || {}).owner;
+  const contained = (rows, marker, ownerOf) => rows.every((row) => (articles[ownerOf(row)] || '').includes(`${marker}="${row.id}"`));
   const expectedNodes = data.items.map(({ id }) => id).sort();
+  const expectedDetails = (data.details || []).map(({ id }) => id).sort();
   const normalizedUses = (records) => records.map(({ id, from, to }) => ({ id, from, to })).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-  const status = JSON.stringify(nodes.sort()) === JSON.stringify(expectedNodes) && JSON.stringify(normalizedUses(uses)) === JSON.stringify(normalizedUses(data.uses)) ? 'pass' : 'fail';
-  return { status, expected_items: data.items.length, rendered_items: nodes.length, expected_uses: data.uses.length, rendered_uses: uses.length, representation: graphMode === 'dag' ? 'svg' : 'index', item_ids: nodes, uses: normalizedUses(uses) };
+  const status = JSON.stringify(nodes.sort()) === JSON.stringify(expectedNodes)
+    && JSON.stringify(normalizedUses(uses)) === JSON.stringify(normalizedUses(data.uses))
+    && JSON.stringify(details.slice().sort()) === JSON.stringify(expectedDetails)
+    && JSON.stringify(normalizedUses(detailUses)) === JSON.stringify(normalizedUses(data.detail_uses || []))
+    && contained(data.details || [], 'data-proof-detail', (row) => row.owner)
+    && contained(data.detail_uses || [], 'data-proof-detail-use', detailUseOwner)
+    ? 'pass' : 'fail';
+  return { status, expected_items: data.items.length, rendered_items: nodes.length, expected_uses: data.uses.length, rendered_uses: uses.length, expected_details: expectedDetails.length, rendered_details: details.length, expected_detail_uses: (data.detail_uses || []).length, rendered_detail_uses: detailUses.length, representation: graphMode === 'dag' ? 'svg' : 'index', item_ids: nodes, uses: normalizedUses(uses), detail_ids: details, detail_uses: normalizedUses(detailUses) };
 }
 
 function sourceHtml(record) {
@@ -359,39 +449,84 @@ function passagesHtml(record) {
     const status = verification.status === 'unverified' ? 'Locator not yet verified' : verification.status === 'checked' ? 'Locator checked' : verification.status ? `Locator check: ${String(verification.status).replaceAll('_', ' ')}` : '';
     const authoredRole = passage.role ? String(passage.role).replaceAll('_', ' ') : 'Source';
     const role = authoredRole[0].toUpperCase() + authoredRole.slice(1);
-    return `<details><summary>${esc(role)} passage${passage.source_display ? `: ${esc(passage.source_display)}` : ''}</summary>${sourceHtml(passage)}${status ? `<p class="proof-hint">${esc(status)}${method ? ` (${esc(method)})` : ''}. This does not assess the mathematics.</p>` : ''}${verification.note ? `<p class="proof-hint">${esc(verification.note)}</p>` : ''}${passage.source_excerpt ? `<pre class="proof-excerpt">${esc(passage.source_excerpt)}</pre>` : '<p class="proof-hint">No source excerpt is available for this locator.</p>'}</details>`;
+    const extractionNote = passage.source_media_type === 'application/pdf' && passage.source_excerpt
+      ? '<p class="proof-hint">Approximate text extracted from the PDF. Check the original page for formulas and layout.</p>' : '';
+    return `<details><summary>${esc(role)} passage${passage.source_display ? `: ${esc(passage.source_display)}` : ''}</summary>${sourceHtml(passage)}${status ? `<p class="proof-hint">${esc(status)}${method ? ` (${esc(method)})` : ''}. This does not assess the mathematics.</p>` : ''}${verification.note ? `<p class="proof-hint">${esc(verification.note)}</p>` : ''}${extractionNote}${passage.source_excerpt ? `<pre class="proof-excerpt">${esc(passage.source_excerpt)}</pre>` : '<p class="proof-hint">No source excerpt is available for this locator.</p>'}</details>`;
   }).join('')}</div>`;
+}
+
+// Fidelity badges report source-comparison bookkeeping, never mathematical
+// correctness: one neutral muted style, no sentiment colors.
+function fidelityBadgeHtml(fidelity) {
+  const state = fidelity || 'unreviewed';
+  const labels = {
+    unreviewed: 'Not yet compared with the source',
+    matched: 'Compared with the source',
+    needs_attention: 'Source comparison needs attention',
+    stale: 'Changed since the last comparison',
+  };
+  return `<span class="proof-fidelity" data-proof-fidelity="${esc(state)}">${esc(labels[state] || state)}</span>`;
+}
+
+function reviewLineHtml(row) {
+  return `<p class="proof-review">${fidelityBadgeHtml(row.fidelity)}<span class="proof-validity-note">Mathematical validity is not assessed by this overview.</span></p>`;
+}
+
+function groupBadgeHtml(group) {
+  return `<span class="proof-group">${esc(group.kind === 'joint' ? 'Joint' : 'Case')}: ${esc(group.id)}</span>`;
 }
 
 function relationHtml(use, graph, incoming) {
   const other = graph.nodes.get(incoming ? use.from : use.to);
-  return `<li><button type="button" data-proof-focus="${esc(other.id)}">${esc(other.label)}</button> ${qualificationHtml(use)}<div>${formulaHtml(use.reason_html || esc(use.reason))}</div>${use.uncertainty ? `<span class="proof-uncertainty"> Uncertain connection: ${esc(use.uncertainty)}</span>` : ''}${use.source_display ? `<small>${esc(use.source_display)}</small>` : ''}${passagesHtml(use)}</li>`;
+  return `<li><button type="button" data-proof-focus="${esc(other.id)}">${esc(other.label)}</button> ${qualificationHtml(use)}<div>${formulaHtml(use.reason_html || esc(use.reason))}</div>${use.issue ? `<span class="proof-uncertainty"> Open issue: ${esc(use.issue)}</span>` : ''}${use.source_display ? `<small>${esc(use.source_display)}</small>` : ''}${passagesHtml(use)}</li>`;
 }
 
 function qualificationHtml(use) {
-  return `<span class="proof-use-type">${esc(useTypes[use.type])}</span>${use.regime ? `<span class="proof-regime">Only in regime: ${esc(use.regime)}</span>` : ''}`;
+  return `<span class="proof-use-type">${esc(useTypes[use.type])}</span>${use.regime ? `<span class="proof-regime">Only in regime: ${esc(use.regime)}</span>` : ''}${use.group ? groupBadgeHtml(use.group) : ''}`;
+}
+
+// A detail edge is annotated under its detail endpoint's sub-section: the
+// "from" row when it is intermediate, otherwise the "to" row. Validation
+// guarantees at least one intermediate endpoint, so each edge lands in
+// exactly one owner's panel.
+function detailAnchor(use, graph) {
+  return graph.details.has(use.from) ? use.from : use.to;
+}
+
+function detailUseHtml(use, graph) {
+  const label = (id) => (graph.nodes.get(id) || graph.details.get(id) || {}).label || id;
+  return `<div class="proof-detail-use" data-proof-detail-use="${esc(use.id)}" data-proof-from="${esc(use.from)}" data-proof-to="${esc(use.to)}">${qualificationHtml(use)} ${esc(label(use.from))} → ${esc(label(use.to))}<div>${formulaHtml(use.reason_html || esc(use.reason))}</div>${use.issue ? `<span class="proof-uncertainty"> Open issue: ${esc(use.issue)}</span>` : ''}${fidelityBadgeHtml(use.fidelity)}${use.source_display ? `<small>${esc(use.source_display)}</small>` : ''}${passagesHtml(use)}<p class="proof-hint">This use refines the recorded argument at an intermediate step; it is not part of the overview graph.</p></div>`;
+}
+
+function detailSectionHtml(detail, graph) {
+  const annotations = graph.detailUses.filter((use) => detailAnchor(use, graph) === detail.id);
+  return `<section class="proof-detail" data-proof-detail="${esc(detail.id)}"><h5><span class="proof-detail-kind">${esc(detailKinds[detail.kind])}</span> ${esc(detail.label)}${detail.caption ? `: ${esc(detail.caption)}` : ''}</h5><div class="proof-statement">${formulaHtml(detail.statement_html)}</div>${detail.issue ? `<p class="proof-uncertainty">Open issue: ${esc(detail.issue)}</p>` : ''}${fidelityBadgeHtml(detail.fidelity)}${passagesHtml(detail)}${annotations.map((use) => detailUseHtml(use, graph)).join('')}</section>`;
 }
 
 function fullItemHtml(node, graph, { hover = false } = {}) {
   const incoming = graph.incoming.get(node.id), outgoing = graph.outgoing.get(node.id);
   if (hover) return `<strong>${esc(node.label)}</strong><p class="proof-hover-caption">${esc(node.caption || kinds[node.kind][0])}</p>${sourceHtml(node)}<p class="proof-hint">Click or press Enter for the full statement and dependencies.</p>`;
+  const details = graph.detailsByOwner.get(node.id) || [];
   return `
-    ${node.statement_form === 'synopsis' ? '<p class="proof-hint proof-statement-form">Statement synopsis</p>' : ''}<div class="proof-statement">${formulaHtml(node.statement_html)}</div>${sourceHtml(node)}${node.uncertainty ? `<p class="proof-uncertainty">Extraction uncertainty: ${esc(node.uncertainty)}</p>` : ''}
+    ${node.statement_form === 'synopsis' ? '<p class="proof-hint proof-statement-form">Statement synopsis</p>' : ''}<div class="proof-statement">${formulaHtml(node.statement_html)}</div>${sourceHtml(node)}${node.issue ? `<p class="proof-uncertainty">Open issue: ${esc(node.issue)}</p>` : ''}${reviewLineHtml(node)}
       ${Array.isArray(node.aliases) && node.aliases.length ? `<p class="proof-hint">Also identified as: ${node.aliases.map((alias) => esc(alias)).join(', ')}</p>` : ''}${passagesHtml(node)}
+      ${details.length ? `<div class="proof-details"><h4>Intermediate steps (${details.length})</h4>${details.map((detail) => detailSectionHtml(detail, graph)).join('')}</div>` : ''}
       <div class="proof-dependencies"><h4>Prerequisites used (${incoming.length})</h4>${incoming.length ? `<ul>${incoming.map((use) => relationHtml(use, graph, true)).join('')}</ul><p class="proof-hint">These are recorded inputs to the argument. Their joint sufficiency has not been verified by this overview.</p>` : '<p>No prerequisite use is recorded in this overview.</p>'}
       <h4>Used by (${outgoing.length})</h4>${outgoing.length ? `<ul>${outgoing.map((use) => relationHtml(use, graph, false)).join('')}</ul>` : '<p>No downstream use is recorded in this overview.</p>'}</div>`;
 }
 
 function fullUseHtml(use, graph) {
-  return `<h4>${esc(graph.nodes.get(use.from).label)} → ${esc(graph.nodes.get(use.to).label)}</h4>${qualificationHtml(use)}<div class="proof-statement">${formulaHtml(use.reason_html || esc(use.reason))}</div>${use.uncertainty ? `<p class="proof-uncertainty">Uncertain connection: ${esc(use.uncertainty)}</p>` : ''}${sourceHtml(use)}${passagesHtml(use)}<p class="proof-hint">This connection records a use in the argument. This overview does not verify that inference.</p>`;
+  return `<h4>${esc(graph.nodes.get(use.from).label)} → ${esc(graph.nodes.get(use.to).label)}</h4>${qualificationHtml(use)}<div class="proof-statement">${formulaHtml(use.reason_html || esc(use.reason))}</div>${use.issue ? `<p class="proof-uncertainty">Open issue: ${esc(use.issue)}</p>` : ''}${sourceHtml(use)}${passagesHtml(use)}${reviewLineHtml(use)}<p class="proof-hint">This connection records a use in the argument. This overview does not verify that inference.</p>`;
 }
 
 function fullIndexHtml(data, graph, open = false) {
-  return `<details class="proof-index" id="proof-full-index"${open ? ' open' : ''}><summary>Full statement index (${data.items.length} items, ${data.uses.length} recorded uses)</summary>${data.items.map((node) => `<article id="proof-index-item-${esc(node.id)}" data-proof-index-item="${esc(node.id)}"><h3>${esc(node.label)}${node.caption ? `: ${esc(node.caption)}` : ''}</h3>${fullItemHtml(node, graph)}</article>`).join('')}<h3>Recorded uses</h3>${data.uses.map((use) => `<article id="proof-index-use-${esc(use.id)}" data-proof-index-use="${esc(use.id)}" data-proof-from="${esc(use.from)}" data-proof-to="${esc(use.to)}">${fullUseHtml(use, graph)}</article>`).join('')}</details>`;
+  const detailCount = (data.details || []).length;
+  const detailSummary = detailCount ? `, ${detailCount} intermediate steps and ${data.detail_uses.length} detail uses under their owners` : '';
+  return `<details class="proof-index" id="proof-full-index"${open ? ' open' : ''}><summary>Full statement index (${data.items.length} items, ${data.uses.length} recorded uses${detailSummary})</summary>${data.items.map((node) => `<article id="proof-index-item-${esc(node.id)}" data-proof-index-item="${esc(node.id)}"><h3>${esc(node.label)}${node.caption ? `: ${esc(node.caption)}` : ''}</h3>${fullItemHtml(node, graph)}</article>`).join('')}<h3>Recorded uses</h3>${data.uses.map((use) => `<article id="proof-index-use-${esc(use.id)}" data-proof-index-use="${esc(use.id)}" data-proof-from="${esc(use.from)}" data-proof-to="${esc(use.to)}">${fullUseHtml(use, graph)}</article>`).join('')}</details>`;
 }
 
 function recordsHtml(data, graphMode) {
-  const records = { schema_version: data.schema_version || 1, graph_mode: graphMode, items: data.items, uses: data.uses, build_context: data.build_context || { mathematical_assessment: 'not_performed' } };
+  const records = { schema_version: data.schema_version, graph_mode: graphMode, items: data.items, uses: data.uses, details: data.details, detail_uses: data.detail_uses, build_context: data.build_context || { mathematical_assessment: 'not_performed' } };
   return `<script id="proof-overview-records" type="application/json">${jsonForScript(records)}</script>`;
 }
 
@@ -407,7 +542,33 @@ function buildContextHtml(data) {
   }[context.source_status] || '';
   const comparisonStatus = typeof context.source_comparison === 'string' ? context.source_comparison : context.source_comparison?.status;
   const comparison = { complete: 'Source comparisons are complete.', incomplete: 'Some source comparisons remain incomplete.' }[comparisonStatus] || '';
-  return `<p class="proof-hint">${revision ? `<span title="Captured revision ${esc(revision.slice(0, 12))}">Captured manuscript version.</span> ` : ''}${sourceStatus ? `${sourceStatus} ` : ''}${comparison ? `${comparison} ` : ''}Mathematical assessment has not been performed.</p>`;
+  const candidates = context.citation_candidates;
+  const scan = typeof candidates === 'string'
+    ? 'Citation scan not applicable to the captured sources.'
+    : (candidates && typeof candidates.attributed === 'number'
+      ? `Citation scan: ${typeof candidates.pairs === 'number' ? `${candidates.pairs} cited result pairs; ` : ''}${candidates.attributed} attributed and ${candidates.unattributed} unattributed matched references; ${typeof candidates.not_mechanically_matchable === 'number' ? `${candidates.not_mechanically_matchable} records without unique citation labels; ` : ''}${candidates.missing_uses} missing-use candidates; ${candidates.unsupported_uses} recorded uses not corroborated by this scan.`
+      : '');
+  const rows = [...(data.items || []), ...(data.details || []), ...(data.uses || []), ...(data.detail_uses || [])];
+  const issues = rows.filter((row) => typeof row.issue === 'string' && row.issue.trim()).length;
+  const issueNote = issues ? `${issues} record${issues === 1 ? ' carries' : 's carry'} an open issue note.` : '';
+  return `<p class="proof-hint">${revision ? `<span title="Captured revision ${esc(revision.slice(0, 12))}">Captured manuscript version.</span> ` : ''}${sourceStatus ? `${sourceStatus} ` : ''}${comparison ? `${comparison} ` : ''}${scan ? `${scan} ` : ''}${issueNote ? `${issueNote} ` : ''}Mathematical assessment has not been performed.</p>`;
+}
+
+function scopeHtml(scope) {
+  // The first paragraph carries the selected boundaries and missing material;
+  // any longer reading detail stays collapsible. No second summary is authored.
+  const [lead, ...rest] = String(scope || '').split(/\n\s*\n/);
+  const remainder = rest.join('\n\n').trim();
+  const leadHtml = lead.trim() ? `<p class="proof-scope-lead">${esc(lead.trim())}</p>` : '';
+  const restHtml = remainder ? `<details class="proof-scope"><summary>Full scope and reading limits</summary><p>${esc(remainder)}</p></details>` : '';
+  return leadHtml + restHtml;
+}
+
+function mathDiagnosticsHtml(data) {
+  const entries = Array.isArray(data.math_diagnostics) ? data.math_diagnostics : [];
+  if (!entries.length) return '';
+  const rows = entries.map((entry) => `<li><code>${esc(entry.id)}</code> (${esc(entry.field)}): ${esc(entry.reason)}<br><code>${esc(entry.excerpt)}</code></li>`).join('');
+  return `<details class="proof-render-warnings"><summary>Math display notes: ${entries.length} expression(s) kept as labeled LaTeX</summary><ul>${rows}</ul></details>`;
 }
 
 function renderIndex(data) {
@@ -415,14 +576,14 @@ function renderIndex(data) {
   const warnings = (data.warnings || []).map((warning) => `<li>${esc(warning)}</li>`).join('');
   const html = `<!doctype html><html lang="en" data-theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(data.title)} | Proof overview index</title>${proofCss(data)}<style>
     :root{--text:#172033;--text-muted:#526075;--text-dim:#637086;--panel:#f8fafc;--panel-border:#d7dee8;--mask:#fff;--arrow:#64748b;color-scheme:light}html[data-theme="dark"]{--text:#e5eaf3;--text-muted:#adb8cb;--text-dim:#9caac0;--panel:#101827;--panel-border:#344155;--mask:#172132;color-scheme:dark}body{margin:0;background:var(--panel);color:var(--text);font:14px/1.6 system-ui,sans-serif}main{max-width:1000px;margin:auto;padding:28px 24px}h1{font-size:22px;line-height:1.3}.proof-index article{scroll-margin-top:18px}.proof-passages details{margin:8px 0}.proof-passages summary{cursor:pointer;font-size:12px;overflow-wrap:anywhere}.proof-index h4{font-size:13px}.proof-index-controls{display:flex;flex-wrap:wrap;gap:8px}.proof-index-controls a,.proof-index-controls button{font:inherit;color:var(--text);border:1px solid var(--panel-border);border-radius:5px;background:var(--mask);padding:5px 9px;text-decoration:none}@media print{main{max-width:none;padding:0}}
-    </style></head><body><main><h1>${esc(data.title)}</h1><p class="proof-caption">${data.items.length} items · ${data.uses.length} recorded uses</p><p><strong>Index view.</strong> The recorded mapping is displayed as a complete index because the current diagram layout requires an acyclic graph. Cyclic mappings alone do not establish a circular proof.</p><p>${esc(data.scope || '')}</p>${buildContextHtml(data)}${warnings ? `<div class="proof-render-warnings"><ul>${warnings}</ul></div>` : ''}<nav class="proof-index-controls" aria-label="Index controls"><button type="button" id="proof-index-theme">Switch theme</button><a href="#proof-full-index">All statements and uses</a></nav>${fullIndexHtml(data, graph, true)}</main>${recordsHtml(data, 'index')}<script>(function(){document.getElementById('proof-index-theme').addEventListener('click',function(){document.documentElement.setAttribute('data-theme',document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark');});document.addEventListener('click',function(event){var button=event.target.closest('[data-proof-focus]');if(!button)return;var article=document.getElementById('proof-index-item-'+button.getAttribute('data-proof-focus'));if(article){document.getElementById('proof-full-index').open=true;article.scrollIntoView({block:'start'});article.setAttribute('tabindex','-1');article.focus({preventScroll:true});}});})();</script></body></html>`;
+    </style></head><body><main><h1>${esc(data.title)}</h1><p class="proof-caption">${data.items.length} items · ${data.uses.length} recorded uses</p><p><strong>Index view.</strong> The recorded mapping is displayed as a complete index because the current diagram layout requires an acyclic graph. Cyclic mappings alone do not establish a circular proof.</p><p>${esc(data.scope || '')}</p>${buildContextHtml(data)}${warnings ? `<div class="proof-render-warnings"><ul>${warnings}</ul></div>` : ''}${mathDiagnosticsHtml(data)}<nav class="proof-index-controls" aria-label="Index controls"><button type="button" id="proof-index-theme">Switch theme</button><a href="#proof-full-index">All statements and uses</a></nav>${fullIndexHtml(data, graph, true)}</main>${recordsHtml(data, 'index')}<script>(function(){document.getElementById('proof-index-theme').addEventListener('click',function(){document.documentElement.setAttribute('data-theme',document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark');});document.addEventListener('click',function(event){var button=event.target.closest('[data-proof-focus]');if(!button)return;var article=document.getElementById('proof-index-item-'+button.getAttribute('data-proof-focus'));if(article){document.getElementById('proof-full-index').open=true;article.scrollIntoView({block:'start'});article.setAttribute('tabindex','-1');article.focus({preventScroll:true});}});})();</script></body></html>`;
   const graph_preservation = representationReceipt(data, html, 'index');
   if (graph_preservation.status !== 'pass') throw new Error('Rendered index does not preserve the supplied item and use identities.');
   return { html, items: data.items.length, uses: data.uses.length, viewBox: null, graph_mode: 'index', graph_preservation, geometry: { status: 'not_applicable', checks: [], diagnostics: [], reason: 'The complete records are shown as an index; no dependency geometry is drawn.' } };
 }
 
 function proofCss(data) {
-  const badgeFocus = data.uses.filter((use) => use.type !== 'dependency' || use.regime).map((use) => `svg[data-focus-active]:not([data-reach-active]):has([data-edge-id="${use.id}"][data-focus-match]) [data-proof-use="${use.id}"],svg[data-reach-active]:has([data-edge-id="${use.id}"][data-reach-match]) [data-proof-use="${use.id}"]{opacity:1}`).join('');
+  const badgeFocus = data.uses.filter((use) => use.type !== 'dependency' || use.regime || use.group).map((use) => `svg[data-focus-active]:not([data-reach-active]):has([data-edge-id="${use.id}"][data-focus-match]) [data-proof-use="${use.id}"],svg[data-reach-active]:has([data-edge-id="${use.id}"][data-reach-match]) [data-proof-use="${use.id}"]{opacity:1}`).join('');
   const palette = Object.entries(kinds).map(([kind, [, dark, light]]) => `
     [data-theme="dark"] .c-${kind}{--proof-tone:${dark}} [data-theme="light"] .c-${kind}{--proof-tone:${light}}
     .c-${kind}{stroke:var(--proof-tone,${dark});fill:color-mix(in srgb,var(--proof-tone,${dark}) 13%,transparent)}
@@ -437,9 +598,14 @@ function proofCss(data) {
     .proof-edge{fill:none;stroke:var(--arrow)} .proof-uncertain{stroke-dasharray:6 4}.proof-arrowhead{fill:var(--arrow)}
     .proof-argument-edge{stroke-width:2.2}.proof-edge-badge{cursor:pointer}.proof-edge-badge rect{fill:var(--mask);stroke:var(--panel-border)}.proof-edge-badge text{fill:var(--text-muted);font-size:10px}.proof-edge-badge:focus-visible rect{stroke:var(--text);stroke-width:2}.proof-badge-leader{fill:none;stroke:var(--arrow);stroke-width:1;stroke-dasharray:2 3;pointer-events:none}.proof-badge-anchor{fill:var(--arrow);pointer-events:none}.proof-component path{stroke:var(--panel-border);stroke-width:1}.proof-component text{fill:var(--text-muted);font-size:12px;paint-order:stroke;stroke:var(--panel);stroke-width:6px}
     .proof-use-type,.proof-regime{display:inline-block;font-size:10px;border:1px solid var(--panel-border);padding:2px 6px;border-radius:4px;margin:2px 3px;color:var(--text-muted)}
+    .proof-group,.proof-detail-kind,.proof-fidelity{display:inline-block;font-size:10px;border:1px solid var(--panel-border);padding:2px 6px;border-radius:4px;margin:2px 3px;color:var(--text-muted)}
+    .proof-details{margin-top:10px}.proof-detail{border-top:1px dashed var(--panel-border);padding-top:6px;margin-top:8px}.proof-detail h5{font-size:12px;color:var(--text);margin:6px 0}
+    .proof-detail-use{margin:8px 0;padding:4px 8px;border-left:2px solid var(--panel-border);font-size:11px;line-height:1.6;color:var(--text-muted)}
+    .proof-detail-use small{display:block;color:var(--text-dim)}
+    .proof-review{margin:8px 0}.proof-validity-note{font-size:11px;color:var(--text-muted);margin-left:6px}
     .proof-navigation{margin:12px 0 14px}.proof-navigation h2{font-size:13px;color:var(--text);margin:0 0 8px}.proof-main-list{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;scrollbar-width:thin}.proof-main-list button{flex:0 0 auto;text-align:left;max-width:240px;padding:8px 12px;border-radius:6px;border:1px solid var(--panel-border);border-left:3px solid var(--proof-tone);background:var(--panel);color:var(--text);font:inherit;font-size:12px;cursor:pointer}.proof-main-list button strong{display:block;font-size:13px}.proof-main-list button span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;color:var(--text-muted);margin-top:4px}.proof-main-list button[aria-pressed="true"]{outline:1px solid var(--proof-tone)}
     .proof-view-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}.proof-view-controls button{background:var(--panel);border:1px solid var(--panel-border);border-radius:5px;padding:6px 10px;color:var(--text);font:inherit;font-size:11px;cursor:pointer}.proof-view-controls button:focus-visible,.proof-main-list button:focus-visible{outline:2px solid var(--text);outline-offset:2px}.proof-view-controls p{font-size:11px;color:var(--text-muted);margin:0}
-    .proof-scope{font-size:12px;line-height:1.6;color:var(--text-muted);margin:8px 0}.proof-scope summary{cursor:pointer}.proof-scope p{max-width:none}.proof-trace-note{font-size:11px;color:var(--text-muted);line-height:1.5;margin:8px 0}.diagram-container>svg{max-height:620px}.diagram-container{scroll-margin-top:80px}
+    .proof-scope{font-size:12px;line-height:1.6;color:var(--text-muted);margin:8px 0}.proof-scope summary{cursor:pointer}.proof-scope p{max-width:none}.proof-scope-lead{font-size:13px;line-height:1.6;margin:8px 0;max-width:76em}.proof-trace-note{font-size:11px;color:var(--text-muted);line-height:1.5;margin:8px 0}.diagram-container>svg{max-height:620px}.diagram-container{scroll-margin-top:80px}
     #focus-id,#focus-tag,#focus-brand,#focus-context,#focus-summary,#relationship-lens-list,#btn-focus-relations{display:none!important}
     .proof-caption{color:var(--text-muted);font-size:12px;line-height:1.6;margin:14px 0 0}.proof-caption p{margin:5px 0}
     .proof-legend{display:flex;gap:8px 17px;flex-wrap:wrap;padding:0;list-style:none;font-size:11px;color:var(--text-muted);margin:12px 0}
@@ -563,7 +729,7 @@ function render(input) {
   const hasRegimes = data.uses.some((use) => use.regime);
   const presentKinds = new Set(data.items.map((item) => item.kind));
   const legend = `<ul class="proof-legend" aria-label="Mathematical item types">${Object.entries(kinds).filter(([kind]) => presentKinds.has(kind)).map(([kind, [label]]) => `<li data-kind="${kind}">${label}</li>`).join('')}</ul>`;
-  const cards = `<div class="proof-caption"><p>Arrows point from prerequisites to the results that use them. Badges distinguish definition uses, proof arguments, and regime-specific uses. Dashed arrows mark uncertain connections.</p></div>${legend}`;
+  const cards = `<div class="proof-caption"><p>Arrows point from prerequisites to the results that use them. Badges distinguish definition uses, proof arguments, and regime-specific uses. Dashed arrows mark connections with an open issue.</p></div>${legend}`;
   let template = fs.readFileSync(path.join(root, 'assets/archify/template.html'), 'utf8');
   template = replaceTemplateOnce(template,
     'meta.textContent = [viewerKindLabel(item.type), item.id, item.sublabel, item.tag]',
@@ -606,7 +772,7 @@ function render(input) {
     const node = graph.nodes.get(id);
     return `<button type="button" data-proof-main="${esc(id)}" class="c-${esc(node.kind)}" aria-pressed="false" title="${esc(`${node.label}: ${node.caption}. Open statement and supporting dependencies.`)}"><strong>${esc(node.label)}</strong><span>${esc(node.caption)}</span></button>`;
   }).join('')}</div><div class="proof-view-controls"><button type="button" id="proof-full-structure">Fit complete structure (${data.items.length} items)</button><button type="button" id="proof-readable-view">Readable view</button><p id="proof-view-status" aria-live="polite">Select a result to read its statement and explore its supporting items.</p></div>${hasRegimes ? '<p class="proof-trace-note" role="note">Some connections apply only in a named regime. Dependency tracing follows all recorded arrows, including alternative routes. Regime labels still apply; a trace is not one required or verified proof route.</p>' : ''}</section>`;
-  html = html.replace('<div class="diagram-container"', () => `<div class="proof-caption"><p>${esc(data.source?.title || data.title)} · ${data.items.length} items · ${data.uses.length} recorded connections</p><p><strong>Dependency overview, not proof verification.</strong> Select a result for its statement, source, and supporting items.</p>${buildContextHtml(data)}</div><details class="proof-scope"><summary>Scope and reading limits</summary><p>${esc(data.scope)}</p></details>${warnings}${navigation}\n<div class="diagram-container"`);
+  html = html.replace('<div class="diagram-container"', () => `<div class="proof-caption"><p>${esc(data.source?.title || data.title)} · ${data.items.length} items · ${data.uses.length} recorded connections</p><p><strong>Dependency overview, not proof verification.</strong> Select a result for its statement, source, and supporting items.</p>${buildContextHtml(data)}</div>${scopeHtml(data.scope)}${warnings}${mathDiagnosticsHtml(data)}${navigation}\n<div class="diagram-container"`);
   const fragments = data.items.map((node) => `<template id="proof-detail-${esc(node.id)}">${fullItemHtml(node, graph)}</template><template id="proof-hover-${esc(node.id)}">${fullItemHtml(node, graph, { hover: true })}</template>`).join('');
   const useFragments = data.uses.map((use) => `<template id="proof-use-${esc(use.id)}">${fullUseHtml(use, graph)}</template>`).join('');
   const index = `${fullIndexHtml(data, graph)}<p class="proof-attribution">Viewer adapted from Archify 2.17 by tt-a1i and Cocoon AI, MIT licensed. Proof-specific dataset and rendering by archify-proofs-overview.</p>`;

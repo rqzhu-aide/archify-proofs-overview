@@ -13,7 +13,7 @@ from collections import OrderedDict, defaultdict
 from . import PROJECTION_VERSION
 from .assessment import derive_full, key_of, pinned_of, reduce, ref_of
 from .canonical import compact_json
-from .contract import MAJOR_KINDS
+from .contract import INTERMEDIATE_KINDS, MAJOR_KINDS
 from .storage import Database, Record
 
 INDICATOR_RANK = {"not_required": 0, "complete": 1, "pending": 2, "compromised": 3, "disputed": 4}
@@ -305,7 +305,7 @@ class _Projector:
             argument = snap.live("arguments", group.body["argument_id"])
             conclusion = snap.get(group.body["conclusion"])
             hidden = conclusion is not None and conclusion.collection == "items" \
-                and conclusion.body["kind"] == "intermediate_result"
+                and conclusion.body["kind"] in INTERMEDIATE_KINDS
             if not hidden:
                 # Only a major conclusion (including a statement part) ends the connection.
                 # A hidden claim can have its own complete argument: its final group is still
@@ -348,7 +348,7 @@ class _Projector:
     def argument_section(self, argument: Record | None) -> str:
         target = self.snap.get(argument.body["target"]) if argument is not None else None
         return "derivations" if target is not None and target.collection == "items" \
-            and target.body["kind"] == "intermediate_result" else "composition"
+            and target.body["kind"] in INTERMEDIATE_KINDS else "composition"
 
     def section_for_obligation(self, obligation: dict) -> str:
         role, kind = obligation["role"], obligation["kind"]
@@ -489,22 +489,44 @@ class _Projector:
                         detail.add("premises", [scope])
                 conclusion = snap.get(group.body["conclusion"])
                 if conclusion is not None and conclusion.collection == "items" \
-                        and conclusion.body["kind"] == "intermediate_result":
+                        and conclusion.body["kind"] in INTERMEDIATE_KINDS:
                     detail.add("derivations", [conclusion])
             for coverage in snap.member_records("coverage_in_argument", ref_of(argument)):
                 route_records.append(coverage)
                 detail.add("coverage", [coverage])
+        member_uses = OrderedDict()
         for member in statements + intermediates:
             for use in snap.member_records("incoming_uses", ref_of(member)):
-                keys.add(key_of(ref_of(use)))
-                use_ids.append(use.id)
-                route_records.append(use)
-                detail.add("applications", [use])
-                self.place_obligations(detail, ref_of(use))
-                self.place_checks(detail, ref_of(use), independent_checks=independent_checks)
-                supplier_owner = snap.major_of(use.body["from"])
-                if supplier_owner is not None and supplier_owner.id != item.id:
-                    detail.add("premises", [snap.get(use.body["from"])])
+                member_uses.setdefault(use.id, use)
+        # Groups with no argument behind them (migrated overview groups stay provenance
+        # annotations) never appear through groups_in_argument; collect them by conclusion
+        # with their member uses so a cases group keeps its case qualification visible.
+        provenance = OrderedDict()
+        for member in statements + intermediates:
+            for group in snap.groups_for_conclusion(ref_of(member)):
+                if group is not None and group.body["argument_id"] is None:
+                    provenance.setdefault(group.id, group)
+        for group in provenance.values():
+            keys.add(key_of(ref_of(group)))
+            route_records.append(group)
+            detail.add("derivations", [group])
+            self.place_obligations(detail, ref_of(group))
+            self.place_checks(detail, ref_of(group), independent_checks=independent_checks)
+            for scope_id in [group.body["scope_id"]] + list(group.body["case_scope_ids"]):
+                for scope in self.scope_chain(scope_id):
+                    detail.add("premises", [scope])
+            for use in snap.member_records("uses_in_group", ref_of(group)):
+                member_uses.setdefault(use.id, use)
+        for use in member_uses.values():
+            keys.add(key_of(ref_of(use)))
+            use_ids.append(use.id)
+            route_records.append(use)
+            detail.add("applications", [use])
+            self.place_obligations(detail, ref_of(use))
+            self.place_checks(detail, ref_of(use), independent_checks=independent_checks)
+            supplier_owner = snap.major_of(use.body["from"])
+            if supplier_owner is not None and supplier_owner.id != item.id:
+                detail.add("premises", [snap.get(use.body["from"])])
         detail.add("derivations", intermediates)
         self.add_findings(detail, keys, use_ids)
         self.add_source_material(detail, self.anchors_of(statements + intermediates + route_records), statements)
@@ -701,6 +723,12 @@ class _Projector:
             "limitations": list(A["problems"]),
             "published_revision": A["published_revision"],
         }
+        # The imported overview's boundaries remain provenance even when an
+        # audit selects a different set of targets. Do not merge the two scopes.
+        papers = self.snap.all("papers")
+        if len(papers) == 1 and any(key in papers[0].body for key in ("scope", "exclusions")):
+            summary["overview_scope"] = {"text": papers[0].body.get("scope"),
+                                         "exclusions": list(papers[0].body.get("exclusions", []))}
         projection = {
             "projection_version": PROJECTION_VERSION,
             "snapshot_revision": A["revision"],

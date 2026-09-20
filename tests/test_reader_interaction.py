@@ -77,7 +77,8 @@ class ReaderInteractionTests(unittest.TestCase):
         cls.temporary = tempfile.TemporaryDirectory()
         cls.base = Path(cls.temporary.name)
         dataset = {
-            "schema_version": 2, "graph_mode": "dag", "title": "Shallow reader fixture",
+            "schema_version": 3, "graph_mode": "dag", "title": "Shallow reader fixture",
+            "details": [], "detail_uses": [],
             "scope": "Two synthetic statements; no mathematical assessment.",
             "source": {"title": "Reader fixture"}, "main_items": ["result"],
             "items": [

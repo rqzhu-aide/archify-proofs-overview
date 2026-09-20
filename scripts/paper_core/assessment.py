@@ -13,7 +13,7 @@ from collections import defaultdict, deque
 
 from .bindings import binding_changes
 from .canonical import compact_json, digest
-from .contract import MAJOR_KINDS, extract_refs
+from .contract import INTERMEDIATE_KINDS, MAJOR_KINDS, extract_refs
 from .errors import InvalidRequest
 from .refs import RELATIONS, facet_digests
 from .storage import Database, Record
@@ -88,7 +88,7 @@ class Snapshot:
         for record in db.records_at(revision):
             self._records[(record.collection, record.id)] = record
             self._by_collection[record.collection].append(record)
-            if record.collection == "items" and record.body["kind"] == "intermediate_result":
+            if record.collection == "items" and record.body["kind"] in INTERMEDIATE_KINDS:
                 self._children[record.body["owner_id"]].append(record)
             for row in extract_refs(record.collection, record.body):
                 self.visit_relations(1, key_of(ref_of(record)))
@@ -216,7 +216,7 @@ class Snapshot:
         """The statement plus the intermediate claims owned by its major item."""
         owner_id = statement.body["item_id"] if statement.collection == "parts" else statement.id
         members = [statement]
-        if statement.collection == "items" and statement.body["kind"] == "intermediate_result":
+        if statement.collection == "items" and statement.body["kind"] in INTERMEDIATE_KINDS:
             return members
         members.extend(self.intermediates_of(owner_id))
         return members
@@ -497,7 +497,7 @@ class _Derivation:
         pending = deque()
         for target in audit.body["targets"]:
             record = snap.get(target)
-            if record is not None and record.collection == "items" and record.body["kind"] == "intermediate_result":
+            if record is not None and record.collection == "items" and record.body["kind"] in INTERMEDIATE_KINDS:
                 self.problems.append(f"audit target {key_of(target)} is an intermediate result")
             else:
                 pending.append((target, True))
@@ -540,12 +540,12 @@ class _Derivation:
                 seen.add(skey)
                 ordered.append(statement)
             kind = snap.kind_of(ref)
-            if proof_required and (kind in PROOF_KINDS or kind == "intermediate_result"):
+            if proof_required and (kind in PROOF_KINDS or kind in INTERMEDIATE_KINDS):
                 self.required_establishment.add(skey)
             pending.extend((r, False) for r in snap.scope_assumptions(statement.body.get("scope_id")).values())
             if not proof_required:
                 continue
-            if statement.collection == "items" and kind != "intermediate_result":
+            if statement.collection == "items" and kind not in INTERMEDIATE_KINDS:
                 pending.extend((ref_of(p), True) for p in snap.member_records("parts_of_item", ref))
             arguments = {a.id: a for a in snap.member_records("arguments_for_target", ref)
                          if a.body["lifecycle"] != "retired"}
@@ -556,7 +556,7 @@ class _Derivation:
                         arguments[arg.id] = arg
                         pending.append((ref_of(member), True))
             local_groups = []
-            if statement.collection == "parts" or kind == "intermediate_result":
+            if statement.collection == "parts" or kind in INTERMEDIATE_KINDS:
                 local_groups = [g for g in snap.groups_for_conclusion(ref)
                                 if (a := snap.live("arguments", g.body["argument_id"])) is not None
                                 and a.body["lifecycle"] == "registered"]
@@ -652,11 +652,25 @@ class _Derivation:
             self.add_obligation(ref_of(audit), task["kind"], "primary", required=task["applicability"] == "required")
 
     # -- obligation status -------------------------------------------------
+    @staticmethod
+    def _observation_order(record) -> tuple:
+        """Chronological order for source-fidelity candidates.
+
+        Migrated overview comparisons carry the legacy ``created_at`` timestamp (feature
+        overview-bridge/1); it, never the arbitrary record id, decides which of two imported
+        reviews is newer. Imported legacy rows all predate the migration, so comparisons
+        recorded afterwards keep their ``(revision, id)`` order behind them.
+        """
+        created = record.body.get("created_at")
+        if isinstance(created, str) and created:
+            return (0, created, record.id)
+        return (1, "", record.revision or 0, record.id)
+
     def _candidates(self, obligation: dict) -> list:
         target_key = key_of(obligation["target"])
         kind, role = obligation["kind"], obligation["role"]
         if kind == "source_fidelity":
-            return sorted(self.observations_by_target.get(target_key, []), key=lambda r: (r.revision, r.id))
+            return sorted(self.observations_by_target.get(target_key, []), key=self._observation_order)
         if kind == "reconciliation":
             return []
         out = []
@@ -857,7 +871,7 @@ class _Derivation:
             for member in snap.family(statement):
                 arguments = [a for a in snap.member_records("arguments_for_target", ref_of(member))
                              if a.body["lifecycle"] == "registered"]
-                if member.collection == "parts" or self.snap.kind_of(ref_of(member)) == "intermediate_result":
+                if member.collection == "parts" or self.snap.kind_of(ref_of(member)) in INTERMEDIATE_KINDS:
                     for group in snap.groups_for_conclusion(ref_of(member)):
                         argument = snap.live("arguments", group.body["argument_id"])
                         if argument is not None and argument.body["lifecycle"] == "registered" \
@@ -1030,7 +1044,7 @@ class _Derivation:
         if kind == "external_result":
             state = self._obligation_supported(ref, "external_source")
             return {"supported": "available", "defect": "unavailable"}.get(state, "conditional")
-        if (record.collection == "items" and kind == "intermediate_result") or record.collection == "parts":
+        if (record.collection == "items" and kind in INTERMEDIATE_KINDS) or record.collection == "parts":
             groups = [g for g in snap.groups_for_conclusion(ref)
                       if (a := snap.live("arguments", g.body["argument_id"])) is not None
                       and a.body["lifecycle"] == "registered"]

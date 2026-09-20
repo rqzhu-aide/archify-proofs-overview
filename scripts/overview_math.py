@@ -19,7 +19,7 @@ _ENVIRONMENTS = frozenset((
     "substack displaylines eqalign eqalignno"
 ).split())
 CONFIGURATION = {
-    "adapter_version": 2,
+    "adapter_version": 3,
     "delimiters": [["$", "$"], ["$$", "$$"], [r"\(", r"\)"], [r"\[", r"\]"]],
     "output": "static native MathML with original LaTeX annotation",
     "maximum_formula_characters": 8192,
@@ -111,8 +111,9 @@ def _safe_mathml(value: str, tex: str, display: str) -> str:
             tag = tag[len(MATHML_NS) + 2:]
         if tag not in _TAGS or any(name not in _ATTRIBUTES for name in element.attrib):
             raise ValueError("unsupported converter markup")
-        if re.search(r"\\[A-Za-z]+", (element.text or "") + (element.tail or "")):
-            raise ValueError("an unsupported LaTeX command remains literal")
+        literal = re.search(r"\\[A-Za-z]+", (element.text or "") + (element.tail or ""))
+        if literal:
+            raise ValueError(f"an unsupported LaTeX command remains literal: {literal.group(0)}")
         arity = {"mfrac": 2, "mroot": 2, "msub": 2, "msup": 2,
                  "munder": 2, "mover": 2, "msubsup": 3, "munderover": 3}.get(tag)
         if arity is not None and len(element) != arity:
@@ -138,35 +139,71 @@ def _group_scripted_binomials(tex: str) -> str:
 
     latex2mathml 3.81.0 emits a binomial's two fences and fraction as three
     children of a script node. Explicit TeX grouping gives that node one base.
-    Limit the workaround to binomials with two braced arguments and a script.
+    Arguments may be braced or single unbraced tokens (\binom{n}{k} or
+    \binom nk); anything else is left for the ordinary safety checks.
     """
+    def skip_space(index: int) -> int:
+        while index < len(tex) and tex[index].isspace():
+            index += 1
+        return index
+
+    def argument_end(index: int) -> int | None:
+        index = skip_space(index)
+        if index == len(tex):
+            return None
+        if tex[index] == "{":
+            depth = 1
+            index += 1
+            while index < len(tex) and depth:
+                if tex[index] in "{}" and not _escaped(tex, index):
+                    depth += 1 if tex[index] == "{" else -1
+                index += 1
+            return index if not depth else None
+        if tex[index] == "\\":
+            token = re.match(r"\\[A-Za-z]+|\\[^A-Za-z]", tex[index:])
+            return index + token.end() if token else None
+        return index + 1
+
     insertions = []
     for match in re.finditer(r"\\binom\b", tex):
         if _escaped(tex, match.start()):
             continue
         end = match.end()
         for _ in range(2):
-            while end < len(tex) and tex[end].isspace():
-                end += 1
-            if end == len(tex) or tex[end] != "{":
-                break
-            depth = 1
-            end += 1
-            while end < len(tex) and depth:
-                if tex[end] in "{}" and not _escaped(tex, end):
-                    depth += 1 if tex[end] == "{" else -1
-                end += 1
-            if depth:
+            end = argument_end(end) if end is not None else None
+            if end is None:
                 break
         else:
-            script = end
-            while script < len(tex) and tex[script].isspace():
-                script += 1
+            script = skip_space(end)
             if script < len(tex) and tex[script] in "^_":
                 insertions.extend(((match.start(), "{"), (end, "}")))
     for index, brace in sorted(insertions, reverse=True):
         tex = tex[:index] + brace + tex[index:]
     return tex
+
+
+_SIZED_BAR_RE = re.compile(
+    r"(\\(?:Bigg[lmr]|bigg[lmr]|Big[lmr]|big[lmr]|Big|big)\s*)"
+    r"\\(lVert|rVert|lvert|rvert|Vert|vert)(?![A-Za-z])")
+
+
+def _sized_named_bars(tex: str) -> str:
+    r"""Swap a sized named bar for the symbol form the converter supports.
+
+    latex2mathml 3.81.0 leaves \lvert, \rvert, \vert, \lVert, \rVert, and
+    \Vert literal when one directly follows a \big-family sizing command. The
+    symbol forms | and \| convert at the same explicit size, so the author's
+    sizing is preserved. \left\lVert already converts and is never touched.
+    The lookahead is a letter class, not a word boundary: \rVert_{\mathcal H}
+    has an underscore after the command name. Converter input only.
+    """
+    def replace(match: re.Match) -> str:
+        if _escaped(tex, match.start()):
+            return match.group(0)
+        bar = "|" if match.group(2) in ("lvert", "rvert", "vert") else r"\|"
+        return match.group(1) + bar
+
+    return _SIZED_BAR_RE.sub(replace, tex)
 
 
 @lru_cache(maxsize=512)
@@ -179,10 +216,14 @@ def _convert(tex: str, display: str) -> tuple[str | None, str]:
         return None, "The shared LaTeX converter is unavailable."
     try:
         _check_tex(tex)
-        return _safe_mathml(convert(_group_scripted_binomials(tex), display=display), tex, display), ""
-    except Exception:
+        adapted = _sized_named_bars(_group_scripted_binomials(tex))
+        return _safe_mathml(convert(adapted, display=display), tex, display), ""
+    except Exception as exc:
         # Converter failures must never remove the original mathematical text.
-        return None, "This LaTeX expression is unsupported by the offline converter."
+        # The bounded reason locates the problem; a traceback would not.
+        detail = str(exc).split("\n", 1)[0][:160]
+        reason = "This LaTeX expression is unsupported by the offline converter."
+        return None, f"{reason} ({detail})" if detail else reason
 
 
 def _fallback(literal: str, reason: str) -> str:
@@ -191,8 +232,13 @@ def _fallback(literal: str, reason: str) -> str:
             + html.escape(literal, quote=True) + '</code></span>')
 
 
-def render_text(text: str) -> str:
-    """Escape prose and typeset only explicit math, without changing source text."""
+def render_text(text: str, diagnostics=None) -> str:
+    """Escape prose and typeset only explicit math, without changing source text.
+
+    When ``diagnostics`` is a list, each expression that falls back appends one
+    entry with a bounded excerpt, the display mode, and the converter's reason,
+    so callers can locate the failing record field without custom tooling.
+    """
     text = str(text)
     parts, previous = [], 0
     for start, end, tex, display in _spans(text):
@@ -201,6 +247,8 @@ def render_text(text: str) -> str:
             markup, reason = None, "The LaTeX opening delimiter has no matching closing delimiter."
         else:
             markup, reason = _convert(tex, display)
+        if markup is None and diagnostics is not None:
+            diagnostics.append({"excerpt": text[start:end][:200], "display": display, "reason": reason})
         parts.append(markup if markup is not None else _fallback(text[start:end], reason))
         previous = end
     parts.append(html.escape(text[previous:], quote=True))

@@ -52,7 +52,7 @@ class OverviewTests(unittest.TestCase):
             encoding="utf-8",
         )
         self.data = {
-            "schema_version": 1,
+            "schema_version": 3,
             "title": "A small proof overview",
             "scope": "Synthetic fixture: one assumption and one theorem.",
             "source": {"title": "Synthetic paper", "file": "paper.tex"},
@@ -62,7 +62,7 @@ class OverviewTests(unittest.TestCase):
                     "kind": "assumption",
                     "label": "Assumption 1",
                     "caption": "Independent finite-variance variables",
-                    "statement": "$X_1,\\ldots,X_n$ are independent, with variance $\\sigma^2$.",
+                    "statement": {"form": "synopsis", "text": "$X_1,\\ldots,X_n$ are independent, with variance $\\sigma^2$."},
                     "source": {"label": "ass:variance", "start_line": 2, "end_line": 4},
                 },
                 {
@@ -70,12 +70,13 @@ class OverviewTests(unittest.TestCase):
                     "kind": "theorem",
                     "label": "Thm 2.3",
                     "caption": "Variance of the mean",
-                    "statement": "$\\operatorname{Var}(\\bar X_n)=\\frac{\\sigma^2}{n}$.",
+                    "statement": {"form": "synopsis", "text": "$\\operatorname{Var}(\\bar X_n)=\\frac{\\sigma^2}{n}$."},
                     "source": {"label": "thm:mean", "start_line": 5, "end_line": 7},
                 },
             ],
             "uses": [
                 {
+                    "id": "use-variance-in-mean",
                     "from": "finite-variance",
                     "to": "mean-variance",
                     "reason": "Independence removes the covariance terms.",
@@ -127,15 +128,16 @@ class OverviewTests(unittest.TestCase):
         self.data["uses"].append(deepcopy(self.data["uses"][0]))
         self.assert_invalid(self.data, "duplicate")
 
-    def test_circular_dependency_is_explained_with_paper_labels(self):
+    def test_circular_dependency_keeps_all_records_in_index_mode(self):
         self.data["uses"].append({
             "from": "mean-variance", "to": "finite-variance",
             "reason": "An intentionally circular fixture.",
         })
-        message = self.assert_invalid(self.data)
-        self.assertRegex(message, r"cycl|circular")
-        self.assertIn("assumption 1", message)
-        self.assertIn("thm 2.3", message)
+        prepared = overview.validate_data(self.data, self.base)
+        self.assertEqual(prepared["graph_mode"], "index")
+        self.assertEqual([item["label"] for item in prepared["items"]], ["Assumption 1", "Thm 2.3"])
+        self.assertEqual(len(prepared["uses"]), 2)
+        self.assertTrue(any("cycle" in warning for warning in prepared["warnings"]))
 
     def test_missing_source_is_an_actionable_error(self):
         self.data["source"]["file"] = "missing-paper.tex"
@@ -177,7 +179,7 @@ class OverviewTests(unittest.TestCase):
 
     def test_each_item_requires_a_meaningful_source_locator(self):
         self.data["items"][0]["source"] = {}
-        self.assert_invalid(self.data, "source")
+        self.assert_invalid(self.data, "provide", "label", "line range")
 
     def test_supplied_excerpt_can_be_identified_without_a_local_file(self):
         self.data["source"] = {"title": "An excerpt supplied by the researcher"}
@@ -188,7 +190,7 @@ class OverviewTests(unittest.TestCase):
         self.assertEqual(len(prepared["items"]), 2)
 
     def test_hostile_prose_is_escaped_while_math_remains_inspectable(self):
-        self.data["items"][1]["statement"] = '<script>alert("OVERVIEW_TEST_EXECUTION")</script> $x^2$'
+        self.data["items"][1]["statement"]["text"] = '<script>alert("OVERVIEW_TEST_EXECUTION")</script> $x^2$'
         prepared = overview.validate_data(self.data, self.base)
         rendered = prepared["items"][1]["statement_html"]
         self.assertNotIn("<script>", rendered)
@@ -225,7 +227,7 @@ class OverviewTests(unittest.TestCase):
         attack = '</script><img src="OVERVIEW_TEST_EXECUTION" onerror="alert(1)">'
         self.data["title"] = attack
         self.data["items"][1]["caption"] = attack
-        self.data["items"][1]["statement"] = attack + " $x^2$"
+        self.data["items"][1]["statement"]["text"] = attack + " $x^2$"
         self.data["uses"][0]["reason"] = attack
         self.source.write_text(self.source.read_text(encoding="utf-8") + attack + "\n", encoding="utf-8")
         self.data["items"][1]["source"]["end_line"] = 9

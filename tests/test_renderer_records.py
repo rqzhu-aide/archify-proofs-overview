@@ -74,7 +74,8 @@ class RendererRecordsTests(unittest.TestCase):
         self.input = self.base / "prepared.json"
         self.output = self.base / "overview.html"
         self.data = {
-            "schema_version": 2,
+            "schema_version": 3,
+            "details": [], "detail_uses": [],
             "graph_mode": "dag",
             "title": "Two distinct uses",
             "scope": "Synthetic renderer fixture.",
@@ -89,16 +90,16 @@ class RendererRecordsTests(unittest.TestCase):
             "items": [
                 {"id": "bound", "kind": "lemma", "label": "Lemma 1", "caption": "Moment bound", "statement_html": "A bound holds.", "statement_form": "synopsis",
                  "aliases": ["lem:bound", "lem:moment"], "source_passages": [
-                    {"role": "statement", "source_display": "main.tex:3", "source_excerpt": "STATEMENT PASSAGE", "verification": "line_range_verified"},
-                    {"role": "proof", "source_display": "supplement.tex:8", "source_excerpt": "PROOF PASSAGE", "verification": {"status": "line_range_verified"}},
+                    {"role": "statement", "source_display": "main.tex:3", "source_excerpt": "STATEMENT PASSAGE", "verification": {"status": "checked", "method": "line_range"}},
+                    {"role": "proof", "source_display": "supplement.tex:8", "source_excerpt": "PROOF PASSAGE", "verification": {"status": "checked", "method": "line_range"}},
                  ]},
                 {"id": "rate", "kind": "theorem", "label": "Theorem 2", "caption": "Rate", "statement_html": "The rate follows."},
             ],
             "uses": [
                 {"id": "use-moment", "from": "bound", "to": "rate", "type": "dependency", "reason": "Use the moment bound.",
-                 "source_passages": [{"role": "use", "source_display": "main.tex:20", "source_excerpt": "FIRST USE PASSAGE", "verification": "line_range_verified"}]},
+                 "source_passages": [{"role": "evidence", "source_display": "main.tex:20", "source_excerpt": "FIRST USE PASSAGE", "verification": {"status": "checked", "method": "line_range"}}]},
                 {"id": "use-tail", "from": "bound", "to": "rate", "type": "proof_argument", "regime": "Tail regime", "reason": "Use the separate tail argument.",
-                 "source_passages": [{"role": "use", "source_display": "supplement.tex:30", "source_excerpt": "SECOND USE PASSAGE", "verification": "unverified"}]},
+                 "source_passages": [{"role": "evidence", "source_display": "supplement.tex:30", "source_excerpt": "SECOND USE PASSAGE", "verification": {"status": "unverified", "method": "entered_locator"}}]},
             ],
         }
 
@@ -199,6 +200,37 @@ class RendererRecordsTests(unittest.TestCase):
         self.assertEqual(original, repeated)
         self.assertEqual(first["artifact_sha256"], second["artifact_sha256"])
         self.assertEqual(first["input_sha256"], second["input_sha256"])
+
+    def test_pdf_extraction_notice_follows_source_type_in_item_and_use_panels(self):
+        for row in (self.data["items"][0], self.data["uses"][0]):
+            row["source_passages"][0].update({
+                "source_media_type": "application/pdf", "source_display": "PDF p. 2",
+                "verification": {"status": "checked", "method": "pdf_page_bounds"},
+            })
+        self.data["uses"][1]["source_passages"][0]["source_media_type"] = "text/x-tex"
+        _, _, rendered = self.render()
+        note = "Approximate text extracted from the PDF"
+        for region in ("proof-detail-bound", "proof-index-item-bound",
+                       "proof-use-use-moment", "proof-index-use-use-moment"):
+            text = " ".join(rendered.regions[region])
+            self.assertIn(note, text, region)
+            self.assertIn("physical PDF page bounds", text, region)
+            self.assertIn("Check the original page for formulas and layout", text, region)
+        for region in ("proof-use-use-tail", "proof-index-use-use-tail"):
+            self.assertNotIn(note, " ".join(rendered.regions[region]), region)
+
+    def test_scan_summary_discloses_pairs_and_unmatchable_records_even_without_missing_uses(self):
+        self.data["build_context"]["citation_candidates"] = {
+            "pairs": 2, "attributed": 3, "unattributed": 7,
+            "not_mechanically_matchable": 4, "missing_uses": 0,
+            "unsupported_uses": 1, "unmatched_labels": 5,
+        }
+        _, html, _ = self.render()
+        visible_prefix = html.split('<script id="proof-overview-records"')[0]
+        for expected in ("2 cited result pairs", "3 attributed and 7 unattributed matched references",
+                         "4 records without unique citation labels", "0 missing-use candidates",
+                         "1 recorded uses not corroborated by this scan"):
+            self.assertIn(expected, visible_prefix)
 
 
 if __name__ == "__main__":

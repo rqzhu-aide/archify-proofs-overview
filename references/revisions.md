@@ -1,6 +1,6 @@
 # Revise an existing overview efficiently
 
-Reuse the same database, item identities, and output folder. Review source differences and the affected arguments, rather than reconstructing the whole overview. This workflow revises source interpretation; it does not establish proof correctness.
+Reuse the same native v3 database, item identities, and output folder. Review source differences and the affected arguments, rather than reconstructing the whole overview. This workflow revises source interpretation; it does not establish proof correctness or convert older database versions.
 
 ## Capture the revision and inspect what changed
 
@@ -46,7 +46,7 @@ These options can be combined in one refresh. A failed capture or ambiguous re-a
 
 ## Reuse eligible comparisons after reviewing context
 
-A reuse candidate requires an applicable prior `matched` observation, unchanged recorded content and evidence, and unchanged recorded prerequisite context. Location movement alone may be allowed. Candidates exclude changed or possibly affected targets and a current exact-input `needs_attention` observation. Changed PDF evidence cannot be classified as unchanged merely because extracted text looks the same. Printed labels and page numbers also require attention when numbering or pagination changes.
+A reuse candidate requires an applicable prior `matched` observation, unchanged recorded content and evidence, and unchanged recorded prerequisite context. An owner's comparison and reuse context includes its owned intermediate rows, the uses entering them, their prerequisite statements, and their evidence. Editing that context stales the owner's comparison and excludes it from reuse; `get` includes the material needed to review it. Location movement alone may be allowed. Candidates exclude changed or possibly affected targets and a current exact-input `needs_attention` observation. Changed PDF evidence cannot be classified as unchanged merely because extracted text looks the same. Printed labels and page numbers also require attention when numbering or pagination changes.
 
 A page-number correction attached to an unchanged TeX line passage is reported as a location change. Check the corrected page, then use the reuse batch below for eligible comparisons; unchanged downstream arguments do not need to be read again. The exact comparison remains stale until that review is recorded. Changing a PDF anchor's page selects different evidence and is not treated as this kind of correction.
 

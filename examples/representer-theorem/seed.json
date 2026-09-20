@@ -1,0 +1,54 @@
+{
+  "schema_version": 3,
+  "title": "The representer theorem: a minimal seed",
+  "scope": "Minimal authoring example, not the full overview: the training-span definition, the projection lemma, and the representer theorem of proof.md. The captured export overview.json is the complete example; this seed shows the authoring format.",
+  "source": {"title": "Standalone representer theorem exposition", "file": "proof.md"},
+  "items": [
+    {
+      "id": "training-span",
+      "kind": "definition",
+      "label": "Definition 2",
+      "caption": "Training span",
+      "statement": {"form": "synopsis", "text": "Under Assumption 1, $S=\\operatorname{span}\\{k_{x_1},\\ldots,k_{x_n}\\}\\subseteq\\mathcal H$ is the span of the kernel sections at the training inputs, a finite-dimensional hence closed subspace; $P_S$ is the orthogonal projection onto $S$."},
+      "source": {"start_line": 18, "end_line": 27}
+    },
+    {
+      "id": "projection-lemma",
+      "kind": "lemma",
+      "label": "Lemma 4",
+      "caption": "Projection preserves training evaluations",
+      "statement": {"form": "synopsis", "text": "Under Assumption 1 and Definition 2, every $f\\in\\mathcal H$ decomposes uniquely as $f=s+h$ with $s=P_Sf\\in S$ and $h\\in S^\\perp$; moreover $f(x_i)=s(x_i)$ for $i=1,\\ldots,n$ and $\\|f\\|_{\\mathcal H}^2=\\|s\\|_{\\mathcal H}^2+\\|h\\|_{\\mathcal H}^2$."},
+      "passages": [
+        {"role": "statement", "source": {"start_line": 42, "end_line": 57}},
+        {"role": "proof", "source": {"start_line": 59, "end_line": 65}}
+      ]
+    },
+    {
+      "id": "representer",
+      "kind": "theorem",
+      "label": "Theorem 5",
+      "caption": "Finite kernel expansion",
+      "statement": {"form": "synopsis", "text": "Under Assumptions 1 and 3, if $J$ attains a finite minimum on $\\mathcal H$, every minimizer $f_*$ belongs to the training span $S$: there are coefficients $\\alpha_1,\\ldots,\\alpha_n\\in\\mathbb R$ with $f_*(\\cdot)=\\sum_{i=1}^n\\alpha_i k(\\cdot,x_i)$."},
+      "passages": [
+        {"role": "statement", "source": {"start_line": 67, "end_line": 73}},
+        {"role": "proof", "source": {"start_line": 75, "end_line": 81}}
+      ]
+    }
+  ],
+  "uses": [
+    {
+      "from": "training-span",
+      "to": "projection-lemma",
+      "type": "definition",
+      "reason": "The lemma's decomposition and projection $P_S$ are defined relative to the training span $S$.",
+      "source": {"start_line": 44, "end_line": 48}
+    },
+    {
+      "from": "projection-lemma",
+      "to": "representer",
+      "type": "dependency",
+      "reason": "The proof applies Lemma 4 to a minimizer $f_*=s+h$: equal training evaluations make the loss terms equal, and the norm identity with strict increase of $\\Omega$ contradicts minimality unless $h=0$.",
+      "source": {"start_line": 75, "end_line": 81}
+    }
+  ]
+}

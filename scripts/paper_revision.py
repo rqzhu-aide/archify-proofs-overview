@@ -112,9 +112,21 @@ def _anchor_changes(before, after):
 
 def _local_context(index, collection, identity):
     target = index[collection][identity]
-    dependent = identity if collection == "items" else target["to"]
-    uses = sorted((use for use in index["uses"].values() if use["to"] == dependent), key=lambda use: use["id"])
-    item_ids = {dependent} | {use["from"] for use in uses}
+    if collection == "items":
+        # The shared bounded review context: the row, its owned intermediate
+        # rows, every use entering them, and those uses' prerequisites.
+        # Editing a step or a step use excludes the owner from reuse, exactly
+        # as it stales the owner's comparison digest.
+        selected = records.review_context({"items": list(index["items"].values()),
+                                           "uses": list(index["uses"].values())}, identity)
+        uses = sorted(selected["uses"], key=lambda use: use["id"])
+        item_ids = {row["id"] for row in selected["items"]}
+    else:
+        # The per-use comparison policy stays: a use is reviewed against the
+        # uses entering its target and their endpoints.
+        dependent = target["to"]
+        uses = sorted((use for use in index["uses"].values() if use["to"] == dependent), key=lambda use: use["id"])
+        item_ids = {dependent} | {use["from"] for use in uses}
     items = [index["items"][item_id] for item_id in sorted(item_ids)]
     anchor_ids = {passage["anchor_id"] for item in items for passage in item["passages"]}
     anchor_ids.update(anchor_id for use in uses for anchor_id in use["evidence_refs"])
@@ -126,7 +138,7 @@ def _local_context(index, collection, identity):
 
 
 def build_changes(before, after):
-    """Compare two frozen schema-2 snapshots without altering either one.
+    """Compare two frozen native v3 snapshots without altering either one.
 
     Reuse candidates are a necessary mechanical precondition, never permission
     to skip reviewing changed source context. Dependency impact is conservative.
@@ -162,21 +174,38 @@ def build_changes(before, after):
                     break
 
     outgoing = {}
+    owners = {}
     all_uses = list(old["uses"].values()) + list(new["uses"].values())
     for use in all_uses:
         outgoing.setdefault(use["from"], set()).add(use["to"])
+    for index in (old, new):
+        for row in index["items"].values():
+            if row.get("owner"):
+                owners.setdefault(row["id"], set()).add(row["owner"])
     seeds = {identity for collection, identity in changes if collection == "items"}
     for collection, identity in changes:
         if collection == "uses":
             seeds.update(index["uses"][identity]["to"] for index in (old, new) if identity in index["uses"])
-    reached, queue = set(seeds), deque(sorted(seeds))
+    # Dependency impact over use links alone: a use stays a reuse candidate
+    # only when nothing entering or leaving it is touched.
+    reached_links, queue = set(seeds), deque(sorted(seeds))
     while queue:
         for dependent in sorted(outgoing.get(queue.popleft(), ())):
+            if dependent not in reached_links:
+                reached_links.add(dependent)
+                queue.append(dependent)
+    # An intermediate row belongs to its owner, so a change reached through
+    # use links also reaches the owner and everything downstream of it.
+    # Without intermediate rows the owner walk adds nothing.
+    reached, queue = set(reached_links), deque(sorted(reached_links))
+    while queue:
+        node = queue.popleft()
+        for dependent in sorted(outgoing.get(node, set()) | owners.get(node, set())):
             if dependent not in reached:
                 reached.add(dependent)
                 queue.append(dependent)
     affected = {("items", identity) for identity in reached}
-    affected.update(("uses", use["id"]) for use in all_uses if use["from"] in reached or use["to"] in reached)
+    affected.update(("uses", use["id"]) for use in all_uses if use["from"] in reached_links or use["to"] in reached_links)
     affected.difference_update(changes)
 
     prior = {(row["target"]["collection"], row["target"]["id"]): row for row in records.applicable_observations(before)}

@@ -15,7 +15,7 @@ import re
 
 from .acceptance import COMMAND_MODES, accept, apply_batch
 from .canonical import digest, load_json_bytes, sha256_bytes
-from .contract import (BATCH, CHECK_TARGETS, EDIT_CREATE, MAPPING_REQUEST, SUBMISSION, WORKER_RESPONSE, Arr, Const,
+from .contract import (BATCH, CHECK_TARGETS, EDIT_CREATE, INTERMEDIATE_KINDS, MAPPING_REQUEST, SUBMISSION, WORKER_RESPONSE, Arr, Const,
                        Hash, Obj, Str, validate_body, validate_shape)
 from .errors import InvalidRequest
 from .ids import new_id
@@ -106,7 +106,7 @@ def _target_in_scope(db: Database, target: dict, scope: list, parts: dict) -> bo
         visited.add(statement.key)
         if _in_scope(statement.ref, scope, parts):
             return True
-        if statement.collection != "items" or statement.body["kind"] != "intermediate_result":
+        if statement.collection != "items" or statement.body["kind"] not in INTERMEDIATE_KINDS:
             return False
         statement = db.head("items", statement.body["owner_id"]) if statement.body["owner_id"] else None
     return False

@@ -1,9 +1,9 @@
-# Audit database (v2.0)
+# Hand off a v3 overview to proofcheck
 
-The `paper_database.py` workflow in [database.md](database.md) remains the default for
-building and revising overviews. This document covers the shared audit core that ships beside it, for
-two cases: upgrading an overview so a proof audit can continue from the same records, and reading an
-audit database that the proofcheck skill produced.
+The `paper_database.py` workflow in [database.md](database.md) builds and revises native v3
+overviews. This document covers the shared audit core for two cases: handing a v3 overview to
+proofcheck so an audit can continue from the same records, and reading an audit database that
+proofcheck produced.
 
 Entry point: `python <skill>/scripts/paper_audit.py <command>`. It runs the generated
 `scripts/paper_core/` bundle beside it, the same bundle the proofcheck skill ships, so both skills
@@ -26,29 +26,56 @@ source unavailable, `6` render or publication failure. A failing command returns
 paraphrase. An incomplete audit is a successful `status` query with `process_complete: false` and
 exit 0, never a command failure.
 
-## Upgrading an overview database
+## Hand off a native v3 overview database
 
-An overview database written by `paper_database.py` is format `archify-paper-database-1` at snapshot
-schema version 2. The audit core reports it as exit 4 `INCOMPATIBLE` and refuses to write to it until
-it is upgraded explicitly:
+The v3 overview store and audit store have different formats. The overview store's internal marker
+is `archify-paper-database-1`; its record payload must be `schema_version: 3`. The audit core
+refuses to write to that store until the explicit handoff:
 
 ```text
 python <skill>/scripts/paper_audit.py migrate-overview <overview-folder>/data/paper-records.sqlite --backup <overview-folder>/data/paper-records.pre-migration.sqlite
 ```
 
-The upgrade backs the database up first, then rebuilds it in place as storage format 3. It preserves
-item, use, and anchor identity, keeps use-targeted observations, imports the source blobs unchanged,
-and records an identity map plus the original snapshot IDs as provenance. It leaves uses ungrouped
-and records no audit outcomes: migration moves records, it does not create mathematical reviews.
-Running it a second time returns `ALREADY_MIGRATED` and changes nothing.
+The command accepts native schema-3 overview records only. Other overview versions receive exit 4
+`INCOMPATIBLE`; this is a workflow handoff, not an old-version upgrade path.
 
-Migrate only when the records are going into a proof audit. An overview that will stay an overview
-needs no upgrade, and `paper_database.py` cannot read a migrated database. Keep the backup.
+One boundary: an overview built from a supplied excerpt, whose anchors have no captured source file,
+cannot migrate — contract-3 anchors require a registered source. The refusal is exit 4 `INCOMPATIBLE`
+with the anchor named, never a silent loss. Register the manuscript sources before migrating, or keep
+such an overview as an overview.
 
-A native audit database with `storage_format: 2` is a different older format. It remains readable,
-but writing requires `paper_audit.py migrate DB --backup BACKUP.db`. This preserves its mathematical
-revisions and historical packet-1 bytes. New native databases use storage format 3, record contract 3,
-packet version 2, and projection version 2. No migration changes proof judgments or grants reuse.
+The handoff backs the database up first, then rebuilds it in place as audit storage format 3. It preserves
+item, use, and anchor identity and carries every authored field: item kinds (including owned
+`equation`/`claim`/`derivation` intermediate rows), aliases, `issue` notes, use
+`regime`s, evidence anchors, and all four locator shapes — line spans, TeX labels, PDF pages, and
+combinations — with line excerpts re-verified against the captured source. Use groups migrate as
+provenance groups whose conclusion is the member uses' shared target; an overview group id spanning
+several conclusions becomes one group record per conclusion and says so in the receipt's
+`limitations`. Only the newest applicable comparison for each current item or use is imported as a
+live observation, retaining its original `created_at`. Stale and superseded observations remain in
+the archived overview export; the receipt reports their count. Imported observations also preserve
+overview `created_at`, `input_snapshot`, and `carried_from` in their notes. The source blobs are
+imported unchanged, and an identity map plus the original snapshot IDs are recorded as provenance.
+The backup is taken before the rebuild and is kept when the rebuild refuses.
+
+The handoff moves records and creates no mathematical reviews. Any uncarried field appears in
+`limitations`. Three invalid source or reference states are refused rather than narrowed:
+an anchor naming no captured source file, a page locator on a non-PDF source, and an item, owner, or
+use endpoint naming an unknown record. Re-anchor or correct those in the overview first.
+
+The rebuilt database stamps the `overview-bridge/1` feature. An audit core older than this release —
+including a stale `scripts/paper_core/` bundle — refuses it with exit 4 `INCOMPATIBLE` naming that
+feature; keep both skills on the same release. After migration, render with `paper_audit.py
+checkpoint`; this skill's own `paper_database.py render` reads only the native overview store and
+cannot read the migrated file. Running the migration a second time returns `ALREADY_MIGRATED` and
+changes nothing.
+
+Use the handoff only when the records are going into a proof audit. An overview that will stay an
+overview needs no conversion, and `paper_database.py` cannot read the audit store. Keep the backup.
+
+Audit storage, record, packet, and projection versions are separate from the overview schema.
+Use proofcheck's own guidance for audit-store maintenance; retiring old overview formats does not
+change that workflow or grant new proof judgments.
 
 ## Reading and reporting on an audit database
 

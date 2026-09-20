@@ -441,7 +441,7 @@
     "representer",
     "kernel-ridge"
   ],
-  "schema_version": 2,
+  "schema_version": 3,
   "scope": "All six numbered items in the accompanying standalone exposition. Numbering is local to proof.md, not the cited research paper. The nondecreasing-penalty remark is included with Theorem 5. Background Hilbert-space projection and finite-dimensional compactness stay within the proofs. Arrows record direct uses in this written argument, including the different contributions to existence and representation in Corollary 6; they do not independently certify correctness.",
   "source_revision": {
     "created_at": "2026-09-12T19:20:33+00:00",
@@ -776,5 +776,5 @@
       }
     }
   ],
-  "snapshot_id": "3df3646a79c38af1f1a93a402234f624900277752a4bfb808265a5c96cf6c614"
+  "snapshot_id": "b8f045980b28c40a9ba324624b9f3932308cf189e8fb73261ecb00c5605c6f94"
 }

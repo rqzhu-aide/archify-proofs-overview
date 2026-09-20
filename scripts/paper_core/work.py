@@ -12,6 +12,7 @@ from collections import defaultdict, deque
 from .assessment import (PROOF_KINDS, TraversalLimit, derive_full, key_of,
                          obligation_id, pinned_of, ref_of)
 from .canonical import compact_json, digest
+from .contract import INTERMEDIATE_KINDS
 from .errors import InvalidRequest
 
 
@@ -186,7 +187,7 @@ def build_work(derivation, assessment, *, focus=None):
             add_predecessor(oid, obligation(statement, "external_source"))
             return
         local = []
-        if statement["collection"] == "parts" or kind == "intermediate_result":
+        if statement["collection"] == "parts" or kind in INTERMEDIATE_KINDS:
             local = [g for g in snap.groups_for_conclusion(statement)
                      if argument is not None and g.body["argument_id"] == argument["id"]]
         if local:
@@ -196,7 +197,7 @@ def build_work(derivation, assessment, *, focus=None):
             return
         arguments = [a for a in snap.member_records("arguments_for_target", statement)
                      if a.body["lifecycle"] == "registered"]
-        if not arguments and (statement["collection"] == "parts" or kind == "intermediate_result"):
+        if not arguments and (statement["collection"] == "parts" or kind in INTERMEDIATE_KINDS):
             groups = [g for g in snap.groups_for_conclusion(statement)
                       if (a := snap.live("arguments", g.body["argument_id"])) is not None
                       and a.body["lifecycle"] == "registered"]
@@ -213,7 +214,7 @@ def build_work(derivation, assessment, *, focus=None):
         if arguments:
             for route in arguments:
                 add_predecessor(oid, obligation(ref_of(route), "composition"))
-        elif kind in PROOF_KINDS or kind == "intermediate_result":
+        elif kind in PROOF_KINDS or kind in INTERMEDIATE_KINDS:
             action = diagnostic("register_establishment", [statement],
                 f"Register the exact establishing route or group for {key_of(statement)}.", [oid])
             tasks[oid]["blocker_ids"].append(action)

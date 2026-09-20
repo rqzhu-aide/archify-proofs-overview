@@ -24,8 +24,11 @@ SUPPORTED_FEATURES = (
     "independent-review/1",
     "projection/1",
     "projection/2",
+    # Overview bridging: intermediate item kinds equation/claim/derivation and
+    # provenance groups with null argument_id/scope_id (record-contract 3).
+    "overview-bridge/1",
 )
 STORAGE_FORMATS_READABLE = (2, 3)
 STORAGE_FORMATS_WRITABLE = (3,)
 LEGACY_OVERVIEW_FORMAT = "archify-paper-database-1"
-LEGACY_OVERVIEW_SCHEMA_VERSION = 2
+LEGACY_OVERVIEW_SCHEMA_VERSIONS = (3,)

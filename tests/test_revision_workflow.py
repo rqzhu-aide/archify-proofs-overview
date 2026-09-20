@@ -102,14 +102,14 @@ class RevisionWorkflowTests(unittest.TestCase):
         ]
         lines = self.main.read_text(encoding="utf-8").splitlines()
         seed = {
-            "schema_version": 1,
+            "schema_version": 3,
             "title": "Small synthetic revision fixture",
             "scope": "Selected declarations and three written uses.",
             "source": {"title": "Synthetic manuscript", "file": "../../main.tex"},
             "main_items": ["tail", "symmetry"],
             "items": [
                 {"id": identifier, "kind": kind, "label": label, "caption": caption,
-                 "statement": lines[start],
+                 "statement": {"text": lines[start], "form": "synopsis"},
                  "source": {"label": alias, "start_line": start, "end_line": start + 2}}
                 for identifier, kind, label, caption, start, alias in declarations
             ],
@@ -488,6 +488,318 @@ class RevisionWorkflowTests(unittest.TestCase):
         self.assertIn(("items", "symmetry"), references(report["changed_targets"]))
         self.assertNotIn(("items", "symmetry"), references(report["reuse_candidates"]))
         self.assert_no_review_write(lambda: self.reuse(after, [{"collection": "items", "id": "symmetry"}]))
+
+
+class IntermediateRevisionTests(unittest.TestCase):
+    """A reviewed owner whose intermediate steps carry their own uses.
+
+    Record-only edits isolate the owner review context: adding, removing,
+    changing, or retargeting a use entering a step, and reparenting or
+    deleting a step, must mark the owner without touching unrelated branches.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self.tmp.name)
+        self.main = self.base / "main.tex"
+        self.main.write_text(
+            "\\documentclass{article}\n"                # 1
+            "\\begin{document}\n"                       # 2
+            "\\begin{assumption}\\label{ass:base}\n"    # 3
+            "The base premise holds.\n"                 # 4
+            "\\end{assumption}\n"                       # 5
+            "\\begin{theorem}\\label{thm:main}\n"       # 6
+            "The main conclusion follows.\n"            # 7
+            "\\end{theorem}\n"                          # 8
+            "\\begin{proof}\n"                          # 9
+            "The key step applies the premise.\n"       # 10
+            "\\end{proof}\n"                            # 11
+            "\\begin{lemma}\\label{lem:helper}\n"       # 12
+            "The helper bound holds.\n"                 # 13
+            "\\end{lemma}\n"                            # 14
+            "\\begin{proof}\n"                          # 15
+            "The helper step estimates the tail.\n"     # 16
+            "\\end{proof}\n"                            # 17
+            "\\begin{corollary}\\label{cor:side}\n"     # 18
+            "A side remark stands alone.\n"             # 19
+            "\\end{corollary}\n"                        # 20
+            "\\end{document}\n",                        # 21
+            encoding="utf-8",
+        )
+        seed = {
+            "schema_version": 3, "title": "Intermediate revision fixture",
+            "scope": "Reviewed owner with intermediate steps and a disconnected branch.",
+            "source": {"title": "Synthetic manuscript", "file": "main.tex"},
+            "items": [
+                {"id": "premise", "kind": "assumption", "label": "Assumption 1", "caption": "Base premise",
+                 "statement": {"text": "The base premise holds.", "form": "synopsis"},
+                 "source": {"label": "ass:base", "start_line": 3, "end_line": 5}},
+                {"id": "owner", "kind": "theorem", "label": "Theorem 1", "caption": "Main conclusion",
+                 "statement": {"text": "The main conclusion follows.", "form": "synopsis"},
+                 "source": {"label": "thm:main", "start_line": 6, "end_line": 8}},
+                {"id": "helper", "kind": "lemma", "label": "Lemma 1", "caption": "Helper bound",
+                 "statement": {"text": "The helper bound holds.", "form": "synopsis"},
+                 "source": {"label": "lem:helper", "start_line": 12, "end_line": 14}},
+                {"id": "branch", "kind": "corollary", "label": "Corollary 1", "caption": "Side remark",
+                 "statement": {"text": "A side remark stands alone.", "form": "synopsis"},
+                 "source": {"label": "cor:side", "start_line": 18, "end_line": 20}},
+            ],
+            "uses": [],
+        }
+        dataset = self.base / "overview.json"
+        dataset.write_text(json.dumps(seed), encoding="utf-8")
+        self.db = self.base / "paper.sqlite"
+        database.init_database(self.db, dataset)
+        data = database.export_snapshot(self.db)
+        file_id = data["source_revision"]["files"][0]["id"]
+        database.apply_edits(self.db, {"expected_snapshot": data["snapshot_id"], "edits": [
+            {"collection": "anchors", "op": "upsert", "id": "anchor-step",
+             "record": {"file_id": file_id, "locator": {"start_line": 10, "end_line": 10}}},
+            {"collection": "anchors", "op": "upsert", "id": "anchor-step-use",
+             "record": {"file_id": file_id, "locator": {"start_line": 10, "end_line": 10}}},
+            {"collection": "anchors", "op": "upsert", "id": "anchor-helper-step",
+             "record": {"file_id": file_id, "locator": {"start_line": 16, "end_line": 16}}},
+            {"collection": "items", "op": "upsert", "id": "step",
+             "record": {"kind": "claim", "label": "Key step", "caption": "Premise application",
+                        "statement": {"text": "The key step applies the premise.", "form": "synopsis"},
+                        "owner": "owner",
+                        "passages": [{"role": "evidence", "anchor_id": "anchor-step"}]}},
+            {"collection": "items", "op": "upsert", "id": "helper-step",
+             "record": {"kind": "claim", "label": "Helper step", "caption": "Tail estimate",
+                        "statement": {"text": "The helper step estimates the tail.", "form": "synopsis"},
+                        "owner": "helper",
+                        "passages": [{"role": "evidence", "anchor_id": "anchor-helper-step"}]}},
+            {"collection": "uses", "op": "upsert", "id": "use-premise-owner",
+             "record": {"from": "premise", "to": "owner",
+                        "reason": "The premise enters the main argument directly."}},
+            {"collection": "uses", "op": "upsert", "id": "use-premise-step",
+             "record": {"from": "premise", "to": "step",
+                        "reason": "The premise controls the key step.",
+                        "evidence_refs": ["anchor-step-use"]}},
+        ]})
+        data = database.export_snapshot(self.db)
+        targets = [{"collection": collection, "id": row["id"]}
+                   for collection in ("items", "uses") for row in data[collection]]
+        database.compare_records(self.db, {
+            "expected_snapshot": data["snapshot_id"], "targets": targets,
+            "reviewer": "Fixture source reviewer", "result": "matched",
+            "note": "Compared the synthetic statements, step uses, and source context.",
+        })
+        self.before = database.export_snapshot(self.db)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def data(self):
+        return database.export_snapshot(self.db)
+
+    def apply(self, edits):
+        return database.apply_edits(self.db, {"expected_snapshot": self.data()["snapshot_id"], "edits": edits})
+
+    def report(self):
+        return database.changes_database(self.db, self.before["snapshot_id"])
+
+    def references(self, rows):
+        return {(row["collection"], row["id"]) for row in rows}
+
+    def candidates(self, report):
+        return self.references(report["reuse_candidates"])
+
+    def affected(self, report):
+        return self.references(report["potentially_affected"])
+
+    def edit_step_use(self, **changes):
+        use = deepcopy(next(row for row in self.data()["uses"] if row["id"] == "use-premise-step"))
+        use.update(changes)
+        self.apply([{"collection": "uses", "op": "upsert", "id": use["id"], "record": use}])
+
+    def test_changing_a_step_use_stales_and_reports_the_owner(self):
+        self.edit_step_use(reason="The recorded step instead needs a conditional premise.")
+        after = self.data()
+        self.assertNotEqual(records.target_digest(after, "items", "owner"),
+                            records.target_digest(self.before, "items", "owner"))
+        # The step's own review context includes the edited use, so its
+        # comparison is stale as well.
+        self.assertNotEqual(records.target_digest(after, "items", "step"),
+                            records.target_digest(self.before, "items", "step"))
+        status = records.comparison_status(after)
+        self.assertEqual(status["stale"], 3)
+        self.assertEqual(status["matched"], 5)
+        report = self.report()
+        self.assertIn(("uses", "use-premise-step"), self.references(report["changed_targets"]))
+        self.assertIn(("items", "owner"), self.affected(report))
+        direct = revision.build_changes(self.before, after)
+        self.assertEqual({key: report[key] for key in direct}, direct)
+        candidates = self.candidates(report)
+        for row in (("items", "premise"), ("items", "helper"), ("items", "branch")):
+            self.assertIn(row, candidates)
+        self.assertNotIn(("items", "owner"), candidates)
+        self.assertNotIn(("uses", "use-premise-step"), candidates)
+        # A fresh comparison returns the owner and its step to matched, history retained.
+        database.compare_records(self.db, {
+            "expected_snapshot": after["snapshot_id"],
+            "targets": [{"collection": "items", "id": "owner"}, {"collection": "items", "id": "step"},
+                        {"collection": "uses", "id": "use-premise-step"}],
+            "reviewer": "Fixture revision reviewer", "result": "matched",
+            "note": "Re-compared the edited step use and the full owner context with the source."})
+        current = self.data()
+        self.assertEqual(records.comparison_status(current)["status"], "complete")
+        self.assertGreater(len(current["observations"]), len(self.before["observations"]))
+
+    def test_adding_a_use_entering_a_step_marks_the_owner(self):
+        self.apply([{"collection": "uses", "op": "upsert", "id": "use-premise-step-2",
+                     "record": {"from": "premise", "to": "step",
+                                "reason": "A second contribution to the same step."}}])
+        after = self.data()
+        self.assertNotEqual(records.target_digest(after, "items", "owner"),
+                            records.target_digest(self.before, "items", "owner"))
+        report = self.report()
+        self.assertIn(("items", "owner"), self.affected(report))
+        self.assertNotIn(("items", "owner"), self.candidates(report))
+        self.assertIn(("items", "branch"), self.candidates(report))
+
+    def test_removing_a_use_entering_a_step_marks_the_owner(self):
+        self.apply([{"collection": "uses", "op": "remove", "id": "use-premise-step"}])
+        after = self.data()
+        self.assertNotEqual(records.target_digest(after, "items", "owner"),
+                            records.target_digest(self.before, "items", "owner"))
+        report = self.report()
+        self.assertIn(("items", "owner"), self.affected(report))
+        self.assertNotIn(("items", "owner"), self.candidates(report))
+        self.assertIn(("items", "branch"), self.candidates(report))
+
+    def test_step_use_field_changes_all_stale_the_owner(self):
+        cases = [("reason", "A different step argument."), ("type", "proof_argument"),
+                 ("regime", "Route B"), ("group", {"id": "route", "kind": "joint"}),
+                 ("issue", "Does the step need an extra hypothesis?"), ("evidence_refs", [])]
+        for field, value in cases:
+            with self.subTest(field=field):
+                edited = deepcopy(self.before)
+                edited.pop("snapshot_id", None)
+                use = next(row for row in edited["uses"] if row["id"] == "use-premise-step")
+                use[field] = value
+                edited = records.validate_records(edited)
+                self.assertNotEqual(records.target_digest(edited, "items", "owner"),
+                                    records.target_digest(self.before, "items", "owner"))
+                report = revision.build_changes(self.before, edited)
+                self.assertIn(("items", "owner"), self.references(report["potentially_affected"]))
+                self.assertNotIn(("items", "owner"), self.references(report["reuse_candidates"]))
+
+    def test_changing_a_step_use_prerequisite_statement_stales_the_owner(self):
+        edited = deepcopy(self.before)
+        edited.pop("snapshot_id", None)
+        premise = next(row for row in edited["items"] if row["id"] == "premise")
+        premise["statement"]["text"] = "The base premise holds with unit variance."
+        edited = records.validate_records(edited)
+        self.assertNotEqual(records.target_digest(edited, "items", "owner"),
+                            records.target_digest(self.before, "items", "owner"))
+
+    def test_changing_step_use_evidence_stales_the_owner(self):
+        data = self.data()
+        file_id = data["source_revision"]["files"][0]["id"]
+        self.apply([{"collection": "anchors", "op": "upsert", "id": "anchor-step-use",
+                     "record": {"file_id": file_id, "locator": {"start_line": 9, "end_line": 9}}}])
+        after = self.data()
+        self.assertNotEqual(records.target_digest(after, "items", "owner"),
+                            records.target_digest(self.before, "items", "owner"))
+        report = self.report()
+        self.assertIn(("uses", "use-premise-step"), self.references(report["changed_targets"]))
+        self.assertIn(("items", "owner"), self.affected(report))
+        self.assertNotIn(("items", "owner"), self.candidates(report))
+
+    def test_retargeting_a_step_use_marks_old_and_new_owners(self):
+        self.edit_step_use(to="helper-step")
+        after = self.data()
+        self.assertNotEqual(records.target_digest(after, "items", "owner"),
+                            records.target_digest(self.before, "items", "owner"))
+        self.assertNotEqual(records.target_digest(after, "items", "helper"),
+                            records.target_digest(self.before, "items", "helper"))
+        report = self.report()
+        affected = self.affected(report)
+        self.assertIn(("items", "owner"), affected)
+        self.assertIn(("items", "helper"), affected)
+        candidates = self.candidates(report)
+        self.assertNotIn(("items", "owner"), candidates)
+        self.assertNotIn(("items", "helper"), candidates)
+        self.assertIn(("items", "branch"), candidates)
+
+    def test_reparenting_a_step_marks_old_and_new_owners(self):
+        step = deepcopy(next(row for row in self.data()["items"] if row["id"] == "step"))
+        step["owner"] = "helper"
+        self.apply([{"collection": "items", "op": "upsert", "id": "step", "record": step}])
+        after = self.data()
+        self.assertNotEqual(records.target_digest(after, "items", "owner"),
+                            records.target_digest(self.before, "items", "owner"))
+        self.assertNotEqual(records.target_digest(after, "items", "helper"),
+                            records.target_digest(self.before, "items", "helper"))
+        report = self.report()
+        affected = self.affected(report)
+        self.assertIn(("items", "owner"), affected)
+        self.assertIn(("items", "helper"), affected)
+        candidates = self.candidates(report)
+        self.assertNotIn(("items", "owner"), candidates)
+        self.assertNotIn(("items", "helper"), candidates)
+        self.assertIn(("items", "branch"), candidates)
+
+    def test_deleting_a_step_marks_its_old_owner(self):
+        self.apply([{"collection": "uses", "op": "remove", "id": "use-premise-step"},
+                    {"collection": "items", "op": "remove", "id": "step"}])
+        after = self.data()
+        self.assertNotEqual(records.target_digest(after, "items", "owner"),
+                            records.target_digest(self.before, "items", "owner"))
+        report = self.report()
+        self.assertIn(("items", "owner"), self.affected(report))
+        self.assertNotIn(("items", "owner"), self.candidates(report))
+        self.assertIn(("items", "branch"), self.candidates(report))
+
+    def test_unrelated_record_edit_keeps_the_owner_current(self):
+        branch = deepcopy(next(row for row in self.data()["items"] if row["id"] == "branch"))
+        branch["caption"] = "A clarified side remark"
+        self.apply([{"collection": "items", "op": "upsert", "id": "branch", "record": branch}])
+        after = self.data()
+        self.assertEqual(records.target_digest(after, "items", "owner"),
+                         records.target_digest(self.before, "items", "owner"))
+        self.assertEqual(records.fidelity_by_row(after)[("items", "owner")], "matched")
+        report = self.report()
+        self.assertIn(("items", "owner"), self.candidates(report))
+        self.assertNotIn(("items", "owner"), self.affected(report))
+        self.assertIn(("uses", "use-premise-step"), self.candidates(report))
+
+    def test_owner_packet_distinguishes_direct_and_step_uses_with_evidence(self):
+        packet = database.get_packet(self.db, "owner")
+        self.assertEqual([use["id"] for use in packet["incoming_uses"]], ["use-premise-owner"])
+        self.assertEqual([use["id"] for use in packet["owned_step_uses"]], ["use-premise-step"])
+        self.assertEqual(packet["owned_step_uses"][0]["evidence_refs"], ["anchor-step-use"])
+        self.assertEqual([row["id"] for row in packet["owned_items"]], ["step"])
+        self.assertEqual([row["id"] for row in packet["prerequisite_items"]], ["premise"])
+        anchors = {row["id"] for row in packet["anchors"]}
+        self.assertIn("anchor-step", anchors)
+        self.assertIn("anchor-step-use", anchors)
+        digests = {(row["collection"], row["id"]) for row in packet["target_digests"]}
+        self.assertIn(("items", "step"), digests)
+        self.assertIn(("uses", "use-premise-step"), digests)
+        self.assertIn(("uses", "use-premise-owner"), digests)
+        observations = {(row["target"]["collection"], row["target"]["id"]) for row in packet["observations"]}
+        self.assertIn(("uses", "use-premise-step"), observations)
+
+    def test_packet_does_not_grow_with_unrelated_records(self):
+        before_packet = database.get_packet(self.db, "owner")
+        file_id = self.data()["source_revision"]["files"][0]["id"]
+        self.apply([
+            {"collection": "anchors", "op": "upsert", "id": "anchor-unrelated",
+             "record": {"file_id": file_id, "locator": {"start_line": 19, "end_line": 19}}},
+            {"collection": "items", "op": "upsert", "id": "unrelated",
+             "record": {"kind": "lemma", "label": "Lemma 2", "caption": "Separate bound",
+                        "statement": {"text": "A separate bound holds.", "form": "synopsis"},
+                        "passages": [{"role": "statement", "anchor_id": "anchor-unrelated"}]}},
+            {"collection": "uses", "op": "upsert", "id": "use-unrelated",
+             "record": {"from": "branch", "to": "unrelated",
+                        "reason": "The side remark supports the separate bound."}},
+        ])
+        after_packet = database.get_packet(self.db, "owner")
+        for key in ("item", "owned_items", "incoming_uses", "owned_step_uses",
+                    "prerequisite_items", "anchors", "target_digests", "observations"):
+            self.assertEqual(after_packet[key], before_packet[key], key)
 
 
 if __name__ == "__main__":

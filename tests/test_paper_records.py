@@ -71,8 +71,8 @@ class PaperRecordsTests(unittest.TestCase):
             "\\end{proof}\n",
             encoding="utf-8",
         )
-        self.legacy = {
-            "schema_version": 1,
+        self.seed = {
+            "schema_version": 3,
             "title": "Synthetic source and review fixture",
             "scope": "Two selected declarations and their written dependency.",
             "source": {"title": "Synthetic manuscript", "file": "main.tex"},
@@ -81,13 +81,13 @@ class PaperRecordsTests(unittest.TestCase):
                 {
                     "id": "independence", "kind": "assumption", "label": "Assumption 1",
                     "caption": "Independent observations",
-                    "statement": "The observations are independent with finite second moments.",
+                    "statement": {"text": "The observations are independent with finite second moments.", "form": "synopsis"},
                     "source": {"label": "ass:independence", "start_line": 2, "end_line": 4},
                 },
                 {
                     "id": "centering", "kind": "theorem", "label": "Theorem 1",
                     "caption": "Deterministic centering",
-                    "statement": "For deterministic centers, the target is $\\mu$.",
+                    "statement": {"text": "For deterministic centers, the target is $\\mu$.", "form": "synopsis"},
                     "source": {"label": "thm:center", "start_line": 5, "end_line": 7},
                 },
             ],
@@ -102,7 +102,7 @@ class PaperRecordsTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def migrate(self):
-        return records.normalize(self.legacy, self.base)
+        return records.normalize(self.seed, self.base)
 
     def revalidate(self, data):
         candidate = deepcopy(data)
@@ -135,16 +135,16 @@ class PaperRecordsTests(unittest.TestCase):
         ])
         return self.revalidate(candidate)
 
-    def test_migration_preserves_old_content_qualifications_and_identity(self):
-        original = deepcopy(self.legacy)
+    def test_capture_preserves_seed_content_qualifications_and_identity(self):
+        original = deepcopy(self.seed)
         migrated = self.migrate()
-        self.assertEqual(self.legacy, original)
-        self.assertEqual(migrated["schema_version"], 2)
+        self.assertEqual(self.seed, original)
+        self.assertEqual(migrated["schema_version"], 3)
         self.assertEqual(migrated["main_items"], original["main_items"])
         for before, after in zip(original["items"], migrated["items"]):
             for key in ("id", "kind", "label", "caption"):
                 self.assertEqual(after[key], before[key])
-            self.assertEqual(after["statement"]["text"], before["statement"])
+            self.assertEqual(after["statement"], before["statement"])
             self.assertEqual(after["statement"]["form"], "synopsis")
         use = migrated["uses"][0]
         for key in ("from", "to", "type", "regime", "reason"):
@@ -152,7 +152,7 @@ class PaperRecordsTests(unittest.TestCase):
         self.assertTrue(use["id"])
         self.assertEqual(records.normalize(migrated, self.base), migrated)
 
-    def test_migrating_old_synopses_does_not_invent_a_completed_source_review(self):
+    def test_capture_does_not_invent_a_completed_source_review(self):
         migrated = self.migrate()
         state = records.comparison_status(migrated)
         self.assertEqual(state["matched"], 0)
@@ -160,8 +160,8 @@ class PaperRecordsTests(unittest.TestCase):
         self.assertEqual(state["status"], "incomplete")
 
     def test_partial_locator_warning_retains_checked_line_ranges(self):
-        self.legacy["items"][0]["source"].update(label="Assumption 1", page=5)
-        self.legacy["items"][1]["source"]["label"] = "Theorem 1"
+        self.seed["items"][0]["source"].update(label="Assumption 1", page=5)
+        self.seed["items"][1]["source"]["label"] = "Theorem 1"
         migrated = self.compare_all(self.migrate())
         original = deepcopy(migrated)
         prepared = records.prepare_records(migrated, self.base)
@@ -169,21 +169,65 @@ class PaperRecordsTests(unittest.TestCase):
         self.assertEqual(migrated, original)
         self.assertEqual(records.comparison_status(migrated)["status"], "complete")
         self.assertEqual(len(warnings), 1)
-        self.assertIn("Source line ranges checked for 3 of 3 anchors", warnings[0])
+        self.assertIn("Source locator checks: 3 text line ranges", warnings[0])
         self.assertIn("2 anchors still have locator details", warnings[0])
+        self.assertIn("2 entered/printed labels not mechanically matched", warnings[0])
+        self.assertIn("1 PDF page locations not checked", warnings[0])
+        self.assertNotIn("PDF page bounds", warnings[0])
         passage = prepared["items"][0]["source_passages"][0]
         self.assertEqual(passage["verification"]["method"], "line_range")
         self.assertEqual(passage["verification"]["status"], "unverified")
         self.assertIn("PDF page", passage["verification"]["note"])
 
     def test_label_only_warning_does_not_claim_a_line_check(self):
-        for item in self.legacy["items"]:
+        for item in self.seed["items"]:
             item["source"] = {"label": item["label"]}
-        self.legacy["uses"][0]["source"] = {"label": "Proof of Theorem 1"}
+        self.seed["uses"][0]["source"] = {"label": "Proof of Theorem 1"}
         migrated = self.compare_all(self.migrate())
         warning, = records.prepare_records(migrated, self.base)["warnings"][:1]
-        self.assertIn("Source line ranges checked for 0 of 3 anchors", warning)
+        self.assertIn("No mechanical source locator checks are recorded", warning)
         self.assertIn("3 anchors still have locator details", warning)
+        self.assertIn("3 entered/printed labels not mechanically matched", warning)
+
+    def test_pdf_warning_counts_successful_page_checks_despite_unverified_labels(self):
+        try:
+            from pypdf import PdfWriter
+        except ImportError:
+            self.skipTest("Shared pypdf is needed for physical PDF page checks.")
+        writer = PdfWriter()
+        writer.add_blank_page(width=200, height=200)
+        writer.write(self.base / "paper.pdf")
+        self.seed["source"]["file"] = "paper.pdf"
+        self.seed["items"][0]["source"] = {"page": 1, "label": "Assumption 1"}
+        self.seed["items"][1]["source"] = {"page": 1}
+        self.seed["uses"][0]["source"] = {"page": 1}
+        data = self.compare_all(self.migrate())
+        original = deepcopy(data)
+        prepared = records.prepare_records(data, self.base)
+        warning, = prepared["warnings"]
+        self.assertIn("Source locator checks: 3 PDF page bounds", warning)
+        self.assertIn("1 anchors still have locator details", warning)
+        self.assertIn("1 entered/printed labels not mechanically matched", warning)
+        self.assertNotIn("text line ranges", warning)
+        self.assertNotIn("PDF page locations not checked", warning)
+        for row in prepared["items"] + prepared["uses"]:
+            for passage in row["source_passages"]:
+                self.assertEqual(passage["source_media_type"], "application/pdf")
+        self.assertEqual(data, original)
+        self.assertEqual(records.comparison_status(data)["status"], "complete")
+
+    def test_projection_distinguishes_text_and_unregistered_passages(self):
+        prepared = records.prepare_records(self.migrate(), self.base)
+        for row in prepared["items"] + prepared["uses"]:
+            self.assertTrue(row["source_passages"])
+            self.assertTrue(all(p["source_media_type"] == "text/plain" for p in row["source_passages"]))
+        self.seed["source"].pop("file")
+        for item in self.seed["items"]:
+            item["source"] = {"label": item["label"]}
+        self.seed["uses"] = []
+        prepared = records.prepare_records(self.migrate(), self.base)
+        for row in prepared["items"]:
+            self.assertIsNone(row["source_passages"][0]["source_media_type"])
 
     def test_literal_tex_context_is_snapshotted_once_with_exact_bytes(self):
         migrated = self.migrate()
@@ -460,6 +504,115 @@ class PaperRecordsTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 overview.render_dataset(changed, self.base, output)
         self.assertEqual(output.read_bytes(), previous)
+
+
+class DeclaredKindAndProseTests(unittest.TestCase):
+    """Condition-style headings classify as assumptions; prose premises record.
+
+    Declaration scans propose candidates; an agent may also register an
+    explicitly located prose assumption or model definition with a faithful
+    descriptive label. Unfamiliar headings still produce an actionable note.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self.tmp.name)
+        self.main = self.base / "main.tex"
+        self.main.write_text(
+            "\\documentclass{article}\n"                     # 1
+            "\\newtheorem{cond}{Condition}\n"                # 2
+            "\\newtheorem{conds}{Conditions}\n"              # 3
+            "\\newtheorem{principle}{Uniformity Principle}\n"  # 4
+            "\\begin{document}\n"                            # 5
+            "\\begin{cond}\\label{cond:mixing}\n"            # 6
+            "The sequence is strongly mixing.\n"             # 7
+            "\\end{cond}\n"                                  # 8
+            "\\begin{conds}\\label{conds:moments}\n"         # 9
+            "The fourth moments are finite.\n"               # 10
+            "\\end{conds}\n"                                 # 11
+            "\\begin{principle}\n"                           # 12
+            "Every bound is uniform in the class.\n"         # 13
+            "\\end{principle}\n"                             # 14
+            "Throughout, the errors are sub-gaussian with proxy $\\sigma^2$.\n"  # 15
+            "We write $\\hat\\theta_n$ for the penalized estimator.\n"           # 16
+            "\\end{document}\n",                             # 17
+            encoding="utf-8",
+        )
+        self.seed = {
+            "schema_version": 3,
+            "title": "Condition and prose premise fixture",
+            "scope": "Synthetic declarations plus two prose premises.",
+            "source": {"title": "Synthetic manuscript", "file": "main.tex"},
+            "items": [
+                {"id": "mixing", "kind": "assumption", "label": "Condition 1",
+                 "caption": "Strong mixing",
+                 "statement": {"text": "The sequence is strongly mixing.", "form": "synopsis"},
+                 "source": {"label": "cond:mixing", "start_line": 6, "end_line": 8}},
+                {"id": "moments", "kind": "assumption", "label": "Condition 2",
+                 "caption": "Finite fourth moments",
+                 "statement": {"text": "The fourth moments are finite.", "form": "synopsis"},
+                 "source": {"label": "conds:moments", "start_line": 9, "end_line": 11}},
+                {"id": "error-proxy", "kind": "assumption", "label": "Sub-gaussian errors",
+                 "caption": "Global error proxy",
+                 "statement": {"text": "The errors are sub-gaussian with proxy $\\sigma^2$.", "form": "synopsis"},
+                 "source": {"start_line": 15, "end_line": 15}},
+                {"id": "estimator", "kind": "definition", "label": "Penalized estimator",
+                 "caption": "Estimator notation",
+                 "statement": {"text": "We write $\\hat\\theta_n$ for the penalized estimator.", "form": "synopsis"},
+                 "source": {"start_line": 16, "end_line": 16}},
+            ],
+            "uses": [],
+        }
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def migrate(self):
+        return records.normalize(self.seed, self.base)
+
+    def test_condition_headings_normalize_to_assumption(self):
+        declarations = self.migrate()["inventory"]["declarations"]
+        by_lines = {(row["start_line"], row["end_line"]): row for row in declarations}
+        self.assertEqual(by_lines[(6, 8)]["kind"], "assumption")
+        self.assertEqual(by_lines[(6, 8)]["labels"], ["cond:mixing"])
+        self.assertEqual(by_lines[(6, 8)]["item_ids"], ["mixing"])
+        self.assertEqual(by_lines[(9, 11)]["kind"], "assumption")
+        self.assertEqual(by_lines[(9, 11)]["item_ids"], ["moments"])
+        self.assertNotIn((12, 14), by_lines)
+
+    def test_unfamiliar_heading_still_produces_an_actionable_limitation(self):
+        unresolved = self.migrate()["inventory"]["unresolved"]
+        note = next((text for text in unresolved if "principle" in text), None)
+        self.assertIsNotNone(note)
+        self.assertIn("unfamiliar heading", note)
+        self.assertIn("compare its declarations manually", note)
+
+    def test_prose_premises_validate_with_descriptive_labels(self):
+        migrated = self.migrate()
+        prose = {row["id"]: row for row in migrated["items"] if row["id"] in ("error-proxy", "estimator")}
+        self.assertEqual(prose["error-proxy"]["label"], "Sub-gaussian errors")
+        self.assertEqual(prose["estimator"]["label"], "Penalized estimator")
+        prepared = records.prepare_records(migrated, self.base)
+        labels = {row["id"]: row["label"] for row in prepared["items"]}
+        self.assertEqual(labels["error-proxy"], "Sub-gaussian errors")
+        excerpts = {row["id"]: row["source_excerpt"] for row in prepared["items"]}
+        self.assertIn("sub-gaussian", excerpts["error-proxy"])
+        self.assertIn("penalized estimator", excerpts["estimator"])
+
+    @unittest.skipUnless(NODE_AVAILABLE, "Checked HTML delivery requires shared Node.js.")
+    def test_prose_premises_appear_in_the_html_with_source_passages(self):
+        output = self.base / "overview.html"
+        receipt = overview.render_dataset(self.migrate(), self.base, output)
+        self.assertEqual(receipt["graph_preservation"]["status"], "pass")
+        html = output.read_text(encoding="utf-8")
+        elements = RecordElements(html)
+        self.assertIn("error-proxy", elements.items)
+        self.assertIn("estimator", elements.items)
+        self.assertIn("Sub-gaussian errors", html)
+        self.assertIn("Penalized estimator", html)
+        self.assertIn("sub-gaussian with proxy", html)
+        # Neither prose premise needed a fabricated declaration environment.
+        self.assertNotIn("Uniformity Principle", html)
 
 
 if __name__ == "__main__":
