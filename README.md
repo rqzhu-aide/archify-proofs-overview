@@ -1,12 +1,12 @@
 # Archify Proofs Overview
 
-[![Version v3.0.0](https://img.shields.io/badge/version-v3.0.0-6366f1)](SKILL.md)
+[![Version v3.0.3](https://img.shields.io/badge/version-v3.0.3-6366f1)](https://github.com/rqzhu-aide/archify-proofs-overview/tree/v3.0.3)
 
-**Build a reusable database of a paper's proof structure, then visualize it in the style of [Archify](https://github.com/tt-a1i/archify).**
+**Explore a paper's main results, important prerequisites, and connections in the style of [Archify](https://github.com/tt-a1i/archify).**
 
-The skill reads your paper and records its assumptions, definitions, lemmas, theorems, and dependencies in a local SQLite database, together with source passages and recorded source comparisons. Scripts generate an interactive HTML overview directly from those records. Major results form the graph; intermediate steps remain available in the details.
+The skill selects the results that explain the paper's central contributions, records concise faithful summaries and sourced connections in a local SQLite database, and generates an interactive HTML graph. Follow prerequisites, inspect source passages, and navigate the argument without reconstructing individual proof steps. The selected scope is visible; unselected declarations do not require exhaustive bookkeeping.
 
-This database makes the work reusable: [revise the overview](references/revisions.md) as the manuscript changes, or [hand the records to proofcheck](references/audit-database.md) for a deeper audit. Source comparisons document what was reviewed; they do not certify mathematical correctness.
+The records remain reusable: [revise the overview](references/revisions.md) as the manuscript changes, or [hand the records to proofcheck](references/audit-database.md) as a starting inventory for a deeper audit. Source comparison checks the overview against the paper; it does not certify proof validity. Existing detailed databases retain their content and history.
 
 [![Example](examples/overview-browser.png)](examples/overview-browser.png)
 
@@ -17,7 +17,7 @@ Open the [example HTML](examples/representer-theorem/overview.html) locally to e
 Install this repository as `archify-proofs-overview` in your agent's skill directory, then ask:
 
 ```text
-Use archify-proofs-overview to map this paper, including its appendix.
+Use archify-proofs-overview to map this paper's main results and the important prerequisites that explain them, including relevant appendix results.
 ```
 
 Requires shared Python 3.10+, Node.js, and `latex2mathml`; PDF input also uses `pypdf`. No separate Archify installation is needed. See [SKILL.md](SKILL.md) for the workflow.
@@ -30,6 +30,6 @@ archify-proofs-overview-<paper-name>/
   data/paper-records.sqlite
 ```
 
-**Share the HTML alone. Keep the database for future revisions.** See the [database guide](references/database.md) for editing and exporting records. V3 accepts native v3 records only; the previous release is preserved on the [v2 branch](https://github.com/rqzhu-aide/archify-proofs-overview/tree/v2).
+**Share the HTML alone. Keep the database for future revisions.** See the [database guide](references/database.md) for focused initialization, editing, and export, and [SKILL.md](SKILL.md) for the current skill version.
 
 [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)

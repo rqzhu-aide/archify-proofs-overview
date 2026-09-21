@@ -131,6 +131,79 @@ class CandidateFixture(unittest.TestCase):
 
 
 class CitationCandidateTests(CandidateFixture):
+    def scan_edited_source(self, old, new):
+        self.main.write_text(self.main.read_text(encoding="utf-8").replace(old, new), encoding="utf-8")
+        data = records.refresh_sources(database.export_snapshot(self.db), self.base)
+        return data, records.citation_candidates(data)
+
+    def test_literal_colabel_resolves_from_the_captured_declaration(self):
+        self.main.write_text(self.main.read_text(encoding="utf-8").replace(
+            r"\label{lem:bound}", r"\label{lem:bound}\label{lem:alternate}"), encoding="utf-8")
+        data, report = self.scan_edited_source(r"Apply \ref{lem:bound}", r"Apply \ref{lem:alternate}")
+        pair = next(row for row in report["pairs"] if (row["citing"], row["cited"]) == ("consistency", "bound"))
+        self.assertEqual([o["label"] for o in pair["occurrences"]], ["lem:bound", "lem:alternate"])
+        self.assertNotIn("lem:alternate", [row["label"] for row in report["unmatched_labels"]])
+        # The co-label is derived evidence, never an authored record or use.
+        self.assertFalse(any(a["locator"].get("label") == "lem:alternate" for a in data["anchors"]))
+        self.assertEqual(len(data["uses"]), 5)
+        self.main.write_text("Live edits no longer contain the co-label.", encoding="utf-8")
+        self.assertEqual(records.citation_candidates(data), report)
+
+    def test_statement_line_range_can_own_a_literal_label(self):
+        _data, report = self.scan_edited_source(
+            "\\begin{lemma}\nThe variance", "\\begin{lemma}\\label{lem:finite}\nThe variance")
+        self.assertNotIn("finiteness", [row["id"] for row in report["not_mechanically_matchable"]])
+
+    def test_nested_equation_label_is_not_a_theorem_colabel(self):
+        self.main.write_text(self.main.read_text(encoding="utf-8").replace(
+            "The sum is bounded.", r"The sum is bounded: \begin{equation}\label{eq:nested}x=1\end{equation}"),
+            encoding="utf-8")
+        data, report = self.scan_edited_source(r"Apply \ref{lem:bound}", r"Apply \eqref{eq:nested}")
+        self.assertIn("eq:nested", [row["label"] for row in report["unmatched_labels"]])
+        declaration = next(d for d in data["inventory"]["declarations"] if d["start_line"] == 6)
+        self.assertEqual(declaration["labels"], ["lem:bound"])
+        pair = next(row for row in report["pairs"] if (row["citing"], row["cited"]) == ("consistency", "bound"))
+        self.assertEqual([o["line"] for o in pair["occurrences"]], [16])
+
+    def test_duplicate_label_in_another_file_remains_unresolved(self):
+        (self.base / "extra.tex").write_text(
+            r"\begin{theorem}\label{lem:bound}A different result.\end{theorem}", encoding="utf-8")
+        _data, report = self.scan_edited_source(r"\end{document}", "\\input{extra}\n\\end{document}")
+        collision = next(row for row in report["label_collisions"] if row["label"] == "lem:bound")
+        self.assertEqual({row["path"] for row in collision["locations"]}, {"main.tex", "extra.tex"})
+        self.assertEqual(collision["rows"], ["bound"])
+        self.assertIn("lem:bound", [row["label"] for row in report["unmatched_labels"]])
+        self.assertFalse(any(row["cited"] == "bound" for row in report["pairs"]))
+
+    def test_conflicting_statement_owners_do_not_resolve_colabels(self):
+        data, _report = self.scan_edited_source(r"\label{lem:bound}", r"\label{lem:bound}\label{lem:alternate}")
+        owner = next(row for row in data["items"] if row["id"] == "bound")
+        other = next(row for row in data["items"] if row["id"] == "finiteness")
+        other["passages"] = deepcopy(owner["passages"])
+        data.pop("snapshot_id", None)
+        report = records.citation_candidates(data)
+        collision = next(row for row in report["label_collisions"] if row["label"] == "lem:alternate")
+        self.assertEqual(collision["rows"], ["bound", "finiteness"])
+        self.assertFalse(any(row["cited"] == "bound" for row in report["pairs"]))
+
+    def test_explicit_proof_title_outranks_adjacent_declaration(self):
+        self.main.write_text(self.main.read_text(encoding="utf-8").replace(
+            "The bound follows from the definitions.", r"By \ref{ass:ind}."), encoding="utf-8")
+        _data, report = self.scan_edited_source(
+            "\\begin{proof}\nBy", "\\begin{proof}[Proof of Theorem~\\ref{thm:main}]\nBy")
+        pair = next(row for row in report["pairs"] if (row["citing"], row["cited"]) == ("consistency", "independence"))
+        self.assertEqual([o["line"] for o in pair["occurrences"]], [10])
+        self.assertFalse(any((row["citing"], row["cited"]) == ("bound", "independence") for row in report["pairs"]))
+
+    def test_unresolved_explicit_proof_title_blocks_adjacency(self):
+        self.main.write_text(self.main.read_text(encoding="utf-8").replace(
+            "The bound follows from the definitions.", r"By \ref{ass:ind}."), encoding="utf-8")
+        _data, report = self.scan_edited_source(
+            "\\begin{proof}\nBy", "\\begin{proof}[Proof of Theorem~\\ref{thm:missing}]\nBy")
+        self.assertTrue(any(row["cited"] == "independence" and row["line"] == 10
+                            for row in report["unattributed_occurrences"]))
+        self.assertFalse(any(row["cited"] == "independence" for row in report["pairs"]))
+
     def test_occurrences_are_classified_by_statement_proof_and_narrative(self):
         report = database.candidates_database(self.db)
         self.assertEqual(report["snapshot_id"], database.export_snapshot(self.db)["snapshot_id"])

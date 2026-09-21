@@ -304,7 +304,7 @@ class PaperRecordsTests(unittest.TestCase):
         self.assertEqual(by_id["use-alternative-proof"]["regime"], "Pilot regime")
         self.assertEqual(by_id["use-alternative-proof"]["type"], "proof_argument")
 
-    def test_cycle_is_preserved_with_an_explicit_index_fallback(self):
+    def test_cycle_is_preserved_with_an_explicit_graph_diagnostic(self):
         migrated = self.migrate()
         reverse = deepcopy(migrated["uses"][0])
         reverse.update(id="use-reverse-route", **{"from": "centering", "to": "independence"},
@@ -312,7 +312,8 @@ class PaperRecordsTests(unittest.TestCase):
         migrated["uses"].append(reverse)
         migrated = self.revalidate(migrated)
         prepared = records.prepare_records(migrated, self.base)
-        self.assertEqual(prepared["graph_mode"], "index")
+        self.assertEqual(prepared["graph_mode"], "cyclic")
+        self.assertEqual(set(prepared["graph_cycles"][0]["item_ids"]), {"independence", "centering"})
         self.assertEqual(len(prepared["items"]), 2)
         self.assertEqual({use["id"] for use in prepared["uses"]},
                          {use["id"] for use in migrated["uses"]})
@@ -438,7 +439,7 @@ class PaperRecordsTests(unittest.TestCase):
         self.assertEqual(receipt["mathematical_assessment"], "not_performed")
 
     @unittest.skipUnless(NODE_AVAILABLE, "Checked HTML delivery requires shared Node.js.")
-    def test_cycle_delivery_exposes_every_item_and_use_in_the_index(self):
+    def test_cycle_delivery_retains_the_graph_and_complete_index(self):
         migrated = self.migrate()
         reverse = deepcopy(migrated["uses"][0])
         reverse.update(id="use-reverse-route", **{"from": "centering", "to": "independence"},
@@ -448,10 +449,30 @@ class PaperRecordsTests(unittest.TestCase):
         output = self.base / "overview.html"
         receipt = overview.render_dataset(migrated, self.base, output)
         elements = RecordElements(output.read_text(encoding="utf-8"))
-        self.assertEqual(receipt["graph_mode"], "index")
+        self.assertEqual(receipt["graph_mode"], "cyclic")
+        self.assertEqual(receipt["geometry"]["status"], "pass")
+        graph = overview._ArtifactReader()
+        graph.feed(output.read_text(encoding="utf-8"))
+        self.assertEqual(set(graph.nodes), {item["id"] for item in migrated["items"]})
+        self.assertEqual(set(graph.uses), {(use["id"], use["from"], use["to"]) for use in migrated["uses"]})
         self.assertEqual(elements.items, {item["id"] for item in migrated["items"]})
         self.assertEqual(elements.uses, {use["id"] for use in migrated["uses"]})
         self.assertEqual(receipt["graph_preservation"]["status"], "pass")
+
+    @unittest.skipUnless(NODE_AVAILABLE, "Checked HTML delivery requires shared Node.js.")
+    def test_long_scope_preview_retains_complete_reading_limits(self):
+        data = self.migrate()
+        data["scope"] = "Main statements and appendix. " + "Located coverage detail. " * 70 + "Unresolved numbering remains disclosed."
+        data = self.revalidate(data)
+        output = self.base / "long-scope.html"
+        overview.render_dataset(data, self.base, output)
+        html = output.read_text(encoding="utf-8")
+        lead = re.search(r'<p class="proof-scope-lead">(.*?)</p>', html).group(1)
+        self.assertLessEqual(len(lead.split()), 100)
+        self.assertTrue(lead.endswith("…"))
+        disclosure = re.search(r'<details class="proof-scope">([\s\S]*?)</details>', html).group(1)
+        self.assertIn(data["scope"], disclosure)
+        self.assertIn("Unresolved numbering remains disclosed.", disclosure)
 
     @unittest.skipUnless(NODE_AVAILABLE, "Checked HTML delivery requires shared Node.js.")
     def test_wrong_renderer_input_digest_preserves_the_previous_report(self):
@@ -586,6 +607,22 @@ class DeclaredKindAndProseTests(unittest.TestCase):
         self.assertIsNotNone(note)
         self.assertIn("unfamiliar heading", note)
         self.assertIn("compare its declarations manually", note)
+
+    def test_unused_unfamiliar_environment_does_not_create_a_warning(self):
+        text = self.main.read_text(encoding="utf-8").replace(
+            "\\begin{principle}\nEvery bound is uniform in the class.\n\\end{principle}",
+            "% \\begin{principle}\n% Not used.\n% \\end{principle}")
+        self.main.write_text(text, encoding="utf-8")
+        self.assertFalse(any("principle" in note for note in self.migrate()["inventory"]["unresolved"]))
+
+    def test_unfamiliar_environment_used_in_an_input_still_warns(self):
+        text = self.main.read_text(encoding="utf-8").replace(
+            "\\begin{principle}\nEvery bound is uniform in the class.\n\\end{principle}",
+            "\\input{extra}\n\n")
+        self.main.write_text(text, encoding="utf-8")
+        (self.base / "extra.tex").write_text(
+            r"\begin{principle}Every bound is uniform.\end{principle}", encoding="utf-8")
+        self.assertTrue(any("principle" in note for note in self.migrate()["inventory"]["unresolved"]))
 
     def test_prose_premises_validate_with_descriptive_labels(self):
         migrated = self.migrate()

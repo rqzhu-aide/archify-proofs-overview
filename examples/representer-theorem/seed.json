@@ -1,8 +1,9 @@
 {
   "schema_version": 3,
   "title": "The representer theorem: a minimal seed",
-  "scope": "Minimal authoring example, not the full overview: the training-span definition, the projection lemma, and the representer theorem of proof.md. The captured export overview.json is the complete example; this seed shows the authoring format.",
+  "scope": "Minimal authoring example centered on the representer theorem of proof.md, with the training-span definition and projection lemma as selected prerequisites. The assumptions named in the synopses remain in the source at this seed stage. The captured export overview.json adds those assumptions and the kernel-ridge corollary to complete the example's selected argument.",
   "source": {"title": "Standalone representer theorem exposition", "file": "proof.md"},
+  "main_items": ["representer"],
   "items": [
     {
       "id": "training-span",

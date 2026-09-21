@@ -1,132 +1,49 @@
-# Hand off a v3 overview to proofcheck
+# Compatibility and proofcheck handoff
 
-The `paper_database.py` workflow in [database.md](database.md) builds and revises native v3
-overviews. This document covers the shared audit core for two cases: handing a v3 overview to
-proofcheck so an audit can continue from the same records, and reading an audit database that
-proofcheck produced.
+Read this reference for an existing detailed overview or a requested continuation into proofcheck. New overview authoring follows the focused [database workflow](database.md). A focused overview is a compatible subset of the native schema, not a new audit format. Its source matches are not proof checks, and its selected inventory is not exhaustive audit coverage.
 
-Entry point: `python <skill>/scripts/paper_audit.py <command>`. It runs the generated
-`scripts/paper_core/` bundle beside it, the same bundle the proofcheck skill ships, so both skills
-read and write one storage format. It never reads this skill's `paper_database.py` and never looks up
-a sibling skill. Confirm the installation first:
+## Existing detailed overviews
+
+Existing native databases, captured exports, and unflagged `init` retain the full schema-3 reader. There is no automatic conversion or pruning. An export has no focused profile metadata: import with `init --focused` to enforce focused authoring, or without the flag for lossless rich-record compatibility. Incompatible rich content is rejected by focused initialization rather than trimmed. A later user-requested rescoping should use atomic edits in the authoritative database. Removing a current record affects a future audit import even when history survives.
+
+Legacy `equation`, `claim`, and `derivation` records retain their required major-item `owner`. Uses with an intermediate endpoint remain detail annotations under the relevant owner and stay outside major graph layout and cycle detection. An intermediate self-use appears once. Legacy use `group` values retain their `joint` or `cases` annotations and consistent group identities; they do not establish logical sufficiency. New focused work creates none of these objects.
+
+Legacy comparison digests and packets remain unchanged. An owner's context includes its owned rows, uses entering the owner and those rows, prerequisite statements, and evidence. Editing that context stales the owner's comparisons and can prevent reviewed reuse. Do not shorten a legacy packet by dropping this evidence. Source snapshots, old observations, and details remain available in native exports and conditional legacy rendering. The retained exhaustive `scaffold`/`reconcile` utilities apply only to non-focused stores; ordinary overview work uses bounded packets and optional candidates.
+
+## Hand off to proofcheck
+
+The overview store and audit store have distinct formats. The explicit handoff uses the bundled `paper_audit.py` wrapper and its local generated `paper_core/` package, without importing a sibling skill. Check the installed bundle before writing:
 
 ```text
 python <skill>/scripts/paper_audit.py version
 ```
 
-`bundle.ok` must be `true`. A `false` or absent value means the installed files no longer match their
-manifest; report a damaged installation rather than writing records with it.
-
-## Command contract
-
-Every command writes one JSON object to stdout, with diagnostics on stderr. Exit codes are `0`
-accepted or read, `2` invalid request or data, `3` conflict, `4` incompatible schema or package, `5`
-source unavailable, `6` render or publication failure. A failing command returns
-`{"ok": false, "error": {"code", "message", "records", ...}}`; report the code rather than a
-paraphrase. An incomplete audit is a successful `status` query with `process_complete: false` and
-exit 0, never a command failure.
-
-## Hand off a native v3 overview database
-
-The v3 overview store and audit store have different formats. The overview store's internal marker
-is `archify-paper-database-1`; its record payload must be `schema_version: 3`. The audit core
-refuses to write to that store until the explicit handoff:
+`bundle.ok` must be `true`. A false or absent value indicates a damaged installation; report it instead of modifying records with that bundle. This check concerns machine-readable compatibility, not the overview's mathematical content.
 
 ```text
 python <skill>/scripts/paper_audit.py migrate-overview <overview-folder>/data/paper-records.sqlite --backup <overview-folder>/data/paper-records.pre-migration.sqlite
 ```
 
-The command accepts native schema-3 overview records only. Other overview versions receive exit 4
-`INCOMPATIBLE`; this is a workflow handoff, not an old-version upgrade path.
+The command accepts the overview marker `archify-paper-database-1` with `schema_version: 3`, backs up the file, and rebuilds it in place as audit storage format 3. Other formats return exit 4 `INCOMPATIBLE`; this is a workflow handoff, not a universal format upgrade. A second migration returns `ALREADY_MIGRATED` without changes. Keep the verified backup.
 
-One boundary: an overview built from a supplied excerpt, whose anchors have no captured source file,
-cannot migrate — contract-3 anchors require a registered source. The refusal is exit 4 `INCOMPATIBLE`
-with the anchor named, never a silent loss. Register the manuscript sources before migrating, or keep
-such an overview as an overview.
+The bridge preserves stable item/use/anchor identities, source bytes and bindings, scope, main-result selection, authored fields, aliases, issues, regimes, and locators. Legacy owner and group records retain their mappings. A group spanning several conclusions becomes one audit group per conclusion, disclosed in `limitations`. Only the newest applicable comparison for each current record becomes a live audit observation. Other observations remain in the archived overview export with a disclosed count. Comparison timestamps and provenance are retained; the handoff creates no mathematical reviews.
 
-The handoff backs the database up first, then rebuilds it in place as audit storage format 3. It preserves
-item, use, and anchor identity and carries every authored field: item kinds (including owned
-`equation`/`claim`/`derivation` intermediate rows), aliases, `issue` notes, use
-`regime`s, evidence anchors, and all four locator shapes — line spans, TeX labels, PDF pages, and
-combinations — with line excerpts re-verified against the captured source. Use groups migrate as
-provenance groups whose conclusion is the member uses' shared target; an overview group id spanning
-several conclusions becomes one group record per conclusion and says so in the receipt's
-`limitations`. Only the newest applicable comparison for each current item or use is imported as a
-live observation, retaining its original `created_at`. Stale and superseded observations remain in
-the archived overview export; the receipt reports their count. Imported observations also preserve
-overview `created_at`, `input_snapshot`, and `carried_from` in their notes. The source blobs are
-imported unchanged, and an identity map plus the original snapshot IDs are recorded as provenance.
-The backup is taken before the rebuild and is kept when the rebuild refuses.
+Anchors must reference captured source files. An excerpt-only overview without registered files cannot migrate. A page locator on a non-PDF file or an unknown item, owner, or endpoint is also refused rather than narrowed. Correct source bindings in the overview first. The audit store requires the machine-readable feature `overview-bridge/1`; an incompatible bundle refuses it instead of guessing.
 
-The handoff moves records and creates no mathematical reviews. Any uncarried field appears in
-`limitations`. Three invalid source or reference states are refused rather than narrowed:
-an anchor naming no captured source file, a page locator on a non-PDF source, and an item, owner, or
-use endpoint naming an unknown record. Re-anchor or correct those in the overview first.
+After handoff the audit database is authoritative. Do not keep independently editable overview and audit masters. The overview's `paper_database.py` cannot read the audit store; render through `checkpoint`. The proofcheck workflow determines further inventory and checking needs. Importing a selective graph does not imply that omitted proof steps or results were assessed.
 
-The rebuilt database stamps the `overview-bridge/1` feature. An audit core older than this release —
-including a stale `scripts/paper_core/` bundle — refuses it with exit 4 `INCOMPATIBLE` naming that
-feature; keep both skills on the same release. After migration, render with `paper_audit.py
-checkpoint`; this skill's own `paper_database.py render` reads only the native overview store and
-cannot read the migrated file. Running the migration a second time returns `ALREADY_MIGRATED` and
-changes nothing.
-
-Use the handoff only when the records are going into a proof audit. An overview that will stay an
-overview needs no conversion, and `paper_database.py` cannot read the audit store. Keep the backup.
-
-Audit storage, record, packet, and projection versions are separate from the overview schema.
-Use proofcheck's own guidance for audit-store maintenance; retiring old overview formats does not
-change that workflow or grant new proof judgments.
-
-## Reading and reporting on an audit database
-
-After migration, or on a database the proofcheck skill created, these commands are the ones this
-skill needs:
+## Read an audit store
 
 ```text
 python <skill>/scripts/paper_audit.py status <db>
-python <skill>/scripts/paper_audit.py work list <db> --audit <audit-id>
 python <skill>/scripts/paper_audit.py validate <db>
 python <skill>/scripts/paper_audit.py checkpoint <db> --out <overview-folder>/overview.html
 python <skill>/scripts/paper_audit.py export <db> --out <overview-folder>/exports/snapshot.json
-python <skill>/scripts/paper_audit.py attach <db> --report <overview-folder>/proofcheck-report.html
+python <skill>/scripts/paper_audit.py backup <db> --out copy.db
 ```
 
-`status` separates structural health, source limits, review coverage, mathematical assessments, and
-the published revision. `validate` checks record shapes, references, bindings, coverage intervals,
-and projection inputs; it certifies nothing mathematical, so a passing validation is not a complete
-inventory and not a correct proof. `checkpoint` renders the projection to a working HTML report and
-retains the previous file byte for byte if the render fails. `attach` registers a proofcheck report
-path on the paper record so there is still exactly one master.
+Commands emit JSON receipts. Exit codes distinguish acceptance (`0`), invalid data (`2`), conflict (`3`), incompatibility (`4`), unavailable source (`5`), and rendering/publication failure (`6`). Report the structured error code. An incomplete audit can be a successful status query with `process_complete: false`; it is not a failed command.
 
-The worklist shows actionable recorded obligations and coordinator diagnostics. The proofcheck
-coordinator can focus on a result and prepare a coherent sequence of work, rather than ask a model
-to schedule each edge. The controller does not infer missing mathematical dependencies: inventory
-and graph refinement still require reading the manuscript. Incomplete task analysis must remain
-visible as incomplete; it is not evidence that the remaining proof is empty.
+`status` distinguishes structural health, source limitations, review coverage, mathematical assessments, and published revision. `validate` checks structure and evidence bindings, not proof correctness. `checkpoint` preserves the previous HTML when rendering fails. `backup` provides full recovery; a mathematical export does not restore an operational controller session. Use proofcheck's guidance for audit maintenance, worklists, and new detailed checks. Do not edit either store directly with SQLite.
 
-The rendered report uses the same viewer conventions as an overview: node colors identify
-mathematical types, arrows run from a prerequisite to the result that uses it, and the renderer falls
-back to a complete index when its layout cannot draw the mapping. Connection states in an audit
-report are derived from recorded check evidence and carry their qualifications; they are not
-extraction colors and must not be described as a correctness verdict.
-
-Keep the overview diagram at major-result level. Hidden intermediate claims, applications and joint
-derivations belong in the connection detail and lower reader; worklist links lead to that detailed
-evidence. Distinguish local outcome, freshness, dependency support, and process completion. A valid
-application of a lemma with an unresolved proof can have conditional support without making that
-application itself a new proof defect.
-
-Use `backup <db> --out copy.db` for complete recovery. Mathematical `export` contains record-linked
-evidence, not the operational submission index, all packets or commit history; it cannot restore a
-controller session. Rendering and reading worklists require no mathematical model call.
-
-## Boundaries
-
-- Do not maintain an overview JSON, an overview database, and an audit database as three masters.
-  After migration the audit database is the authority.
-- Do not open either database with another SQLite tool to change records. Record versions are
-  immutable and every edit goes through a packet.
-- Do not run new-format data through `paper_database.py validate`, and do not point
-  `paper_audit.py` at an unmigrated overview expecting it to adapt.
-- Inventory coverage still does not establish proof validity. State selected scope, omitted sections,
-  and unresolved source questions explicitly.
+The audit reader keeps major-result graph conventions while exposing its richer recorded evidence separately. Any audit assessment derives from those audit records; the overview's source-comparison colors or counts must not be reinterpreted as proof judgments.

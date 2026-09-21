@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from xml.etree import ElementTree as ET
 
 
 SKILL = Path(__file__).resolve().parents[1]
@@ -29,6 +30,36 @@ RENDERER = SKILL / "scripts" / "render.mjs"
 
 
 class ConverterAdaptationTests(unittest.TestCase):
+    def test_arg_operator_keeps_argument_and_minimum_forms_distinct(self):
+        namespace = {"m": math_display.MATHML_NS}
+        for tex, expected in ((r"\arg\min_x f(x)", ["arg", "min"]),
+                              (r"\arg z", ["arg"])):
+            with self.subTest(tex=tex):
+                markup, reason = math_display._convert(tex, "inline")
+                self.assertIsNotNone(markup, reason)
+                root = ET.fromstring(markup)
+                operators = [node.text for node in root.findall(".//m:mo", namespace)
+                             if node.text in ("arg", "min")]
+                self.assertEqual(operators, expected)
+                self.assertEqual(root.find(".//m:annotation", namespace).text, tex)
+                self.assertEqual(root.attrib["aria-label"], "LaTeX: " + tex)
+
+    def test_arg_adaptation_respects_command_names_and_escaping(self):
+        for tex in (r"\argmin", r"\argument", r"\\arg", r"\\arg\min"):
+            with self.subTest(tex=tex):
+                self.assertEqual(math_display._argument_operator(tex), tex)
+        self.assertEqual(math_display._argument_operator(r"\arg_z"), r"\operatorname{arg}_z")
+
+    def test_arg_adaptation_does_not_hide_unsupported_commands(self):
+        diagnostics = []
+        literal = r"$\arg\privateMinimum_x f(x)$"
+        markup = math_display.render_text(literal, diagnostics=diagnostics)
+        self.assertIn('class="math-fallback"', markup)
+        self.assertIn(literal, markup)
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(diagnostics[0]["excerpt"], literal)
+        self.assertIn(r"\privateMinimum", diagnostics[0]["reason"])
+
     def test_sized_named_bars_convert_at_the_authored_size(self):
         for tex in (r"\Bigl\lVert x \Bigr\rVert_{\mathcal H}",
                     r"\bigl\lVert x \bigr\rVert",
@@ -90,6 +121,71 @@ class ConverterAdaptationTests(unittest.TestCase):
         self.assertIn(r"$x\in\cS$", diagnostics[0]["excerpt"])
         self.assertEqual(html.count('class="math-fallback"'), 1)
         self.assertEqual(html.count("<math"), 2)
+
+
+class ScopeDisplayTests(unittest.TestCase):
+    def test_short_lead_discloses_only_later_paragraphs(self):
+        scope = 'Coverage <all> with $x < y$.\n\nLimits "apply" to $z$.'
+        result = math_display.render_scope(scope)
+        self.assertIn("Coverage &lt;all&gt;", result["lead_html"])
+        self.assertIn("<math", result["lead_html"])
+        self.assertIn('encoding="application/x-tex">x &lt; y</annotation>', result["lead_html"])
+        self.assertNotIn("Limits", result["lead_html"])
+        self.assertIn("Limits &quot;apply&quot;", result["details_html"])
+        self.assertIn("<math", result["details_html"])
+        self.assertNotIn("Coverage", result["details_html"])
+
+    def test_cutoff_keeps_the_whole_formula_and_discloses_full_original(self):
+        prefix = " ".join(["word"] * 99)
+        scope = prefix + r" $x + y$ follows here." + "\n\nLater limits."
+        diagnostics = []
+        result = math_display.render_scope(scope, diagnostics=diagnostics)
+        self.assertIn('encoding="application/x-tex">x + y</annotation>', result["lead_html"])
+        self.assertTrue(result["lead_html"].endswith("</math>…"))
+        self.assertNotIn("follows", result["lead_html"])
+        self.assertEqual(result["details_html"], math_display.render_text(scope))
+        self.assertEqual(diagnostics, [])
+
+    def test_paragraph_breaks_inside_explicit_math_do_not_split_the_lead(self):
+        for opening, closing in (("$", "$"), ("$$", "$$"), (r"\(", r"\)"), (r"\[", r"\]")):
+            with self.subTest(opening=opening):
+                scope = "Coverage " + opening + "x +\n\n y" + closing + " continues.\n\nLater limits."
+                diagnostics = []
+                result = math_display.render_scope(scope, diagnostics=diagnostics)
+                self.assertIn("continues.", result["lead_html"])
+                self.assertIn('encoding="application/x-tex">x +\n\n y</annotation>', result["lead_html"])
+                self.assertEqual(result["details_html"], "Later limits.")
+                self.assertEqual(diagnostics, [])
+
+    def test_repeated_preview_diagnoses_each_original_occurrence_once(self):
+        prefix = " ".join(["word"] * 99)
+        scope = prefix + r" $x + \privateClass$ and $x + \privateClass$."
+        diagnostics = []
+        result = math_display.render_scope(scope, diagnostics=diagnostics)
+        self.assertEqual(result["lead_html"].count('class="math-fallback"'), 1)
+        self.assertEqual(result["details_html"].count('class="math-fallback"'), 2)
+        self.assertEqual(len(diagnostics), 2)
+        self.assertTrue(all(row["excerpt"] == r"$x + \privateClass$" for row in diagnostics))
+
+    def test_unmatched_math_tail_stays_visible_across_blank_lines_and_cutoff(self):
+        for prefix in ("Coverage", " ".join(["word"] * 99)):
+            with self.subTest(long_lead=prefix != "Coverage"):
+                scope = prefix + ' $x +\n\n <unclosed> formula with more words'
+                diagnostics = []
+                result = math_display.render_scope(scope, diagnostics=diagnostics)
+                self.assertIn('class="math-fallback"', result["lead_html"])
+                self.assertIn("&lt;unclosed&gt; formula with more words", result["lead_html"])
+                self.assertEqual(len(diagnostics), 1)
+                self.assertIn("no matching closing delimiter", diagnostics[0]["reason"])
+                self.assertEqual(result["details_html"], "" if prefix == "Coverage"
+                                 else math_display.render_text(scope))
+
+    def test_plain_prose_retains_the_existing_preview_limit(self):
+        words = " ".join(["word"] * 100)
+        self.assertEqual(math_display.render_scope(words), {"lead_html": words, "details_html": ""})
+        scope = words + " last"
+        self.assertEqual(math_display.render_scope(scope), {"lead_html": words + "…", "details_html": scope})
+        self.assertEqual(math_display.render_scope(""), {"lead_html": "", "details_html": ""})
 
 
 class PrepareDiagnosticsTests(unittest.TestCase):

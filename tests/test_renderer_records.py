@@ -132,6 +132,20 @@ class RendererRecordsTests(unittest.TestCase):
         for field in ("browser_review", "visual_review", "mathematical_assessment"):
             self.assertEqual(receipt[field], "not_performed")
 
+    def test_main_result_selection_preserves_prerequisite_and_parallel_connections(self):
+        self.data["main_items"] = ["rate"]
+        _, html, rendered = self.render()
+        self.assertEqual(sorted(rendered.nodes), ["bound", "rate"])
+        self.assertEqual(sorted(rendered.uses), self.expected_uses())
+        self.assertEqual(sorted(rendered.index_items), ["bound", "rate"])
+        self.assertEqual(sorted(rendered.index_uses), self.expected_uses())
+        self.assertIn("Selected statements and connections (2 statements, 2 connections)", html)
+        self.assertTrue('<p class="proof-scope-lead">Synthetic renderer fixture.</p>' in html,
+                        'The selected scope must remain visible above the graph.')
+        self.assertIn('data-proof-main="rate"', html)
+        self.assertNotIn('data-proof-main="bound"', html)
+        self.assertNotIn("Intermediate steps (", html)
+
     def test_all_passages_are_available_in_selection_and_static_index(self):
         _, _, rendered = self.render()
         for region in ("proof-detail-bound", "proof-index-item-bound"):

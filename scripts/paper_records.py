@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from overview_math import render_text
+from overview_math import render_scope, render_text
 
 MAJOR_KINDS = ("assumption", "definition", "lemma", "proposition", "theorem", "corollary", "external_result")
 INTERMEDIATE_KINDS = ("equation", "claim", "derivation")
@@ -102,11 +102,76 @@ def _source_bytes(row):
     return raw
 
 
-def _source_text(row):
-    try:
-        return _source_bytes(row).decode('utf-8-sig')
-    except UnicodeError as exc:
-        raise RecordError(f"Source {row['path']}: line anchors require UTF-8 text.") from exc
+class _SourceContent:
+    """Reuse captured-source work within one operation, never across calls."""
+
+    def __init__(self):
+        self._files = {}
+
+    def _entry(self, row):
+        # Both values participate: a claimed digest alone must never let
+        # changed or corrupt captured bytes borrow an earlier successful check.
+        key = row['sha256'], row['content_base64']
+        try:
+            entry = self._files.get(key)
+        except TypeError:
+            return {'bytes': _source_bytes(row)}
+        if entry is None:
+            entry = self._files[key] = {'bytes': _source_bytes(row)}
+        return entry
+
+    def raw(self, row):
+        return self._entry(row)['bytes']
+
+    def decoded(self, row):
+        entry = self._entry(row)
+        if 'text' not in entry:
+            entry['text'] = entry['bytes'].decode('utf-8-sig')
+        return entry['text']
+
+    def text(self, row):
+        try:
+            return self.decoded(row)
+        except UnicodeError as exc:
+            raise RecordError(f"Source {row['path']}: line anchors require UTF-8 text.") from exc
+
+    def lines(self, row):
+        entry = self._entry(row)
+        if 'lines' not in entry:
+            entry['lines'] = self.text(row).splitlines()
+        return entry['lines']
+
+    def uncommented(self, row):
+        entry = self._entry(row)
+        if 'uncommented' not in entry:
+            entry['uncommented'] = _uncomment(self.text(row))
+        return entry['uncommented']
+
+    def pdf_pages(self, row):
+        entry = self._entry(row)
+        if 'pages' not in entry and 'pdf_error' not in entry:
+            try:
+                import io
+                from pypdf import PdfReader
+                entry['pages'] = PdfReader(io.BytesIO(entry['bytes'])).pages
+            except Exception as exc:
+                entry['pdf_error'] = exc
+        if 'pdf_error' in entry:
+            raise entry['pdf_error']
+        return entry['pages']
+
+    def pdf_text(self, row, page):
+        entry = self._entry(row)
+        texts = entry.setdefault('page_text', {})
+        errors = entry.setdefault('page_errors', {})
+        if page not in texts and page not in errors:
+            try:
+                texts[page] = self.pdf_pages(row)[page - 1].extract_text() or ''
+            except Exception as exc:
+                errors[page] = exc
+        if page in errors:
+            raise errors[page]
+        return texts[page]
 
 
 def _uncomment(text):
@@ -237,7 +302,8 @@ def _capture(paths, base_dir):
     return list(captured.values()), list(dict.fromkeys(unresolved))
 
 
-def _binding(locator, file_row, context):
+def _binding(locator, file_row, context, sources=None):
+    sources = sources if sources is not None else _SourceContent()
     _fields(locator, (), ('label', 'page', 'start_line', 'end_line'), context)
     if not locator:
         raise RecordError(f"{context}: provide a label, physical PDF page, or line range.")
@@ -251,18 +317,18 @@ def _binding(locator, file_row, context):
     excerpt, checks, notes = '', [], []
     text = None
     if file_row and file_row['media_type'] != 'application/pdf':
-        text = _source_text(file_row)
+        text = sources.text(file_row)
     if 'start_line' in locator:
         if text is None:
             raise RecordError(f"{context}: line ranges require a captured UTF-8 text source.")
         start, end = locator['start_line'], locator['end_line']
-        lines = text.splitlines()
+        lines = sources.lines(file_row)
         if start > end or end > len(lines):
             raise RecordError(f"{context}: lines {start}-{end} are outside or reversed in the captured source ({len(lines)} lines). Re-anchor this passage.")
         excerpt = '\n'.join(lines[start - 1:end])
         checks.append('line_range')
     if 'label' in locator:
-        found = text is not None and re.search(r'\\label\s*\{\s*' + re.escape(locator['label']) + r'\s*\}', _uncomment(text))
+        found = text is not None and re.search(r'\\label\s*\{\s*' + re.escape(locator['label']) + r'\s*\}', sources.uncommented(file_row))
         if found:
             checks.append('tex_label')
         else:
@@ -270,14 +336,12 @@ def _binding(locator, file_row, context):
     if 'page' in locator:
         if file_row and file_row['media_type'] == 'application/pdf':
             try:
-                import io
-                from pypdf import PdfReader
-                pages = PdfReader(io.BytesIO(_source_bytes(file_row))).pages
+                pages = sources.pdf_pages(file_row)
                 if locator['page'] > len(pages):
                     raise RecordError(f"{context}: PDF page {locator['page']} exceeds its {len(pages)} physical pages.")
                 checks.append('pdf_page_bounds')
                 if not excerpt:
-                    excerpt = pages[locator['page'] - 1].extract_text() or ''
+                    excerpt = sources.pdf_text(file_row, locator['page'])
             except RecordError:
                 raise
             except Exception as exc:
@@ -293,7 +357,7 @@ def _binding(locator, file_row, context):
     return excerpt, verification
 
 
-def _declared_kinds(source_revision, unresolved):
+def _declared_kinds(source_revision, unresolved, sources=None):
     """Environment-name knowledge shared by the inventory and citation scans.
 
     Returns (names, texts, sniffed): the theorem-like environment map, the
@@ -301,25 +365,26 @@ def _declared_kinds(source_revision, unresolved):
     by content alone. TeX-suffix files fail loudly on undecodable bytes; other
     files are scanned only when a conservative manuscript marker is present.
     """
+    sources = sources if sources is not None else _SourceContent()
     names = {kind: kind for kind in MAJOR_KINDS if kind != 'external_result'}
     names.update({'thm': 'theorem', 'lem': 'lemma', 'prop': 'proposition',
                   'cor': 'corollary', 'ass': 'assumption', 'defn': 'definition'})
-    texts, sniffed = {}, []
+    texts, sniffed, unfamiliar = {}, [], {}
     for file in source_revision['files']:
         if Path(file['path']).suffix.lower() in _TEX_SUFFIXES:
-            text = _uncomment(_source_text(file))
+            text = sources.uncommented(file)
         elif file['media_type'] == 'application/pdf':
             continue
         else:
             try:
-                decoded = _source_bytes(file).decode('utf-8-sig')
+                decoded = sources.decoded(file)
             except UnicodeError:
                 continue  # Not UTF-8 text; nothing scanable. Hash problems still raise.
             if not _is_tex_content(decoded, file['path']):
                 continue
             sniffed.append(file['path'])
             unresolved.append(_tex_by_content_note(file['path']))
-            text = _uncomment(decoded)
+            text = sources.uncommented(file)
         texts[file['id']] = text
         for env, heading in re.findall(r'\\newtheorem\*?\{([^{}]+)\}(?:\[[^]]*\])?\{([^{}]+)\}', text):
             if re.fullmatch(r'(?:remark|example|note|notation|convention)s?', heading.strip(), re.IGNORECASE):
@@ -329,44 +394,59 @@ def _declared_kinds(source_revision, unresolved):
             if kind:
                 names[env] = kind
             else:
-                unresolved.append(f"{file['path']}: theorem environment {env!r} has an unfamiliar heading; compare its declarations manually.")
+                unfamiliar[env] = file['path']
+    used = {match.group(2) for text in texts.values() for match in _ENV_TOKEN_RE.finditer(text)
+            if match.group(1) == 'begin'}
+    for env, path in unfamiliar.items():
+        if env in used:
+            unresolved.append(f"{path}: theorem environment {env!r} has an unfamiliar heading; compare its declarations manually.")
     return names, texts, sniffed
 
 
-def _statement_anchor_rows(items, anchors, file_id, label_map, labels, start_line):
+def _declaration_labels(text, span, spans):
+    """Literal labels belonging to this declaration, never to nested environments."""
+    _env, bstart, bend, estart, eend = span
+    nested = [(start, end) for _name, start, _b, _e, end in spans
+              if bstart < start < eend]
+    return [match.group(1) for match in re.compile(r'\\label\s*\{([^{}]+)\}').finditer(text, bend, estart)
+            if not any(start <= match.start() < end for start, end in nested)]
+
+
+def _statement_anchor_rows(items, anchors, file_id, labels, start_line):
     """Rows owning a declaration span: its labels' rows, else the statement anchor enclosing its first line."""
-    rows = {label_map[label] for label in labels if label in label_map}
-    if rows:
-        return rows
-    matched = set()
+    labelled, matched = set(), set()
     for item in items:
         for passage in item['passages']:
             anchor = anchors[passage['anchor_id']]
             if passage['role'] != 'statement' or anchor.get('file_id') != file_id:
                 continue
             loc = anchor['locator']
+            if loc.get('label') in labels:
+                labelled.add(item['id'])
             if loc.get('start_line', 0) <= start_line <= loc.get('end_line', -1):
                 matched.add(item['id'])
-    return matched
+    return labelled or matched
 
 
-def _inventory(source_revision, items, anchors, unresolved=()):
+def _inventory(source_revision, items, anchors, unresolved=(), sources=None):
     declarations = []
     anchor_map = {a['id']: a for a in anchors}
     unresolved = list(unresolved)
-    names, texts, _sniffed = _declared_kinds(source_revision, unresolved)
+    names, texts, _sniffed = _declared_kinds(source_revision, unresolved, sources)
     for file in source_revision['files']:
         # Declarations live in documents, not in class/style files: TeX-suffixed
         # documents plus any file treated as TeX by content.
         if file['id'] not in texts or Path(file['path']).suffix.lower() in {'.sty', '.cls'}:
             continue
         text = texts[file['id']]
-        for env, bstart, bend, estart, eend in _environment_spans(text):
+        spans = _environment_spans(text)
+        for span in spans:
+            env, bstart, bend, estart, eend = span
             if env.rstrip('*') not in names:
                 continue
             start_line = _line_of(text, bstart)
             end_line = _line_of(text, eend)
-            labels = re.findall(r'\\label\s*\{([^{}]+)\}', text[bstart:eend])
+            labels = _declaration_labels(text, span, spans)
             matches = []
             for item in items:
                 for passage in item['passages']:
@@ -460,34 +540,80 @@ def _proof_section_spans(text, label_map, suffix_map):
     return spans
 
 
+def _proof_title_owner(text, begin_end, label_map):
+    """An explicit proof title outranks surrounding headings and adjacency."""
+    title = re.match(r'\s*\[([^\[\]]*)\]', text[begin_end:])
+    if title is None or not _PROOF_OF_RE.search(title.group(1)):
+        return False, None
+    references = {label.strip() for match in _REF_RE.finditer(title.group(1))
+                  for label in match.group(2).split(',')}
+    owners = {label_map.get(label) for label in references}
+    return True, next(iter(owners)) if len(owners) == 1 else None
+
+
 def citation_summary(data):
     """Compact scan summary for validate/render receipts; the full report lists lines."""
-    report = citation_candidates(data)
+    return _citation_summary_validated(validate_records(data))
+
+
+def _citation_summary_validated(data):
+    report = _citation_candidates_validated(data)
     if not report['coverage']['applicable']:
         return 'not applicable (no TeX sources captured)'
+    report = _selected_candidate_report(data, report)
     counts = report['counts']
-    return {'pairs': counts['pairs'],
+    summary = {'pairs': counts['pairs'],
             'not_mechanically_matchable': counts['not_mechanically_matchable'],
             'missing_uses': counts['missing_uses'], 'unsupported_uses': counts['unsupported_uses'],
             'unmatched_labels': counts['unmatched_labels'],
             'attributed': report['attribution']['attributed'],
             'unattributed': report['attribution']['unattributed']}
+    if report['outside_selected_scope']['declarations']:
+        summary['outside_selected_scope'] = report['outside_selected_scope']
+    return summary
+
+
+def _selected_candidate_report(data, report):
+    """Separate known unselected declarations from unresolved source labels."""
+    report = dict(report)
+    declarations = data.get('inventory', {}).get('declarations', [])
+    outside = [row for row in declarations if not row['item_ids']]
+    selected_labels = {label for row in declarations if row['item_ids'] for label in row['labels']}
+    outside_labels = {label for row in outside for label in row['labels']} - selected_labels
+    report['outside_selected_scope'] = {'declarations': len(outside), 'labels': len(outside_labels)}
+    if not report['coverage']['applicable']:
+        report['note'] = ('Not applicable: no captured TeX sources provide citation evidence. '
+                          'Read the selected statements and supporting passages through get and compare; '
+                          'disclose the absent citation scan. This does not require an exhaustive edge audit.')
+        return report
+    report['unmatched_labels'] = [row for row in report['unmatched_labels'] if row['label'] not in outside_labels]
+    report['counts'] = {**report['counts'], 'unmatched_labels': len(report['unmatched_labels'])}
+    report['note'] += ' Candidate pairs concern selected statements only. Unselected declarations are scope information, not missing connections or a completion requirement.'
+    return report
 
 
 def citation_candidates(data):
     """\\ref-family citation evidence for the rows of one captured snapshot.
 
     The label-to-row map comes from statement-passage anchors carrying TeX
-    labels; occurrence contexts come from environment spans in the captured
+    labels and unambiguous co-labels on the same captured declaration;
+    occurrence contexts come from environment spans in the captured
     bytes (statement/proof of an attributed row, else narrative). Proof spans
-    are attributed by the nearest enclosing 'proof of' section heading, then
+    are attributed by an explicit 'Proof of' environment title, then the
+    nearest enclosing 'proof of' section heading, then
     by a proof:<suffix> label convention, then by whitespace adjacency to a
     declaration. The lists propose reviews; no citation is itself a recorded
     use.
     """
-    data = validate_records(data)
+    return _citation_candidates_validated(validate_records(data))
+
+
+def _citation_candidates_validated(data):
+    """Scan an already validated snapshot; public callers use citation_candidates."""
     items = data['items']
     anchors = {a['id']: a for a in data['anchors']}
+    names, texts, sniffed = _declared_kinds(data['source_revision'], [])
+    spans_by_file = {file_id: _environment_spans(text) for file_id, text in texts.items()}
     claimed = {}
     for item in items:
         for passage in item['passages']:
@@ -496,9 +622,32 @@ def citation_candidates(data):
             label = anchors[passage['anchor_id']]['locator'].get('label')
             if label:
                 claimed.setdefault(label, set()).add(item['id'])
-    label_map = {label: next(iter(rows)) for label, rows in claimed.items() if len(rows) == 1}
-    collisions = [{'label': label, 'rows': sorted(rows)}
-                  for label, rows in sorted(claimed.items()) if len(rows) > 1]
+    label_locations = {}
+    for file in data['source_revision']['files']:
+        text = texts.get(file['id'])
+        if text is None:
+            continue
+        spans = spans_by_file[file['id']]
+        for match in re.finditer(r'\\label\s*\{([^{}]+)\}', text):
+            label_locations.setdefault(match.group(1), []).append(
+                {'file_id': file['id'], 'path': file['path'], 'line': _line_of(text, match.start())})
+        for span in spans:
+            if span[0].rstrip('*') not in names:
+                continue
+            labels = _declaration_labels(text, span, spans)
+            rows = _statement_anchor_rows(items, anchors, file['id'], labels, _line_of(text, span[1]))
+            for label in labels:
+                claimed.setdefault(label, set()).update(rows)
+    label_map = {label: next(iter(rows)) for label, rows in claimed.items()
+                 if len(rows) == 1 and len(label_locations.get(label, [])) <= 1}
+    collisions = []
+    for label in sorted(set(claimed) | set(label_locations)):
+        rows, locations = claimed.get(label, set()), label_locations.get(label, [])
+        if len(rows) > 1 or len(locations) > 1:
+            collision = {'label': label, 'rows': sorted(rows)}
+            if len(locations) > 1:
+                collision['locations'] = locations
+            collisions.append(collision)
     suffix_rows = {}
     for label, row in label_map.items():
         suffix_rows.setdefault(_label_suffix(label), set()).add(row)
@@ -517,7 +666,6 @@ def citation_candidates(data):
                 continue
             passage_lines.setdefault((anchor['file_id'], passage['role']), []).append(
                 (start, anchor['locator']['end_line'], item['id']))
-    names, texts, sniffed = _declared_kinds(data['source_revision'], [])
     text_files_total = sum(1 for file in data['source_revision']['files'] if file['media_type'] != 'application/pdf')
     coverage = {'files_scanned': len(texts), 'text_files_total': text_files_total,
                 'applicable': bool(texts), 'tex_by_content': sniffed}
@@ -540,18 +688,23 @@ def citation_candidates(data):
         if text is None:
             continue
         declarations, proof_spans = [], []
-        for env, bstart, bend, estart, eend in _environment_spans(text):
+        spans = spans_by_file[file['id']]
+        for span in spans:
+            env, bstart, bend, estart, eend = span
             if env.rstrip('*') in names:
-                labels = re.findall(r'\\label\s*\{([^{}]+)\}', text[bstart:eend])
-                rows = _statement_anchor_rows(items, anchors, file['id'], label_map, labels, _line_of(text, bstart))
+                labels = _declaration_labels(text, span, spans)
+                rows = _statement_anchor_rows(items, anchors, file['id'], labels, _line_of(text, bstart))
                 declarations.append((bstart, eend, next(iter(rows)) if len(rows) == 1 else None))
             elif env == 'proof':
-                proof_spans.append((bstart, eend))
+                proof_spans.append((bstart, bend, eend))
         contexts = [(bstart, eend, owner, 'statement') for bstart, eend, owner in declarations]
         sections = _proof_section_spans(text, label_map, suffix_map)
-        for pstart, pend in proof_spans:
+        for pstart, begin_end, pend in proof_spans:
+            explicit_title, owner = _proof_title_owner(text, begin_end, label_map)
             enclosing = [span for span in sections if span[2] is not None and span[0] <= pstart < span[1]]
-            if enclosing:
+            if explicit_title:
+                pass  # An unresolved explicit title must not borrow a nearby declaration's owner.
+            elif enclosing:
                 # A heading-attributed proof section outranks the whitespace
                 # adjacency fallback for the proof environments it contains.
                 owner = max(enclosing, key=lambda span: span[0])[2]
@@ -663,10 +816,9 @@ def normalize(data, base_dir, extra_files=(), source_root=None):
     if 'source' in data and 'source_revision' in data:
         raise RecordError('Paper records: choose a compact seed with source or a captured export with source_revision, never both.')
     if 'source_revision' in data:
-        captured = validate_records(data)
         if extra_files:
-            return refresh_sources(captured, source_root or base_dir, extra_files=extra_files)
-        return captured
+            return refresh_sources(data, source_root or base_dir, extra_files=extra_files)
+        return validate_records(data)
     _fields(data, ('schema_version', 'title', 'scope', 'source', 'items', 'uses'), ('main_items',), 'Seed')
     root = data['source']
     _fields(root, ('title',), ('file',), 'Seed source')
@@ -716,6 +868,7 @@ def normalize(data, base_dir, extra_files=(), source_root=None):
     revision = {'id': _source_digest(files), 'title': root['title'], 'created_at': _now(), 'files': files}
     by_path = {(capture_base / f['path']).resolve(): f for f in files}
     anchors, anchor_ids = [], set()
+    sources = _SourceContent()
 
     def anchor(source, identity):
         stem, suffix = identity, 1
@@ -726,7 +879,7 @@ def normalize(data, base_dir, extra_files=(), source_root=None):
         file_name = source.get('file', root.get('file'))
         file = by_path.get((Path(base_dir) / file_name).resolve()) if file_name else None
         loc = {k: v for k, v in source.items() if k != 'file'}
-        excerpt, verification = _binding(loc, file, identity)
+        excerpt, verification = _binding(loc, file, identity, sources)
         row = {'id': identity, 'source_revision': revision['id'], 'locator': loc,
                'excerpt': excerpt, 'excerpt_hash': _sha(excerpt.encode()), 'verification': verification}
         if file:
@@ -758,14 +911,18 @@ def normalize(data, base_dir, extra_files=(), source_root=None):
               'observations': []}
     if 'main_items' in data:
         result['main_items'] = copy.deepcopy(data['main_items'])
-    result = validate_records(result)
+    result = _validate_records(result, sources)
     result.pop('snapshot_id')
-    result['inventory'] = _inventory(revision, items, anchors, unresolved)
-    return validate_records(result)
+    result['inventory'] = _inventory(revision, items, anchors, unresolved, sources)
+    return _validate_records(result, sources)
 
 
 def validate_records(data):
     """Validate content, captured evidence and references; allow cyclic mappings."""
+    return _validate_records(data, _SourceContent())
+
+
+def _validate_records(data, sources):
     require_schema3(data)
     _fields(data, ('schema_version', 'title', 'scope', 'source_revision', 'anchors', 'items', 'uses', 'observations'),
             ('snapshot_id', 'inventory', 'main_items'), 'Paper records')
@@ -786,7 +943,7 @@ def validate_records(data):
             raise RecordError(f"Source {row['path']}: unsupported media_type.")
         if row['id'] in file_map or row['path'] in paths:
             raise RecordError(f"Source {row['path']}: duplicate file identity or path.")
-        _source_bytes(row)
+        sources.raw(row)
         file_map[row['id']] = row
         paths.add(row['path'])
     if source['id'] != _source_digest(source['files']):
@@ -807,7 +964,7 @@ def validate_records(data):
         _text(row['excerpt'], 'Anchor excerpt', empty=True)
         if row['excerpt_hash'] != _sha(row['excerpt'].encode()):
             raise RecordError(f"Anchor {row['id']}: excerpt hash mismatch.")
-        excerpt, checked = _binding(row['locator'], file, row['id'])
+        excerpt, checked = _binding(row['locator'], file, row['id'], sources)
         # PDF extraction can vary between shared reader versions. Retain the
         # captured transcription; exact text ranges remain mechanically bound.
         if 'start_line' in row['locator'] and row['excerpt'] != excerpt:
@@ -945,7 +1102,7 @@ def validate_records(data):
             _text(decl['kind'], 'Inventory kind')
             if decl['file_id'] not in file_map or decl['kind'] not in MAJOR_KINDS:
                 raise RecordError('Inventory declaration: unknown source file or kind.')
-            _binding({'start_line': decl['start_line'], 'end_line': decl['end_line']}, file_map[decl['file_id']], 'Inventory declaration')
+            _binding({'start_line': decl['start_line'], 'end_line': decl['end_line']}, file_map[decl['file_id']], 'Inventory declaration', sources)
             for field in ('labels', 'item_ids'):
                 for val in _rows(decl[field], 'Inventory ' + field):
                     _text(val, 'Inventory ' + field)
@@ -958,12 +1115,13 @@ def validate_records(data):
     return result
 
 
-def _relocate_exact(anchor, file):
+def _relocate_exact(anchor, file, sources=None):
     """Move a line locator only on an exact unique whole-line excerpt match."""
     locator = anchor['locator']
     if not file or file['media_type'] == 'application/pdf' or 'start_line' not in locator or not anchor['excerpt'].strip():
         return
-    lines = _source_text(file).splitlines()
+    sources = sources if sources is not None else _SourceContent()
+    lines = sources.lines(file)
     prior = anchor['excerpt'].splitlines()
     start, end = locator['start_line'], locator['end_line']
     if lines[start - 1:end] == prior:
@@ -976,7 +1134,8 @@ def _relocate_exact(anchor, file):
 
 
 def refresh_sources(data, base_dir, extra_files=(), anchor_locations=None, relocate_exact=False, file_map=None):
-    original = validate_records(data)
+    sources = _SourceContent()
+    original = _validate_records(data, sources)
     result = copy.deepcopy(original)
     old_source = original['source_revision']
     renames = {} if file_map is None else file_map
@@ -1019,15 +1178,15 @@ def refresh_sources(data, base_dir, extra_files=(), anchor_locations=None, reloc
             raise RecordError(f"Anchor {anchor['id']}: its source was removed. Remove the unused anchor or rebind it explicitly with --anchors before refreshing.")
         try:
             if relocate_exact and anchor['id'] not in locations:
-                _relocate_exact(anchor, file)
-            excerpt, verification = _binding(anchor['locator'], file, anchor['id'])
+                _relocate_exact(anchor, file, sources)
+            excerpt, verification = _binding(anchor['locator'], file, anchor['id'], sources)
         except RecordError as exc:
             raise RecordError(f"{exc} Supply corrected locations using refresh --anchors reanchors.json; the existing database snapshot is preserved.") from exc
         anchor.update(source_revision=identity, excerpt=excerpt, excerpt_hash=_sha(excerpt.encode()), verification=verification)
-    result['inventory'] = _inventory(result['source_revision'], result['items'], result['anchors'], unresolved)
+    result['inventory'] = _inventory(result['source_revision'], result['items'], result['anchors'], unresolved, sources)
     result['inventory']['excluded'] = original.get('inventory', {}).get('excluded', [])
     result.pop('snapshot_id', None)
-    return validate_records(result)
+    return _validate_records(result, sources)
 
 
 def make_anchor(data, locator, file_id=None, identity=None):
@@ -1047,14 +1206,15 @@ def make_anchor(data, locator, file_id=None, identity=None):
 
 def update_inventory(data):
     """Recompute declaration links after item edits, retaining stated limitations."""
+    sources = _SourceContent()
     result = copy.deepcopy(data)
     prior = result.pop('inventory', {})
     result.pop('snapshot_id', None)
-    result = validate_records(result)
-    result['inventory'] = _inventory(result['source_revision'], result['items'], result['anchors'], prior.get('unresolved', []))
+    result = _validate_records(result, sources)
+    result['inventory'] = _inventory(result['source_revision'], result['items'], result['anchors'], prior.get('unresolved', []), sources)
     result['inventory']['excluded'] = prior.get('excluded', [])
     result.pop('snapshot_id', None)
-    return validate_records(result)
+    return _validate_records(result, sources)
 
 
 def _digest_row(row):
@@ -1108,7 +1268,11 @@ def target_digest(data, collection, identity):
 
 
 def make_observations(data, requests, reviewer, note='', result='matched'):
-    data = validate_records(data)
+    return _make_observations_validated(validate_records(data), requests, reviewer, note, result)
+
+
+def _make_observations_validated(data, requests, reviewer, note='', result='matched'):
+    """Create observations from a snapshot checked at the public operation boundary."""
     _text(reviewer, 'Reviewer')
     _text(note, 'Comparison note', empty=True)
     _text(result, 'Comparison result')
@@ -1123,33 +1287,66 @@ def make_observations(data, requests, reviewer, note='', result='matched'):
     return observations
 
 
-def applicable_observations(data):
-    """Newest observation for the exact input, falling back to stale history."""
+def _comparison_state(data, targets=()):
+    """Derive comparison results once for this snapshot operation.
+
+    Only reviewed rows and explicitly requested targets need a digest. The
+    returned digests belong to this call, never to a mutable or later snapshot.
+    """
+    requested = set(targets)
     history = {}
     for observation in data['observations']:
         key = observation['target']['collection'], observation['target']['id']
         history.setdefault(key, []).append(observation)
-    applicable = []
+    applicable, fidelity, digests = [], {}, {}
     for collection in ('items', 'uses'):
         for row in data[collection]:
-            candidates = history.get((collection, row['id']), [])
+            key = collection, row['id']
+            candidates = history.get(key, [])
+            if candidates or key in requested:
+                digests[key] = target_digest(data, collection, row['id'])
             if not candidates:
+                fidelity[key] = 'unreviewed'
                 continue
-            identity = target_digest(data, collection, row['id'])
-            applicable.append(next((o for o in reversed(candidates) if o['input_snapshot'] == identity), candidates[-1]))
-    return applicable
+            identity = digests[key]
+            observation = next((o for o in reversed(candidates) if o['input_snapshot'] == identity), candidates[-1])
+            applicable.append(observation)
+            fidelity[key] = observation['result'] if observation['input_snapshot'] == identity else 'stale'
+    return applicable, fidelity, digests
+
+
+def applicable_observations(data):
+    """Newest observation for the exact input, falling back to stale history."""
+    return _comparison_state(data)[0]
 
 
 def fidelity_by_row(data):
     """Per-row review fidelity: newest applicable observation, else stale or unreviewed."""
-    latest = {(o['target']['collection'], o['target']['id']): o for o in applicable_observations(data)}
-    fidelity = {}
-    for collection in ('items', 'uses'):
-        for row in data[collection]:
-            observation = latest.get((collection, row['id']))
-            fidelity[(collection, row['id'])] = 'unreviewed' if observation is None else (
-                'stale' if observation['input_snapshot'] != target_digest(data, collection, row['id']) else observation['result'])
-    return fidelity
+    return _comparison_state(data)[1]
+
+
+def validate_focused_authoring(data):
+    """Check the focused subset of already validated native records.
+
+    This authoring policy is separate from the portable record contract and
+    its comparison digests. Older records remain losslessly readable.
+    """
+    main = data.get('main_items')
+    if not main:
+        raise RecordError('Focused overview needs explicit nonempty main_items identifying its main results.')
+    for item in data['items']:
+        if item['kind'] not in MAJOR_KINDS or item.get('owner') is not None:
+            raise RecordError(f"Focused overview item {item['id']}: select major statements; intermediate kinds and owner are outside this authoring profile.")
+    for use in data['uses']:
+        if use.get('group') is not None:
+            raise RecordError(f"Focused overview use {use['id']}: describe combined or alternative contributions in reason/regime, without a formal group.")
+    unlocated = {use['id'] for use in data['uses'] if not use['evidence_refs']}
+    if unlocated:
+        fidelity = fidelity_by_row(data)
+        matched = sorted(identity for identity in unlocated if fidelity[('uses', identity)] == 'matched')
+        if matched:
+            raise RecordError('Focused overview connections without located evidence cannot be source matched: '
+                              + ', '.join(matched) + '. Locate the supporting passage or record needs_attention; imported observations are not changed.')
 
 
 def comparison_status(data, fidelity=None):
@@ -1158,7 +1355,23 @@ def comparison_status(data, fidelity=None):
               'total': len(data['items']) + len(data['uses'])}
     for status in fidelity.values():
         counts[status] += 1
-    return {'status': 'complete' if counts['matched'] == counts['total'] else 'incomplete', **counts}
+    if not counts['total']:
+        summary = 'No records are available for source comparison.'
+    elif not counts['unreviewed'] and not counts['stale']:
+        summary = f"All {counts['total']} records reviewed for this version"
+        summary += (f"; {counts['needs_attention']} records have unresolved source questions."
+                    if counts['needs_attention'] else '; no source-comparison questions remain unresolved.')
+    else:
+        summary = f"{counts['matched'] + counts['needs_attention']} of {counts['total']} records reviewed for this version"
+        if counts['unreviewed']:
+            summary += f"; {counts['unreviewed']} not yet reviewed"
+        if counts['stale']:
+            summary += f"; {counts['stale']} need review after changes"
+        if counts['needs_attention']:
+            summary += f"; {counts['needs_attention']} reviewed records have unresolved source questions"
+        summary += '.'
+    return {'status': 'complete' if counts['matched'] == counts['total'] else 'incomplete', **counts,
+            'summary': summary}
 
 
 def source_status(data, base_dir):
@@ -1172,36 +1385,68 @@ def source_status(data, base_dir):
                 'current' if statuses else 'unregistered')
 
 
-def record_report(data, base_dir):
+def _graph_cycles(items, uses):
+    """Locate strongly connected major-item groups without changing any use."""
+    rows = {row['id']: row for row in items if row['kind'] in MAJOR_KINDS}
+    outgoing, incoming = {key: [] for key in rows}, {key: [] for key in rows}
+    graph_uses = [use for use in uses if use['from'] in rows and use['to'] in rows]
+    for use in graph_uses:
+        outgoing[use['from']].append(use['to'])
+        incoming[use['to']].append(use['from'])
+    # Iterative depth-first traversal avoids a recursion limit on larger papers.
+    seen, finished = set(), []
+    for start in rows:
+        if start in seen:
+            continue
+        seen.add(start)
+        stack = [(start, iter(outgoing[start]))]
+        while stack:
+            node, targets = stack[-1]
+            target = next(targets, None)
+            if target is None:
+                finished.append(node)
+                stack.pop()
+            elif target not in seen:
+                seen.add(target)
+                stack.append((target, iter(outgoing[target])))
+    assigned, groups = set(), []
+    order = {key: index for index, key in enumerate(rows)}
+    for start in reversed(finished):
+        if start in assigned:
+            continue
+        members = [start]
+        assigned.add(start)
+        for node in members:
+            for target in incoming[node]:
+                if target not in assigned:
+                    assigned.add(target)
+                    members.append(target)
+        members.sort(key=order.__getitem__)
+        member_ids = set(members)
+        internal = [use for use in graph_uses if use['from'] in member_ids and use['to'] in member_ids]
+        if len(members) > 1 or internal:
+            groups.append({'item_ids': members, 'item_labels': [rows[key]['label'] for key in members],
+                           'use_ids': [use['id'] for use in internal]})
+    return sorted(groups, key=lambda group: order[group['item_ids'][0]])
+
+
+def record_report(data, base_dir, fidelity=None):
     """Structural/source diagnostics for validated records, without math rendering."""
     report = {'warnings': []}
-    major_ids = {row['id'] for row in data['items'] if row['kind'] in MAJOR_KINDS}
-    # Layout constraints do not invalidate the paper dataset. The cycle check
-    # consumes graph edges only; detail edges never affect the layout (R4b).
-    incoming = {key: 0 for key in major_ids}
-    outgoing = {key: [] for key in major_ids}
-    for use in data['uses']:
-        if use['from'] not in major_ids or use['to'] not in major_ids:
-            continue
-        incoming[use['to']] += 1
-        outgoing[use['from']].append(use['to'])
-    ready = [key for key in incoming if incoming[key] == 0]
-    for key in ready:
-        for target in outgoing[key]:
-            incoming[target] -= 1
-            if not incoming[target]:
-                ready.append(target)
-    report['graph_mode'] = 'dag' if len(ready) == len(incoming) else 'index'
-    if report['graph_mode'] == 'index':
-        report['warnings'].append('The combined dependency map contains a cycle. All items and uses are retained in the index; this layout limitation does not establish a circular proof. Compare the directions and alternative regimes with the manuscript.')
+    # A cycle is a property of the recorded major-item map, not a proof verdict.
+    # Intermediate annotations never enter this display-only analysis.
+    report['graph_cycles'] = _graph_cycles(data['items'], data['uses'])
+    report['graph_mode'] = 'cyclic' if report['graph_cycles'] else 'dag'
+    if report['graph_cycles']:
+        report['warnings'].append('The recorded dependency map contains a cycle. The graph retains all items and arrows in their recorded directions. Inspect the identified connections and source passages; a cycle alone does not establish a circular proof.')
     freshness = source_status(data, base_dir)
     if freshness != 'current':
         report['warnings'].append({'historical_changed': 'The live manuscript differs from this captured source version. This overview displays historical records; refresh and compare them before calling it current.',
                                      'historical_unavailable': 'Some live source files are unavailable. This overview uses its captured historical source version.',
                                      'unregistered': 'No source files are registered. Entered locators and completeness need source comparison.'}[freshness])
-    status = comparison_status(data)
+    status = comparison_status(data, fidelity)
     if status['status'] != 'complete':
-        report['warnings'].append(f"Source comparison is incomplete: {status['unreviewed']} records unreviewed, {status['stale']} comparisons stale, {status['needs_attention']} needing attention. These are overview comparisons, not proof verdicts.")
+        report['warnings'].append(status['summary'] + ' These are overview comparisons, not proof verdicts.')
     unlocated = sorted(row['id'] for row in data['uses'] if not row['evidence_refs'])
     report['uses_without_evidence'] = unlocated
     if unlocated:
@@ -1229,15 +1474,16 @@ def record_report(data, base_dir):
         report['warnings'].append(f"{summary}; {unverified} anchors still have locator details requiring source comparison{details}. Location checks do not establish that a passage states the recorded claim.")
     inventory = data.get('inventory', {})
     missing = sum(not d['item_ids'] for d in inventory.get('declarations', []))
-    if missing:
-        report['warnings'].append(f"{missing} detected declarations are not matched to overview items. Check the selected scope and candidate inventory.")
+    # This is a selected map. Unselected declarations are discovery context,
+    # not a missing-record warning or a requirement to expand its scope.
     report['warnings'].extend(inventory.get('unresolved', []))
     report['warnings'].extend('Scope exclusion: ' + note for note in inventory.get('excluded', []))
     report['build_context'] = {'input_snapshot': data['snapshot_id'], 'source_revision': data['source_revision']['id'],
                                  'source_status': freshness, 'source_comparison': status,
-                                 'citation_candidates': citation_summary(data),
+                                 'citation_candidates': _citation_summary_validated(data),
                                  'mathematical_assessment': 'not_performed'}
     report['inventory'] = {k: v for k, v in inventory.items() if k != 'declarations'}
+    report['inventory']['unselected_declarations'] = missing
     return report
 
 
@@ -1249,7 +1495,11 @@ def prepare_records(data, base_dir):
     detail uses (at least one intermediate endpoint). Detail rows and edges
     never enter the layout, the cycle check, or the terminal selection.
     """
-    data = validate_records(data)
+    return _prepare_records_validated(validate_records(data), base_dir)
+
+
+def _prepare_records_validated(data, base_dir):
+    """Project an already validated snapshot without repeating source extraction."""
     files = {f['id']: f for f in data['source_revision']['files']}
     anchors = {a['id']: a for a in data['anchors']}
     prepared = {'schema_version': 3, 'title': data['title'], 'scope': data['scope'],
@@ -1280,6 +1530,9 @@ def prepare_records(data, base_dir):
         row['statement'] = row['statement']['text']
         row['statement_diagnostics'] = []
         row['statement_html'] = render_text(row['statement'], diagnostics=row['statement_diagnostics'])
+        if row.get('issue'):
+            row['issue_diagnostics'] = []
+            row['issue_html'] = render_text(row['issue'], diagnostics=row['issue_diagnostics'])
         row['source_passages'] = [passage(p['anchor_id'], p['role']) for p in row['passages']]
         primary = next((p for p in row['source_passages'] if p['role'] == 'statement'), row['source_passages'][0])
         row.update({k: primary[k] for k in ('source_display', 'source_excerpt')})
@@ -1290,6 +1543,10 @@ def prepare_records(data, base_dir):
         row = copy.deepcopy(use)
         row['reason_diagnostics'] = []
         row['reason_html'] = render_text(row['reason'], diagnostics=row['reason_diagnostics'])
+        for field in ('regime', 'issue'):
+            if row.get(field):
+                row[field + '_diagnostics'] = []
+                row[field + '_html'] = render_text(row[field], diagnostics=row[field + '_diagnostics'])
         row['source_passages'] = [passage(a, 'evidence') for a in row['evidence_refs']]
         if row['source_passages']:
             row.update({k: row['source_passages'][0][k] for k in ('source_display', 'source_excerpt')})
@@ -1306,14 +1563,18 @@ def prepare_records(data, base_dir):
         prepared[target].append(row)
     if 'main_items' in data:
         prepared['main_items'] = data['main_items'][:]
-    prepared.update(record_report(data, base_dir))
+    prepared.update(record_report(data, base_dir, fidelity))
     diagnostics = []
     for row in prepared['items'] + prepared['details'] + prepared['uses'] + prepared['detail_uses']:
-        for field in ('statement', 'reason'):
+        for field in ('statement', 'reason', 'regime', 'issue'):
             for entry in row.get(field + '_diagnostics', []):
                 diagnostics.append({'collection': 'items' if 'kind' in row else 'uses',
                                     'id': row['id'], 'field': field, **entry})
             row.pop(field + '_diagnostics', None)
+    scope_diagnostics = []
+    prepared['scope_display'] = render_scope(data['scope'], diagnostics=scope_diagnostics)
+    diagnostics.extend({'collection': 'metadata', 'id': 'overview', 'field': 'scope', **entry}
+                       for entry in scope_diagnostics)
     prepared['math_diagnostics'] = diagnostics
     if diagnostics:
         located = '; '.join(f"{entry['id']} ({entry['field']}): {entry['reason']}" for entry in diagnostics[:5])

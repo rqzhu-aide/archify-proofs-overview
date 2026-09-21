@@ -26,8 +26,8 @@ OverviewError = RecordError
 
 def validate_data(data: dict, base_dir: Path) -> dict:
     """Validate native records and prepare their renderer projection."""
-    from paper_records import normalize, prepare_records
-    return prepare_records(normalize(data, base_dir), base_dir)
+    from paper_records import normalize, _prepare_records_validated
+    return _prepare_records_validated(normalize(data, base_dir), base_dir)
 
 
 def _unique_object(pairs):
@@ -113,14 +113,14 @@ def _accept_artifact(prepared, html, receipt, input_bytes):
         raise OverviewError('Viewer artifact has missing or invalid record metadata; the previous output was preserved.') from exc
     if parser.metadata_count != 1 or not isinstance(metadata, dict):
         raise OverviewError('Viewer artifact must contain exactly one canonical record projection; the previous output was preserved.')
-    for key in ('items', 'uses', 'details', 'detail_uses', 'build_context', 'graph_mode'):
+    for key in ('items', 'uses', 'details', 'detail_uses', 'build_context', 'graph_mode', 'graph_cycles'):
         if metadata.get(key) != prepared.get(key):
             raise OverviewError(f'Viewer artifact changed the prepared {key}; the previous output was preserved.')
     expected_nodes = sorted(item['id'] for item in prepared['items'])
     expected_uses = sorted((use['id'], use['from'], use['to']) for use in prepared['uses'])
     if sorted(parser.index_nodes) != expected_nodes or sorted(parser.index_uses) != expected_uses:
         raise OverviewError('Viewer statement index omitted, duplicated, or substituted an item or use; the previous output was preserved.')
-    if prepared['graph_mode'] == 'dag' and (sorted(parser.nodes) != expected_nodes or sorted(parser.uses) != expected_uses):
+    if prepared['graph_mode'] != 'index' and (sorted(parser.nodes) != expected_nodes or sorted(parser.uses) != expected_uses):
         raise OverviewError('Viewer graph omitted, duplicated, or substituted an item or use; the previous output was preserved.')
     expected_details = sorted(row['id'] for row in prepared['details'])
     expected_detail_uses = sorted((use['id'], use['from'], use['to']) for use in prepared['detail_uses'])
@@ -135,7 +135,7 @@ def _accept_artifact(prepared, html, receipt, input_bytes):
         endpoint = start if start in owners else end
         if article != owners[endpoint]:
             raise OverviewError('Viewer placed a detail use outside its owner context; the previous output was preserved.')
-    expected_geometry = 'pass' if prepared['graph_mode'] == 'dag' else 'not_applicable'
+    expected_geometry = 'not_applicable' if prepared['graph_mode'] == 'index' else 'pass'
     if not isinstance(receipt.get('geometry'), dict) or receipt['geometry'].get('status') != expected_geometry:
         raise OverviewError('Viewer geometry checks did not complete successfully; the previous output was preserved.')
     return {'status': 'pass', 'representation': prepared['graph_mode'],
@@ -155,11 +155,18 @@ def _renderer_version():
 
 def render_dataset(data: dict, base_dir: Path, output_path: Path, protected_paths=()) -> dict:
     """Render one immutable exported snapshot, independent of its storage backend."""
-    from paper_records import normalize, prepare_records, source_status
+    from paper_records import normalize
     started = time.perf_counter()
-    base_dir, output_path = Path(base_dir).resolve(), Path(output_path).resolve()
     canonical = normalize(data, base_dir)
-    prepared = prepare_records(canonical, base_dir)
+    return _render_validated_dataset(canonical, base_dir, output_path, protected_paths, started)
+
+
+def _render_validated_dataset(canonical, base_dir, output_path, protected_paths=(), started=None):
+    """Render input validated by the file or database entry point, without edits."""
+    from paper_records import _prepare_records_validated, source_status
+    started = time.perf_counter() if started is None else started
+    base_dir, output_path = Path(base_dir).resolve(), Path(output_path).resolve()
+    prepared = _prepare_records_validated(canonical, base_dir)
     version = _renderer_version()
     prepared['build_context']['renderer_version'] = version
     protected = {Path(p).resolve() for p in protected_paths}
@@ -203,6 +210,7 @@ def render_dataset(data: dict, base_dir: Path, output_path: Path, protected_path
             "math_diagnostics": prepared.get("math_diagnostics", []),
             **prepared['build_context'], 'graph_preservation': preservation,
             'geometry': renderer_receipt['geometry'], 'graph_mode': prepared['graph_mode'],
+            'graph_cycles': prepared['graph_cycles'],
             'browser_review': 'not_performed', 'visual_review': 'not_performed'}
 
 
@@ -227,7 +235,7 @@ def main() -> int:
             data = normalize(load_data(args.dataset), base)
             report = record_report(data, base)
             result = {"valid": True, "items": len(data["items"]), "uses": len(data["uses"]), "warnings": report["warnings"],
-                      'graph_mode': report['graph_mode'], **report['build_context']}
+                      'graph_mode': report['graph_mode'], 'graph_cycles': report['graph_cycles'], **report['build_context']}
         else:
             result = render_file(args.dataset, args.output)
         print(json.dumps(result, ensure_ascii=False, indent=2))

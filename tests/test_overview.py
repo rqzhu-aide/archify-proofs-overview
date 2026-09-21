@@ -128,13 +128,13 @@ class OverviewTests(unittest.TestCase):
         self.data["uses"].append(deepcopy(self.data["uses"][0]))
         self.assert_invalid(self.data, "duplicate")
 
-    def test_circular_dependency_keeps_all_records_in_index_mode(self):
+    def test_circular_dependency_keeps_all_records_in_cyclic_graph_mode(self):
         self.data["uses"].append({
             "from": "mean-variance", "to": "finite-variance",
             "reason": "An intentionally circular fixture.",
         })
         prepared = overview.validate_data(self.data, self.base)
-        self.assertEqual(prepared["graph_mode"], "index")
+        self.assertEqual(prepared["graph_mode"], "cyclic")
         self.assertEqual([item["label"] for item in prepared["items"]], ["Assumption 1", "Thm 2.3"])
         self.assertEqual(len(prepared["uses"]), 2)
         self.assertTrue(any("cycle" in warning for warning in prepared["warnings"]))

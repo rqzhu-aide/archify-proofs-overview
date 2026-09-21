@@ -60,8 +60,8 @@ function preparedDataset(input) {
   }
   const useIds = new Set();
   const uses = input.uses.map((use, index) => {
-    if (!use || !ids.has(use.from) || !ids.has(use.to) || !use.reason || (use.from === use.to && input.graph_mode !== 'index')) {
-      throw new Error(`Dependency ${index + 1} needs valid endpoints and a reason; self references require index mode.`);
+    if (!use || !ids.has(use.from) || !ids.has(use.to) || !use.reason) {
+      throw new Error(`Dependency ${index + 1} needs valid endpoints and a reason.`);
     }
     const id = use.id || `use-${index + 1}`;
     if (!/^[a-zA-Z][a-zA-Z0-9_.:-]*$/.test(id) || useIds.has(id)) throw new Error('Dependency identifiers must be safe and unique.');
@@ -88,7 +88,7 @@ function preparedDataset(input) {
   const detailUses = input.detail_uses.map((use, index) => {
     // An intermediate row may reference itself: the edge stays an annotation
     // in its owner's panel and never enters the graph. The major-major check
-    // below still rejects a self reference between two (identical) major items.
+    // below keeps every major-major reference in the visible graph.
     if (!use || !endpoints.has(use.from) || !endpoints.has(use.to) || !use.reason) {
       throw new Error(`Detail use ${index + 1} needs endpoints among items and details, and a reason.`);
     }
@@ -116,7 +116,7 @@ function preparedDataset(input) {
     groupKinds.set(use.group.id, use.group.kind);
   }
   if (input.main_items !== undefined && (!Array.isArray(input.main_items) || !input.main_items.length || new Set(input.main_items).size !== input.main_items.length || input.main_items.some((id) => !ids.has(id)))) throw new Error('main_items must contain distinct existing item identifiers.');
-  if (input.graph_mode !== undefined && !['dag', 'index'].includes(input.graph_mode)) throw new Error('graph_mode must be dag or index.');
+  if (input.graph_mode !== undefined && !['dag', 'cyclic', 'index'].includes(input.graph_mode)) throw new Error('graph_mode must be dag, cyclic or index.');
   if (input.math_diagnostics !== undefined && (!Array.isArray(input.math_diagnostics) || input.math_diagnostics.some((entry) => !entry || typeof entry.id !== 'string' || typeof entry.field !== 'string' || typeof entry.reason !== 'string' || typeof entry.excerpt !== 'string'))) throw new Error('math_diagnostics entries need id, field, excerpt, and reason strings.');
   return { ...input, uses, details, detail_uses: detailUses };
 }
@@ -138,26 +138,64 @@ function indexGraph(data) {
   return { nodes, incoming, outgoing, ...detailIndex(data) };
 }
 
-// Longest-path layers preserve prerequisite direction. Ordering uses stable
-// barycentres, never changes the graph, and needs no authored coordinates.
+// Strongly connected groups determine layout ranks only. All authored nodes
+// and directed uses remain separate; no edge is removed or reversed.
+function stronglyConnected(nodes, incoming, outgoing) {
+  const seen = new Set(), finished = [];
+  for (const start of nodes.keys()) {
+    if (seen.has(start)) continue;
+    seen.add(start);
+    const stack = [{ id: start, index: 0 }];
+    while (stack.length) {
+      const frame = stack.at(-1), uses = outgoing.get(frame.id);
+      if (frame.index >= uses.length) { finished.push(frame.id); stack.pop(); continue; }
+      const target = uses[frame.index++].to;
+      if (!seen.has(target)) { seen.add(target); stack.push({ id: target, index: 0 }); }
+    }
+  }
+  const assigned = new Set(), groups = [];
+  for (const start of finished.reverse()) {
+    if (assigned.has(start)) continue;
+    const members = [start]; assigned.add(start);
+    for (let index = 0; index < members.length; index += 1) {
+      for (const use of incoming.get(members[index])) {
+        if (!assigned.has(use.from)) { assigned.add(use.from); members.push(use.from); }
+      }
+    }
+    members.sort((a, b) => nodes.get(a).order - nodes.get(b).order);
+    groups.push({ members, rank: 0, incoming: 0, outgoing: [] });
+  }
+  return groups;
+}
+
+// DAGs retain their existing longest-path layers and stable barycentres.
+// Cyclic groups expand into stable columns with exterior lanes for return uses.
 function layoutGraph(data) {
   const nodes = new Map(data.items.map((item, order) => [item.id, { ...item, order, rank: 0 }]));
   const incoming = new Map(data.items.map((item) => [item.id, []]));
   const outgoing = new Map(data.items.map((item) => [item.id, []]));
   data.uses.forEach((use) => { incoming.get(use.to).push(use); outgoing.get(use.from).push(use); });
-  const remaining = new Map([...incoming].map(([id, uses]) => [id, uses.length]));
-  const queue = data.items.filter((item) => !remaining.get(item.id)).map((item) => item.id);
-  let visited = 0;
+  const groups = stronglyConnected(nodes, incoming, outgoing), groupOf = new Map();
+  groups.forEach((group) => group.members.forEach((id) => groupOf.set(id, group)));
+  for (const use of data.uses) {
+    const from = groupOf.get(use.from), to = groupOf.get(use.to);
+    if (from !== to) { from.outgoing.push(to); to.incoming += 1; }
+  }
+  const queue = groups.filter((group) => !group.incoming);
   for (let index = 0; index < queue.length; index += 1) {
-    const id = queue[index];
-    visited += 1;
-    for (const use of outgoing.get(id)) {
-      nodes.get(use.to).rank = Math.max(nodes.get(use.to).rank, nodes.get(id).rank + 1);
-      remaining.set(use.to, remaining.get(use.to) - 1);
-      if (!remaining.get(use.to)) queue.push(use.to);
+    const group = queue[index];
+    group.members.forEach((id, offset) => { nodes.get(id).rank = group.rank + offset; });
+    for (const target of group.outgoing) {
+      target.rank = Math.max(target.rank, group.rank + group.members.length);
+      target.incoming -= 1;
+      if (!target.incoming) queue.push(target);
     }
   }
-  if (visited !== nodes.size) throw new Error('Dependencies contain a cycle. Review the recorded uses before rendering.');
+  const cycles = groups.filter((group) => group.members.length > 1 || outgoing.get(group.members[0]).some((use) => use.to === group.members[0])).map((group) => {
+    const members = new Set(group.members);
+    return { item_ids: group.members, item_labels: group.members.map((id) => nodes.get(id).label),
+      use_ids: data.uses.filter((use) => members.has(use.from) && members.has(use.to)).map((use) => use.id) };
+  }).sort((a, b) => nodes.get(a.item_ids[0]).order - nodes.get(b.item_ids[0]).order);
   // Independent connected arguments occupy separate bands. Within a band,
   // integral rows leave shared clear corridors for skipped-layer connections.
   const components = [], assigned = new Set();
@@ -184,12 +222,16 @@ function layoutGraph(data) {
         ranks[r].forEach((node, index) => { node.position = index; });
       }
     }
-    components.push({ members, ranks, rowCount: Math.max(...ranks.map((rank) => rank.length)) });
+    const memberIds = new Set(ids);
+    const returns = data.uses.filter((use) => memberIds.has(use.from) && nodes.get(use.to).rank <= nodes.get(use.from).rank);
+    components.push({ members, ranks, returns, rowCount: Math.max(...ranks.map((rank) => rank.length)) });
   });
   const longUses = data.uses.filter((use) => nodes.get(use.to).rank > nodes.get(use.from).rank + 1);
   let top = box.margin;
   components.forEach((component, componentIndex) => {
-    component.top = top; component.nodeTop = top + (components.length > 1 ? 32 : 0);
+    component.top = top;
+    component.laneTop = top + (components.length > 1 ? 32 : 0);
+    component.nodeTop = component.laneTop + (component.returns.length ? 24 + component.returns.length * 10 : 0);
     component.ranks.forEach((rank, r) => rank.forEach((node, index) => {
       node.x = box.margin + r * box.column;
       node.y = component.nodeTop + index * box.row;
@@ -200,7 +242,7 @@ function layoutGraph(data) {
   });
   const rankCount = Math.max(...components.map((component) => component.ranks.length));
   return {
-    nodes, components, incoming, outgoing, longUses, ...detailIndex(data),
+    nodes, components, incoming, outgoing, longUses, cycles, ...detailIndex(data),
     width: box.margin * 2 + (rankCount - 1) * box.column + box.w,
     height: top - 68 + box.margin,
   };
@@ -225,6 +267,13 @@ function edgePoints(use, graph) {
   const outs = graph.outgoing.get(a.id), ins = graph.incoming.get(b.id);
   const port = (node, records) => node.y + 13 + (records.indexOf(use) + 1) / (records.length + 1) * (box.h - 26);
   const start = [a.x + box.w, port(a, outs)], end = [b.x, port(b, ins)];
+  if (b.rank <= a.rank) {
+    const component = graph.components[a.component], lane = component.returns.indexOf(use);
+    const rail = component.laneTop + 10 + lane * 10;
+    const exit = start[0] + 12 + (outs.indexOf(use) + 1) / (outs.length + 1) * 12;
+    const enter = end[0] - 12 - (ins.indexOf(use) + 1) / (ins.length + 1) * 12;
+    return [start, [exit, start[1]], [exit, rail], [enter, rail], [enter, end[1]], end];
+  }
   const longIndex = graph.longUses.indexOf(use);
   if (longIndex >= 0) {
     const component = graph.components[a.component];
@@ -299,6 +348,8 @@ function renderQualifiers(qualifiers, graph) {
 
 function renderSvg(data, graph) {
   const qualifiers = [];
+  const cycleUses = new Set(graph.cycles.flatMap((group) => group.use_ids));
+  const cycleItems = new Set(graph.cycles.flatMap((group) => group.item_ids));
   const edges = data.uses.map((use, index) => {
     const points = edgePoints(use, graph);
     const issued = Boolean(use.issue);
@@ -306,7 +357,7 @@ function renderSvg(data, graph) {
     // R3 badge fallback: grouped uses keep their own paths and disclose the
     // group with a badge; the forked single-arrowhead connector spike is
     // deferred. Every use id therefore appears exactly once in the SVG.
-    const qualification = `${useTypes[use.type]}${use.regime ? `; only in regime: ${use.regime}` : ''}${group ? `; ${group.kind === 'joint' ? 'required jointly' : 'alternative case'}: ${group.id}` : ''}`;
+    const qualification = `${useTypes[use.type]}${use.regime ? `; only in regime: ${use.regime}` : ''}${group ? `; ${group.kind === 'joint' ? 'required jointly' : 'alternative case'}: ${group.id}` : ''}${cycleUses.has(use.id) ? '; part of a recorded cycle' : ''}`;
     const description = `${graph.nodes.get(use.from).label} to ${graph.nodes.get(use.to).label}. ${qualification}: ${use.reason}${issued ? ` Issue: ${use.issue}` : ''}`;
     if (use.type !== 'dependency' || use.regime || group) {
       const labels = [use.type !== 'dependency' ? useTypes[use.type] : '', use.regime ? `If: ${use.regime}` : '', group ? `${group.kind === 'joint' ? 'Joint' : 'Case'}: ${group.id}` : ''].filter(Boolean).map((label) => textUnits(label) > 17 ? `${label.slice(0, 15)}…` : label);
@@ -317,7 +368,7 @@ function renderSvg(data, graph) {
   const nodes = [...graph.nodes.values()].map((node) => {
     const caption = captionLines(node.caption), cx = node.x + box.w / 2;
     const labelSize = Math.max(12, Math.min(14, 150 / Math.max(1, textUnits(node.label)) / 0.61));
-    const aria = `${node.label}. ${node.caption || kinds[node.kind][0]}. Select for full statement and dependencies.`;
+    const aria = `${node.label}. ${node.caption || kinds[node.kind][0]}. Select for statement and connections.`;
     return `<g id="node-${esc(node.id)}" data-node-id="${esc(node.id)}" data-node-kind="${esc(node.kind)}" data-node-label="${esc(node.label)}" data-node-sublabel="${esc(node.caption || '')}" data-node-context="${esc(node.source_display || '')}" tabindex="0" role="button" aria-pressed="false" aria-label="${esc(aria)}">
       <title>${esc(`${node.label}: ${node.caption || ''}`)}</title>
       <rect x="${node.x}" y="${node.y}" width="${box.w}" height="${box.h}" rx="6" class="c-mask"/>
@@ -328,11 +379,12 @@ function renderSvg(data, graph) {
   }).join('\n');
   const qualifierSvg = renderQualifiers(qualifiers, graph);
   return `<svg viewBox="0 0 ${graph.width} ${graph.height}" role="img" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="standard">
-    <title id="archify-diagram-title">${esc(data.title)}</title><desc id="archify-diagram-description">Major mathematical items and their recorded prerequisite uses. This overview does not certify the proof.</desc>
+    <title id="archify-diagram-title">${esc(data.title)}</title><desc id="archify-diagram-description">Selected main results, important prerequisites, and their recorded connections. This overview does not certify the proof.</desc>
     <defs><marker id="proof-arrow" markerWidth="8" markerHeight="6" refX="7.2" refY="3" orient="auto"><path d="M0 0 L8 3 L0 6 Z" class="proof-arrowhead"/></marker><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0 L0 0 0 40" class="c-grid" stroke-width="0.5"/></pattern></defs>
     <rect width="100%" height="100%" fill="url(#grid)"/>
     ${graph.components.length > 1 ? graph.components.map((component) => {
-      const ends = component.members.filter((node) => !graph.outgoing.get(node.id).length).map((node) => node.label);
+      const terminal = component.members.filter((node) => !graph.outgoing.get(node.id).length);
+      const ends = (terminal.length ? terminal : component.members.filter((node) => cycleItems.has(node.id))).map((node) => node.label);
       return `<g class="proof-component" aria-hidden="true"><path d="M 22 ${component.top + 16} H ${graph.width - 22}"/><text x="${box.margin}" y="${component.top + 9}">Linked argument: ${esc(ends.join(', '))}</text></g>`;
     }).join('') : ''}${edges}${qualifierSvg}${nodes}
   </svg>`;
@@ -347,6 +399,9 @@ function geometryReceipt(data, graph) {
     'geometry/node-clipping': 'A displayed item extends beyond the SVG viewBox.',
     'geometry/node-overlap': 'Two displayed item boxes overlap.',
     'geometry/nonfinite-route': 'A recorded use has a nonfinite route coordinate.',
+    'geometry/route-clipping': 'A recorded use extends beyond the SVG viewBox.',
+    'geometry/route-not-orthogonal': 'A recorded use has an unexpected diagonal route segment.',
+    'geometry/route-endpoint': 'A recorded use does not join its recorded source and target boxes.',
     'geometry/route-through-node': 'A recorded use crosses an unrelated item box.',
   };
   const issue = (code, subject, evidence) => diagnostics.push({ code, severity: 'error', message: messages[code], subject, evidence, supportedFixes: [] });
@@ -367,12 +422,22 @@ function geometryReceipt(data, graph) {
   }
   for (const use of data.uses) {
     const points = edgePoints(use, graph);
+    const source = graph.nodes.get(use.from), target = graph.nodes.get(use.to);
+    const start = points[0], end = points.at(-1);
+    if (start[0] !== source.x + source.width || start[1] <= source.y || start[1] >= source.y + source.height
+        || end[0] !== target.x || end[1] <= target.y || end[1] >= target.y + target.height) {
+      issue('geometry/route-endpoint', { use: use.id }, { start, end });
+    }
     for (let i = 1; i < points.length; i += 1) {
       const [x1, y1] = points[i - 1], [x2, y2] = points[i];
       if (![x1, y1, x2, y2].every(Number.isFinite)) {
         issue('geometry/nonfinite-route', { use: use.id, segment: i - 1 }, {});
         continue;
       }
+      if (x1 < 0 || x1 > graph.width || x2 < 0 || x2 > graph.width || y1 < 0 || y1 > graph.height || y2 < 0 || y2 > graph.height) {
+        issue('geometry/route-clipping', { use: use.id, segment: i - 1 }, { from: points[i - 1], to: points[i] });
+      }
+      if (x1 !== x2 && y1 !== y2) issue('geometry/route-not-orthogonal', { use: use.id, segment: i - 1 }, {});
       for (const node of nodes) {
         if (node.id === use.from || node.id === use.to) continue;
         const horizontal = y1 === y2 && y1 > node.y && y1 < node.y + node.height && Math.max(x1, x2) > node.x && Math.min(x1, x2) < node.x + node.width;
@@ -381,7 +446,7 @@ function geometryReceipt(data, graph) {
       }
     }
   }
-  const checks = ['finite_node_geometry', 'node_overlaps', 'node_clipping', 'finite_route_geometry', 'routes_through_unrelated_nodes'];
+  const checks = ['finite_node_geometry', 'node_overlaps', 'node_clipping', 'finite_route_geometry', 'route_clipping', 'orthogonal_routes', 'recorded_route_endpoints', 'routes_through_unrelated_nodes'];
   return { status: diagnostics.length ? 'fail' : 'pass', checks, diagnostics, limits: 'Computed node boxes and orthogonal route segments only; text, badge placement, rounded corners, browser behavior, and perceptual review are not checked.' };
 }
 
@@ -389,10 +454,10 @@ function representationReceipt(data, html, graphMode) {
   const attributes = (tag) => Object.fromEntries([...tag.matchAll(/([\w:-]+)="([^"]*)"/g)].map((match) => [match[1], match[2]]));
   const nodes = [], uses = [];
   // Inspect the emitted drawing or index, not JSON, templates, or claimed counts.
-  const representation = graphMode === 'dag' ? html.match(/<svg\b[\s\S]*?<\/svg>/)?.[0] || '' : html.match(/<details\b[^>]*id="proof-full-index"[\s\S]*?<\/main>/)?.[0] || '';
-  for (const match of representation.matchAll(graphMode === 'dag' ? /<(?:g|path)\b[^>]*>/g : /<article\b[^>]*>/g)) {
+  const representation = graphMode !== 'index' ? html.match(/<svg\b[\s\S]*?<\/svg>/)?.[0] || '' : html.match(/<details\b[^>]*id="proof-full-index"[\s\S]*?<\/main>/)?.[0] || '';
+  for (const match of representation.matchAll(graphMode !== 'index' ? /<(?:g|path)\b[^>]*>/g : /<article\b[^>]*>/g)) {
     const attrs = attributes(match[0]);
-    if (graphMode === 'dag') {
+    if (graphMode !== 'index') {
       if (Object.hasOwn(attrs, 'data-node-id')) nodes.push(attrs['data-node-id']);
       if (Object.hasOwn(attrs, 'data-edge-id')) uses.push({ id: attrs['data-edge-id'], from: attrs['data-edge-from'], to: attrs['data-edge-to'] });
     } else {
@@ -428,7 +493,7 @@ function representationReceipt(data, html, graphMode) {
     && contained(data.details || [], 'data-proof-detail', (row) => row.owner)
     && contained(data.detail_uses || [], 'data-proof-detail-use', detailUseOwner)
     ? 'pass' : 'fail';
-  return { status, expected_items: data.items.length, rendered_items: nodes.length, expected_uses: data.uses.length, rendered_uses: uses.length, expected_details: expectedDetails.length, rendered_details: details.length, expected_detail_uses: (data.detail_uses || []).length, rendered_detail_uses: detailUses.length, representation: graphMode === 'dag' ? 'svg' : 'index', item_ids: nodes, uses: normalizedUses(uses), detail_ids: details, detail_uses: normalizedUses(detailUses) };
+  return { status, expected_items: data.items.length, rendered_items: nodes.length, expected_uses: data.uses.length, rendered_uses: uses.length, expected_details: expectedDetails.length, rendered_details: details.length, expected_detail_uses: (data.detail_uses || []).length, rendered_detail_uses: detailUses.length, representation: graphMode !== 'index' ? 'svg' : 'index', item_ids: nodes, uses: normalizedUses(uses), detail_ids: details, detail_uses: normalizedUses(detailUses) };
 }
 
 function sourceHtml(record) {
@@ -462,7 +527,7 @@ function fidelityBadgeHtml(fidelity) {
   const labels = {
     unreviewed: 'Not yet compared with the source',
     matched: 'Compared with the source',
-    needs_attention: 'Source comparison needs attention',
+    needs_attention: 'Reviewed; source question unresolved',
     stale: 'Changed since the last comparison',
   };
   return `<span class="proof-fidelity" data-proof-fidelity="${esc(state)}">${esc(labels[state] || state)}</span>`;
@@ -476,13 +541,17 @@ function groupBadgeHtml(group) {
   return `<span class="proof-group">${esc(group.kind === 'joint' ? 'Joint' : 'Case')}: ${esc(group.id)}</span>`;
 }
 
+function issueHtml(row) {
+  return row.issue ? `<div class="proof-uncertainty">Open issue: ${formulaHtml(row.issue_html || esc(row.issue))}</div>` : '';
+}
+
 function relationHtml(use, graph, incoming) {
   const other = graph.nodes.get(incoming ? use.from : use.to);
-  return `<li><button type="button" data-proof-focus="${esc(other.id)}">${esc(other.label)}</button> ${qualificationHtml(use)}<div>${formulaHtml(use.reason_html || esc(use.reason))}</div>${use.issue ? `<span class="proof-uncertainty"> Open issue: ${esc(use.issue)}</span>` : ''}${use.source_display ? `<small>${esc(use.source_display)}</small>` : ''}${passagesHtml(use)}</li>`;
+  return `<li><button type="button" data-proof-focus="${esc(other.id)}">${esc(other.label)}</button> ${qualificationHtml(use)}<div>${formulaHtml(use.reason_html || esc(use.reason))}</div>${issueHtml(use)}${use.source_display ? `<small>${esc(use.source_display)}</small>` : ''}${passagesHtml(use)}</li>`;
 }
 
 function qualificationHtml(use) {
-  return `<span class="proof-use-type">${esc(useTypes[use.type])}</span>${use.regime ? `<span class="proof-regime">Only in regime: ${esc(use.regime)}</span>` : ''}${use.group ? groupBadgeHtml(use.group) : ''}`;
+  return `<span class="proof-use-type">${esc(useTypes[use.type])}</span>${use.regime ? `<span class="proof-regime">Only in regime: ${formulaHtml(use.regime_html || esc(use.regime))}</span>` : ''}${use.group ? groupBadgeHtml(use.group) : ''}`;
 }
 
 // A detail edge is annotated under its detail endpoint's sub-section: the
@@ -495,20 +564,20 @@ function detailAnchor(use, graph) {
 
 function detailUseHtml(use, graph) {
   const label = (id) => (graph.nodes.get(id) || graph.details.get(id) || {}).label || id;
-  return `<div class="proof-detail-use" data-proof-detail-use="${esc(use.id)}" data-proof-from="${esc(use.from)}" data-proof-to="${esc(use.to)}">${qualificationHtml(use)} ${esc(label(use.from))} → ${esc(label(use.to))}<div>${formulaHtml(use.reason_html || esc(use.reason))}</div>${use.issue ? `<span class="proof-uncertainty"> Open issue: ${esc(use.issue)}</span>` : ''}${fidelityBadgeHtml(use.fidelity)}${use.source_display ? `<small>${esc(use.source_display)}</small>` : ''}${passagesHtml(use)}<p class="proof-hint">This use refines the recorded argument at an intermediate step; it is not part of the overview graph.</p></div>`;
+  return `<div class="proof-detail-use" data-proof-detail-use="${esc(use.id)}" data-proof-from="${esc(use.from)}" data-proof-to="${esc(use.to)}">${qualificationHtml(use)} ${esc(label(use.from))} → ${esc(label(use.to))}<div>${formulaHtml(use.reason_html || esc(use.reason))}</div>${issueHtml(use)}${fidelityBadgeHtml(use.fidelity)}${use.source_display ? `<small>${esc(use.source_display)}</small>` : ''}${passagesHtml(use)}<p class="proof-hint">This use refines the recorded argument at an intermediate step; it is not part of the overview graph.</p></div>`;
 }
 
 function detailSectionHtml(detail, graph) {
   const annotations = graph.detailUses.filter((use) => detailAnchor(use, graph) === detail.id);
-  return `<section class="proof-detail" data-proof-detail="${esc(detail.id)}"><h5><span class="proof-detail-kind">${esc(detailKinds[detail.kind])}</span> ${esc(detail.label)}${detail.caption ? `: ${esc(detail.caption)}` : ''}</h5><div class="proof-statement">${formulaHtml(detail.statement_html)}</div>${detail.issue ? `<p class="proof-uncertainty">Open issue: ${esc(detail.issue)}</p>` : ''}${fidelityBadgeHtml(detail.fidelity)}${passagesHtml(detail)}${annotations.map((use) => detailUseHtml(use, graph)).join('')}</section>`;
+  return `<section class="proof-detail" data-proof-detail="${esc(detail.id)}"><h5><span class="proof-detail-kind">${esc(detailKinds[detail.kind])}</span> ${esc(detail.label)}${detail.caption ? `: ${esc(detail.caption)}` : ''}</h5><div class="proof-statement">${formulaHtml(detail.statement_html)}</div>${issueHtml(detail)}${fidelityBadgeHtml(detail.fidelity)}${passagesHtml(detail)}${annotations.map((use) => detailUseHtml(use, graph)).join('')}</section>`;
 }
 
 function fullItemHtml(node, graph, { hover = false } = {}) {
   const incoming = graph.incoming.get(node.id), outgoing = graph.outgoing.get(node.id);
-  if (hover) return `<strong>${esc(node.label)}</strong><p class="proof-hover-caption">${esc(node.caption || kinds[node.kind][0])}</p>${sourceHtml(node)}<p class="proof-hint">Click or press Enter for the full statement and dependencies.</p>`;
+  if (hover) return `<strong>${esc(node.label)}</strong><p class="proof-hover-caption">${esc(node.caption || kinds[node.kind][0])}</p>${sourceHtml(node)}<p class="proof-hint">Click or press Enter for the statement and connections.</p>`;
   const details = graph.detailsByOwner.get(node.id) || [];
   return `
-    ${node.statement_form === 'synopsis' ? '<p class="proof-hint proof-statement-form">Statement synopsis</p>' : ''}<div class="proof-statement">${formulaHtml(node.statement_html)}</div>${sourceHtml(node)}${node.issue ? `<p class="proof-uncertainty">Open issue: ${esc(node.issue)}</p>` : ''}${reviewLineHtml(node)}
+    ${node.statement_form === 'synopsis' ? '<p class="proof-hint proof-statement-form">Statement synopsis</p>' : ''}<div class="proof-statement">${formulaHtml(node.statement_html)}</div>${sourceHtml(node)}${issueHtml(node)}${reviewLineHtml(node)}
       ${Array.isArray(node.aliases) && node.aliases.length ? `<p class="proof-hint">Also identified as: ${node.aliases.map((alias) => esc(alias)).join(', ')}</p>` : ''}${passagesHtml(node)}
       ${details.length ? `<div class="proof-details"><h4>Intermediate steps (${details.length})</h4>${details.map((detail) => detailSectionHtml(detail, graph)).join('')}</div>` : ''}
       <div class="proof-dependencies"><h4>Prerequisites used (${incoming.length})</h4>${incoming.length ? `<ul>${incoming.map((use) => relationHtml(use, graph, true)).join('')}</ul><p class="proof-hint">These are recorded inputs to the argument. Their joint sufficiency has not been verified by this overview.</p>` : '<p>No prerequisite use is recorded in this overview.</p>'}
@@ -516,17 +585,17 @@ function fullItemHtml(node, graph, { hover = false } = {}) {
 }
 
 function fullUseHtml(use, graph) {
-  return `<h4>${esc(graph.nodes.get(use.from).label)} → ${esc(graph.nodes.get(use.to).label)}</h4>${qualificationHtml(use)}<div class="proof-statement">${formulaHtml(use.reason_html || esc(use.reason))}</div>${use.issue ? `<p class="proof-uncertainty">Open issue: ${esc(use.issue)}</p>` : ''}${sourceHtml(use)}${passagesHtml(use)}${reviewLineHtml(use)}<p class="proof-hint">This connection records a use in the argument. This overview does not verify that inference.</p>`;
+  return `<h4>${esc(graph.nodes.get(use.from).label)} → ${esc(graph.nodes.get(use.to).label)}</h4>${qualificationHtml(use)}<div class="proof-statement">${formulaHtml(use.reason_html || esc(use.reason))}</div>${issueHtml(use)}${sourceHtml(use)}${passagesHtml(use)}${reviewLineHtml(use)}<p class="proof-hint">This connection records a use in the argument. This overview does not verify that inference.</p>`;
 }
 
 function fullIndexHtml(data, graph, open = false) {
   const detailCount = (data.details || []).length;
   const detailSummary = detailCount ? `, ${detailCount} intermediate steps and ${data.detail_uses.length} detail uses under their owners` : '';
-  return `<details class="proof-index" id="proof-full-index"${open ? ' open' : ''}><summary>Full statement index (${data.items.length} items, ${data.uses.length} recorded uses${detailSummary})</summary>${data.items.map((node) => `<article id="proof-index-item-${esc(node.id)}" data-proof-index-item="${esc(node.id)}"><h3>${esc(node.label)}${node.caption ? `: ${esc(node.caption)}` : ''}</h3>${fullItemHtml(node, graph)}</article>`).join('')}<h3>Recorded uses</h3>${data.uses.map((use) => `<article id="proof-index-use-${esc(use.id)}" data-proof-index-use="${esc(use.id)}" data-proof-from="${esc(use.from)}" data-proof-to="${esc(use.to)}">${fullUseHtml(use, graph)}</article>`).join('')}</details>`;
+  return `<details class="proof-index" id="proof-full-index"${open ? ' open' : ''}><summary>Selected statements and connections (${data.items.length} statements, ${data.uses.length} connections${detailSummary})</summary>${data.items.map((node) => `<article id="proof-index-item-${esc(node.id)}" data-proof-index-item="${esc(node.id)}"><h3>${esc(node.label)}${node.caption ? `: ${esc(node.caption)}` : ''}</h3>${fullItemHtml(node, graph)}</article>`).join('')}<h3>Connections</h3>${data.uses.map((use) => `<article id="proof-index-use-${esc(use.id)}" data-proof-index-use="${esc(use.id)}" data-proof-from="${esc(use.from)}" data-proof-to="${esc(use.to)}">${fullUseHtml(use, graph)}</article>`).join('')}</details>`;
 }
 
 function recordsHtml(data, graphMode) {
-  const records = { schema_version: data.schema_version, graph_mode: graphMode, items: data.items, uses: data.uses, details: data.details, detail_uses: data.detail_uses, build_context: data.build_context || { mathematical_assessment: 'not_performed' } };
+  const records = { schema_version: data.schema_version, graph_mode: graphMode, ...(data.graph_cycles !== undefined ? { graph_cycles: data.graph_cycles } : {}), items: data.items, uses: data.uses, details: data.details, detail_uses: data.detail_uses, build_context: data.build_context || { mathematical_assessment: 'not_performed' } };
   return `<script id="proof-overview-records" type="application/json">${jsonForScript(records)}</script>`;
 }
 
@@ -541,7 +610,7 @@ function buildContextHtml(data) {
     unregistered: 'No manuscript snapshot is registered.',
   }[context.source_status] || '';
   const comparisonStatus = typeof context.source_comparison === 'string' ? context.source_comparison : context.source_comparison?.status;
-  const comparison = { complete: 'Source comparisons are complete.', incomplete: 'Some source comparisons remain incomplete.' }[comparisonStatus] || '';
+  const comparison = context.source_comparison?.summary || { complete: 'Source comparisons are complete.', incomplete: 'Source comparisons have unfinished work or unresolved questions; see individual records.' }[comparisonStatus] || '';
   const candidates = context.citation_candidates;
   const scan = typeof candidates === 'string'
     ? 'Citation scan not applicable to the captured sources.'
@@ -551,16 +620,25 @@ function buildContextHtml(data) {
   const rows = [...(data.items || []), ...(data.details || []), ...(data.uses || []), ...(data.detail_uses || [])];
   const issues = rows.filter((row) => typeof row.issue === 'string' && row.issue.trim()).length;
   const issueNote = issues ? `${issues} record${issues === 1 ? ' carries' : 's carry'} an open issue note.` : '';
-  return `<p class="proof-hint">${revision ? `<span title="Captured revision ${esc(revision.slice(0, 12))}">Captured manuscript version.</span> ` : ''}${sourceStatus ? `${sourceStatus} ` : ''}${comparison ? `${comparison} ` : ''}${scan ? `${scan} ` : ''}${issueNote ? `${issueNote} ` : ''}Mathematical assessment has not been performed.</p>`;
+  return `<p class="proof-hint">${revision ? `<span title="Captured revision ${esc(revision.slice(0, 12))}">Captured manuscript version.</span> ` : ''}${sourceStatus ? `${sourceStatus} ` : ''}${comparison ? `${esc(comparison)} ` : ''}${scan ? `${scan} ` : ''}${issueNote ? `${issueNote} ` : ''}Mathematical assessment has not been performed.</p>`;
 }
 
-function scopeHtml(scope) {
-  // The first paragraph carries the selected boundaries and missing material;
-  // any longer reading detail stays collapsible. No second summary is authored.
-  const [lead, ...rest] = String(scope || '').split(/\n\s*\n/);
-  const remainder = rest.join('\n\n').trim();
-  const leadHtml = lead.trim() ? `<p class="proof-scope-lead">${esc(lead.trim())}</p>` : '';
-  const restHtml = remainder ? `<details class="proof-scope"><summary>Full scope and reading limits</summary><p>${esc(remainder)}</p></details>` : '';
+function scopeHtml(scope, prepared) {
+  if (prepared) {
+    const lead = prepared.lead_html ? `<p class="proof-scope-lead">${formulaHtml(prepared.lead_html)}</p>` : '';
+    const details = prepared.details_html ? `<details class="proof-scope"><summary>Scope details and reading limits</summary><p>${formulaHtml(prepared.details_html)}</p></details>` : '';
+    return lead + details;
+  }
+  // Bound presentation of older, unbroken scope essays without rewriting the
+  // stored scope. The complete original remains available in one disclosure.
+  const original = String(scope || '').trim();
+  const [lead, ...rest] = original.split(/\n\s*\n/);
+  const words = [...lead.matchAll(/\S+/gu)];
+  const abbreviated = words.length > 100;
+  const preview = abbreviated ? `${lead.slice(0, words[100].index).trimEnd()}…` : lead.trim();
+  const remainder = abbreviated ? original : rest.join('\n\n').trim();
+  const leadHtml = preview ? `<p class="proof-scope-lead">${esc(preview)}</p>` : '';
+  const restHtml = remainder ? `<details class="proof-scope"><summary>Scope details and reading limits</summary><p>${esc(remainder)}</p></details>` : '';
   return leadHtml + restHtml;
 }
 
@@ -571,12 +649,21 @@ function mathDiagnosticsHtml(data) {
   return `<details class="proof-render-warnings"><summary>Math display notes: ${entries.length} expression(s) kept as labeled LaTeX</summary><ul>${rows}</ul></details>`;
 }
 
+function cycleContextHtml(graph) {
+  if (!graph.cycles.length) return '';
+  const uses = new Map([...graph.outgoing.values()].flat().map((use) => [use.id, use]));
+  return `<details class="proof-render-warnings proof-cycles"><summary>Recorded cycles (${graph.cycles.length}): all connections remain visible</summary><p>Return arrows preserve the recorded direction. A cycle can reflect argument reuse, alternative regimes, or an unresolved dependency; it does not establish a circular proof. Read the connections and their source passages before interpreting it.</p><ul>${graph.cycles.map((group) => `<li>${group.item_ids.map((id) => `<button type="button" data-proof-focus="${esc(id)}">${esc(graph.nodes.get(id).label)}</button>`).join(', ')}<ul>${group.use_ids.map((id) => {
+    const use = uses.get(id);
+    return `<li><button type="button" data-proof-use="${esc(id)}">${esc(graph.nodes.get(use.from).label)} → ${esc(graph.nodes.get(use.to).label)} (${esc(useTypes[use.type])})</button>${use.regime ? `; ${esc(use.regime)}` : ''}</li>`;
+  }).join('')}</ul></li>`).join('')}</ul></details>`;
+}
+
 function renderIndex(data) {
   const graph = indexGraph(data);
   const warnings = (data.warnings || []).map((warning) => `<li>${esc(warning)}</li>`).join('');
   const html = `<!doctype html><html lang="en" data-theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(data.title)} | Proof overview index</title>${proofCss(data)}<style>
     :root{--text:#172033;--text-muted:#526075;--text-dim:#637086;--panel:#f8fafc;--panel-border:#d7dee8;--mask:#fff;--arrow:#64748b;color-scheme:light}html[data-theme="dark"]{--text:#e5eaf3;--text-muted:#adb8cb;--text-dim:#9caac0;--panel:#101827;--panel-border:#344155;--mask:#172132;color-scheme:dark}body{margin:0;background:var(--panel);color:var(--text);font:14px/1.6 system-ui,sans-serif}main{max-width:1000px;margin:auto;padding:28px 24px}h1{font-size:22px;line-height:1.3}.proof-index article{scroll-margin-top:18px}.proof-passages details{margin:8px 0}.proof-passages summary{cursor:pointer;font-size:12px;overflow-wrap:anywhere}.proof-index h4{font-size:13px}.proof-index-controls{display:flex;flex-wrap:wrap;gap:8px}.proof-index-controls a,.proof-index-controls button{font:inherit;color:var(--text);border:1px solid var(--panel-border);border-radius:5px;background:var(--mask);padding:5px 9px;text-decoration:none}@media print{main{max-width:none;padding:0}}
-    </style></head><body><main><h1>${esc(data.title)}</h1><p class="proof-caption">${data.items.length} items · ${data.uses.length} recorded uses</p><p><strong>Index view.</strong> The recorded mapping is displayed as a complete index because the current diagram layout requires an acyclic graph. Cyclic mappings alone do not establish a circular proof.</p><p>${esc(data.scope || '')}</p>${buildContextHtml(data)}${warnings ? `<div class="proof-render-warnings"><ul>${warnings}</ul></div>` : ''}${mathDiagnosticsHtml(data)}<nav class="proof-index-controls" aria-label="Index controls"><button type="button" id="proof-index-theme">Switch theme</button><a href="#proof-full-index">All statements and uses</a></nav>${fullIndexHtml(data, graph, true)}</main>${recordsHtml(data, 'index')}<script>(function(){document.getElementById('proof-index-theme').addEventListener('click',function(){document.documentElement.setAttribute('data-theme',document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark');});document.addEventListener('click',function(event){var button=event.target.closest('[data-proof-focus]');if(!button)return;var article=document.getElementById('proof-index-item-'+button.getAttribute('data-proof-focus'));if(article){document.getElementById('proof-full-index').open=true;article.scrollIntoView({block:'start'});article.setAttribute('tabindex','-1');article.focus({preventScroll:true});}});})();</script></body></html>`;
+    </style></head><body><main><h1>${esc(data.title)}</h1><p class="proof-caption">${data.items.length} selected statements · ${data.uses.length} connections</p><p><strong>Index view.</strong> All selected statements and connections are displayed below. Cyclic mappings alone do not establish a circular proof.</p>${scopeHtml(data.scope, data.scope_display)}${buildContextHtml(data)}${warnings ? `<div class="proof-render-warnings"><ul>${warnings}</ul></div>` : ''}${mathDiagnosticsHtml(data)}<nav class="proof-index-controls" aria-label="Index controls"><button type="button" id="proof-index-theme">Switch theme</button><a href="#proof-full-index">Selected statements and connections</a></nav>${fullIndexHtml(data, graph, true)}</main>${recordsHtml(data, 'index')}<script>(function(){document.getElementById('proof-index-theme').addEventListener('click',function(){document.documentElement.setAttribute('data-theme',document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark');});document.addEventListener('click',function(event){var button=event.target.closest('[data-proof-focus]');if(!button)return;var article=document.getElementById('proof-index-item-'+button.getAttribute('data-proof-focus'));if(article){document.getElementById('proof-full-index').open=true;article.scrollIntoView({block:'start'});article.setAttribute('tabindex','-1');article.focus({preventScroll:true});}});})();</script></body></html>`;
   const graph_preservation = representationReceipt(data, html, 'index');
   if (graph_preservation.status !== 'pass') throw new Error('Rendered index does not preserve the supplied item and use identities.');
   return { html, items: data.items.length, uses: data.uses.length, viewBox: null, graph_mode: 'index', graph_preservation, geometry: { status: 'not_applicable', checks: [], diagnostics: [], reason: 'The complete records are shown as an index; no dependency geometry is drawn.' } };
@@ -643,7 +730,7 @@ function proofRuntime(payload) {
     // Keep explicit qualification controls above the upstream viewer's wide
     // edge hit targets so a badge always opens its own recorded connection.
     svg.querySelectorAll('.proof-edge-badge').forEach(function(badge){svg.appendChild(badge);});
-    var panel=document.createElement('div');panel.id='proof-selection';panel.setAttribute('aria-label','Mathematical statement and recorded dependencies');
+    var panel=document.createElement('div');panel.id='proof-selection';panel.setAttribute('aria-label','Selected statement and connections');
     var chip=document.getElementById('focus-chip'),head=chip.querySelector('.relationship-lens-head');
     // Mathematical details need their own reading space even when the graph
     // is only one or two rows high. Keep them outside the clipped canvas.
@@ -677,7 +764,7 @@ function proofRuntime(payload) {
       // Supply the scale in the same camera transaction. Repeated zoomIn calls
       // are sampled mid-transition by the viewer and can reset the next move.
       Archify.view.centerAt(node.x,node.y,{scale:target,minimumScale:target,instant:true});
-      status.textContent='Readable view shows part of the complete graph. Drag the background or select a result to navigate.';
+      status.textContent='Readable view shows part of the selected graph. Drag the background or select a result to navigate.';
       cancelPreview();
     }
     function openResult(id){cancelPreview();Archify.focus.set(id,{toggle:false});sync();requestAnimationFrame(function(){readableView(id);chip.scrollIntoView({block:'nearest',behavior:'auto'});});}
@@ -725,7 +812,17 @@ function render(input) {
   const data = preparedDataset(input);
   if (data.graph_mode === 'index') return renderIndex(data);
   const graph = layoutGraph(data);
-  const mainItems = data.main_items || data.items.filter((item) => !graph.outgoing.get(item.id).length).map((item) => item.id);
+  const graphMode = graph.cycles.length ? 'cyclic' : 'dag';
+  if (data.graph_mode !== undefined && data.graph_mode !== graphMode) throw new Error('Prepared graph_mode does not match the recorded connections. Prepare the records again.');
+  if (data.graph_cycles !== undefined && JSON.stringify(data.graph_cycles) !== JSON.stringify(graph.cycles)) throw new Error('Prepared cycle diagnostics do not match the recorded connections. Prepare the records again.');
+  // A terminal cyclic group has no individual sink. Keep its members available
+  // as reading entry points without presenting their internal order as a proof.
+  const terminalCycles = graph.cycles.filter((group) => {
+    const members = new Set(group.item_ids);
+    return group.item_ids.every((id) => graph.outgoing.get(id).every((use) => members.has(use.to)));
+  });
+  const terminalIds = new Set([...data.items.filter((item) => !graph.outgoing.get(item.id).length).map((item) => item.id), ...terminalCycles.flatMap((group) => group.item_ids)]);
+  const mainItems = data.main_items || data.items.filter((item) => terminalIds.has(item.id)).map((item) => item.id);
   const hasRegimes = data.uses.some((use) => use.regime);
   const presentKinds = new Set(data.items.map((item) => item.kind));
   const legend = `<ul class="proof-legend" aria-label="Mathematical item types">${Object.entries(kinds).filter(([kind]) => presentKinds.has(kind)).map(([kind, [label]]) => `<li data-kind="${kind}">${label}</li>`).join('')}</ul>`;
@@ -768,20 +865,20 @@ function render(input) {
   html = html.replace(/<title>[\s\S]*?<\/title>/, () => `<title>${esc(data.title)} | Proof overview</title>`);
   html = html.replace('</head>', () => `${proofCss(data)}</head>`);
   const warnings = Array.isArray(data.warnings) && data.warnings.length ? `<div class="proof-render-warnings" role="note"><strong>Source and rendering notes</strong><ul>${data.warnings.map((warning) => `<li>${esc(warning)}</li>`).join('')}</ul></div>` : '';
-  const navigation = `<section class="proof-navigation" aria-labelledby="proof-main-title"><h2 id="proof-main-title">${data.main_items ? 'Main results' : 'Terminal results in the recorded graph'}</h2><div class="proof-main-list" id="proof-main-results">${mainItems.map((id) => {
+  const navigation = `<section class="proof-navigation" aria-labelledby="proof-main-title"><h2 id="proof-main-title">${data.main_items ? 'Main results' : terminalCycles.length ? 'Results and terminal cycle groups' : 'Terminal results in the recorded graph'}</h2><div class="proof-main-list" id="proof-main-results">${mainItems.map((id) => {
     const node = graph.nodes.get(id);
     return `<button type="button" data-proof-main="${esc(id)}" class="c-${esc(node.kind)}" aria-pressed="false" title="${esc(`${node.label}: ${node.caption}. Open statement and supporting dependencies.`)}"><strong>${esc(node.label)}</strong><span>${esc(node.caption)}</span></button>`;
-  }).join('')}</div><div class="proof-view-controls"><button type="button" id="proof-full-structure">Fit complete structure (${data.items.length} items)</button><button type="button" id="proof-readable-view">Readable view</button><p id="proof-view-status" aria-live="polite">Select a result to read its statement and explore its supporting items.</p></div>${hasRegimes ? '<p class="proof-trace-note" role="note">Some connections apply only in a named regime. Dependency tracing follows all recorded arrows, including alternative routes. Regime labels still apply; a trace is not one required or verified proof route.</p>' : ''}</section>`;
-  html = html.replace('<div class="diagram-container"', () => `<div class="proof-caption"><p>${esc(data.source?.title || data.title)} · ${data.items.length} items · ${data.uses.length} recorded connections</p><p><strong>Dependency overview, not proof verification.</strong> Select a result for its statement, source, and supporting items.</p>${buildContextHtml(data)}</div>${scopeHtml(data.scope)}${warnings}${mathDiagnosticsHtml(data)}${navigation}\n<div class="diagram-container"`);
+  }).join('')}</div><div class="proof-view-controls"><button type="button" id="proof-full-structure">Fit selected graph (${data.items.length} statements)</button><button type="button" id="proof-readable-view">Readable view</button><p id="proof-view-status" aria-live="polite">Select a result to read its statement and explore its prerequisites.</p></div>${hasRegimes ? '<p class="proof-trace-note" role="note">Some connections apply only in a named regime. Dependency tracing follows all recorded arrows, including alternative routes. Regime labels still apply; a trace is not one required or verified proof route.</p>' : ''}</section>`;
+  html = html.replace('<div class="diagram-container"', () => `<div class="proof-caption"><p>${esc(data.source?.title || data.title)} · ${data.items.length} selected statements · ${data.uses.length} connections</p><p><strong>Selected main results and important prerequisites.</strong> Select a result for its statement, source, and connections. This map explains the written argument; it does not verify the proofs.</p>${buildContextHtml(data)}</div>${scopeHtml(data.scope, data.scope_display)}${warnings}${mathDiagnosticsHtml(data)}${cycleContextHtml(graph)}${navigation}\n<div class="diagram-container"`);
   const fragments = data.items.map((node) => `<template id="proof-detail-${esc(node.id)}">${fullItemHtml(node, graph)}</template><template id="proof-hover-${esc(node.id)}">${fullItemHtml(node, graph, { hover: true })}</template>`).join('');
   const useFragments = data.uses.map((use) => `<template id="proof-use-${esc(use.id)}">${fullUseHtml(use, graph)}</template>`).join('');
   const index = `${fullIndexHtml(data, graph)}<p class="proof-attribution">Viewer adapted from Archify 2.17 by tt-a1i and Cocoon AI, MIT licensed. Proof-specific dataset and rendering by archify-proofs-overview.</p>`;
   // applyTemplate replaces the complete cards slot including its sentinels.
   html = html.replace(cards, () => `${cards}${index}`);
-  html = html.replace('</body>', () => `${fragments}${useFragments}${recordsHtml(data, 'dag')}${proofRuntime({ items: [...graph.nodes.values()].map(({ id, x, y }) => ({ id, x: x + box.w / 2, y: y + box.h / 2 })), uses: data.uses.map(({ id }) => ({ id })), main_items: mainItems })}</body>`);
-  const graph_preservation = representationReceipt(data, html, 'dag');
+  html = html.replace('</body>', () => `${fragments}${useFragments}${recordsHtml(data, graphMode)}${proofRuntime({ items: [...graph.nodes.values()].map(({ id, x, y }) => ({ id, x: x + box.w / 2, y: y + box.h / 2 })), uses: data.uses.map(({ id }) => ({ id })), main_items: mainItems })}</body>`);
+  const graph_preservation = representationReceipt(data, html, graphMode);
   if (graph_preservation.status !== 'pass') throw new Error('Rendered SVG does not preserve the supplied item and use identities.');
-  return { html, items: data.items.length, uses: data.uses.length, viewBox: [graph.width, graph.height], graph_mode: 'dag', graph_preservation, geometry };
+  return { html, items: data.items.length, uses: data.uses.length, viewBox: [graph.width, graph.height], graph_mode: graphMode, graph_preservation, geometry };
 }
 
 try {

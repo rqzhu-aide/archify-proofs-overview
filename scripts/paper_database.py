@@ -117,11 +117,13 @@ def _store_observations(connection, snapshot_id, observations):
         connection.execute("INSERT OR IGNORE INTO observations(id, snapshot_id, payload) VALUES (?, ?, ?)", (observation["id"], snapshot_id, serialized))
 
 
-def init_database(db_path, dataset_path, extra_files=(), source_root=None):
+def init_database(db_path, dataset_path, extra_files=(), source_root=None, *, focused=False):
     """Capture a schema-3 seed or import a schema-3 export without creating reviews."""
     db_path, dataset_path = Path(db_path).resolve(), Path(dataset_path).resolve()
     manuscript_root = Path(source_root).resolve() if source_root is not None else dataset_path.parent
     data = records.normalize(_read_json(dataset_path), dataset_path.parent, extra_files=extra_files, source_root=manuscript_root)
+    if focused:
+        records.validate_focused_authoring(data)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         descriptor = os.open(db_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -142,6 +144,8 @@ def init_database(db_path, dataset_path, extra_files=(), source_root=None):
         """)
         with connection:
             connection.executemany("INSERT INTO metadata(key,value) VALUES (?,?)", [("format", FORMAT), ("source_root", str(manuscript_root))])
+            if focused:
+                connection.execute("INSERT INTO metadata(key,value) VALUES ('authoring_profile','focused')")
             snapshot_id = _store_snapshot(connection, data)
             connection.execute("INSERT INTO current_snapshot(singleton,snapshot_id) VALUES (1,?)", (snapshot_id,))
             _store_observations(connection, snapshot_id, data.get("observations", []))
@@ -154,7 +158,8 @@ def init_database(db_path, dataset_path, extra_files=(), source_root=None):
     finally:
         if connection is not None:
             connection.close()
-    return {"database": str(db_path), "snapshot_id": snapshot_id, "authority": "sqlite", "items": len(data["items"]), "uses": len(data["uses"])}
+    return {"database": str(db_path), "snapshot_id": snapshot_id, "authority": "sqlite", "items": len(data["items"]), "uses": len(data["uses"]),
+            "authoring_profile": "focused" if focused else "compatibility"}
 
 
 def _load_snapshot(connection, snapshot_id=None):
@@ -179,7 +184,33 @@ def _load_snapshot(connection, snapshot_id=None):
 def _read_snapshot(connection, snapshot_id=None):
     """Read a digest-verified native schema-3 snapshot."""
     storage_id = snapshot_id or _head(connection)
-    return storage_id, records.validate_records(_load_snapshot(connection, storage_id))
+    data = records.validate_records(_load_snapshot(connection, storage_id))
+    _check_profile(connection, data)
+    return storage_id, data
+
+
+def _authoring_profile(connection):
+    row = connection.execute("SELECT value FROM metadata WHERE key='authoring_profile'").fetchone()
+    if row is None:
+        return "compatibility"
+    if row[0] != "focused":
+        raise DatabaseError(f"Unknown authoring profile {row[0]!r}; the database was not changed.")
+    return row[0]
+
+
+def _check_profile(connection, data):
+    profile = _authoring_profile(connection)
+    if profile == "focused":
+        records.validate_focused_authoring(data)
+    return profile
+
+
+def _database_profile(db_path):
+    connection = _connect(db_path)
+    try:
+        return _authoring_profile(connection)
+    finally:
+        connection.close()
 
 
 def _writable_head(connection):
@@ -237,15 +268,26 @@ def get_packet(db_path, item_id, snapshot_id=None):
     anchors = [anchor for anchor in data["anchors"] if anchor["id"] in anchor_ids]
     targets = {("items", item["id"]) for item in items} | {("uses", use["id"]) for use in selected["uses"]}
     history = [observation for observation in data.get("observations", []) if (observation["target"]["collection"], observation["target"]["id"]) in targets]
-    applicable = [observation for observation in records.applicable_observations(data)
+    all_applicable, fidelity, digests = records._comparison_state(data, targets)
+    applicable = [observation for observation in all_applicable
                   if (observation["target"]["collection"], observation["target"]["id"]) in targets]
-    fidelity = records.fidelity_by_row(data)
-    return {"expected_snapshot": data["snapshot_id"], "item": by_id[item_id], "owned_items": owned, "incoming_uses": incoming,
+    # A batch often shares a long comparison note across many targets. Keep
+    # each complete note once in this retrieval, without changing stored
+    # observations or losing their separate reviewer, result, and identity.
+    comparison_notes, observations = {}, []
+    for observation in applicable:
+        note = observation["note"]
+        note_ref = "note-" + hashlib.sha256(note.encode("utf-8")).hexdigest()
+        comparison_notes[note_ref] = note
+        observations.append({**{key: value for key, value in observation.items() if key != "note"},
+                             "note_ref": note_ref})
+    return {"expected_snapshot": data["snapshot_id"], "authoring_profile": _database_profile(db_path),
+            "item": by_id[item_id], "owned_items": owned, "incoming_uses": incoming,
             "owned_step_uses": step_uses,
             "prerequisite_items": prerequisites, "anchors": anchors,
             "source_revision": {**data["source_revision"], "files": [{key: value for key, value in source.items() if key != "content_base64"} for source in data["source_revision"]["files"]]},
-            "target_digests": [{"collection": collection, "id": identifier, "digest": records.target_digest(data, collection, identifier)} for collection, identifier in sorted(targets)],
-            "observations": applicable, "observation_history_count": len(history),
+            "target_digests": [{"collection": collection, "id": identifier, "digest": digests[(collection, identifier)]} for collection, identifier in sorted(targets)],
+            "observations": observations, "comparison_notes": comparison_notes, "observation_history_count": len(history),
             # The selected item's own derived fidelity, distinct from the
             # database-wide comparison aggregate below.
             "target_fidelity": fidelity[("items", item_id)],
@@ -268,6 +310,8 @@ def _edit_data(data, patch):
         raise DatabaseError("The edit batch is empty.")
     result, touched = copy.deepcopy(data), set()
     for index, edit in enumerate(edits, 1):
+        if isinstance(edit, dict) and ('set' in edit or edit.get('op') == 'set'):
+            raise DatabaseError(f'Edit {index}: metadata belongs in top-level "set" beside "edits", for example {{"edits": [], "set": {{"scope": "..."}}}}.')
         if not isinstance(edit, dict) or set(edit) - {"collection", "op", "id", "record"}:
             raise DatabaseError(f"Edit {index}: expected collection, op, id, and record for an upsert.")
         collection, operation, identifier = edit.get("collection"), edit.get("op"), edit.get("id")
@@ -319,12 +363,14 @@ def _publish(db_path, data, expected_snapshot, source_root=None):
             connection.execute("BEGIN IMMEDIATE")
             _writable_head(connection)
             _require_head(connection, expected_snapshot)
+            profile = _check_profile(connection, data)
             snapshot_id = _store_snapshot(connection, data)
             connection.execute("UPDATE current_snapshot SET snapshot_id=? WHERE singleton=1", (snapshot_id,))
             _store_observations(connection, snapshot_id, data.get("observations", []))
             if source_root is not None:
                 connection.execute("INSERT OR REPLACE INTO metadata(key,value) VALUES ('source_root',?)", (str(Path(source_root).resolve()),))
-        return {"snapshot_id": snapshot_id, "previous_snapshot": expected_snapshot, "items": len(data["items"]), "uses": len(data["uses"])}
+        return {"snapshot_id": snapshot_id, "previous_snapshot": expected_snapshot, "items": len(data["items"]), "uses": len(data["uses"]),
+                "authoring_profile": profile}
     finally:
         connection.close()
 
@@ -377,12 +423,18 @@ def compare_records(db_path, batch):
     data = export_snapshot(db_path)
     if batch.get("expected_snapshot") != data["snapshot_id"]:
         raise DatabaseError(f"Stale comparison: current snapshot is {data['snapshot_id']}. Compare the current input before recording a result.")
-    observations = records.make_observations(data, batch.get("targets"), batch.get("reviewer"), note=batch.get("note", ""), result=batch.get("result", "matched"))
+    observations = records._make_observations_validated(data, batch.get("targets"), batch.get("reviewer"), note=batch.get("note", ""), result=batch.get("result", "matched"))
     connection = _connect(db_path, write=True)
     try:
         with connection:
             connection.execute("BEGIN IMMEDIATE")
             _require_head(connection, data["snapshot_id"])
+            # Observations can change without changing the record snapshot.
+            # Check the proposed current comparison state under the write lock.
+            if _authoring_profile(connection) == "focused":
+                checked = _load_snapshot(connection, data['snapshot_id'])
+                checked['observations'].extend(observations)
+                records.validate_focused_authoring(checked)
             if reuse:
                 # Recheck applicable observations under the integrating lock:
                 # another reviewer may have recorded needs_attention without
@@ -441,7 +493,7 @@ def changes_database(db_path, since_snapshot, snapshot_id=None):
 
 
 def _candidate_summary(data):
-    return records.citation_summary(data)
+    return records._citation_summary_validated(data)
 
 
 def candidates_database(db_path, snapshot_id=None):
@@ -450,13 +502,20 @@ def candidates_database(db_path, snapshot_id=None):
     try:
         connection.execute("BEGIN")
         storage_id, data = _read_snapshot(connection, snapshot_id)
+        profile = _authoring_profile(connection)
     finally:
         connection.close()
-    return records.citation_candidates(data)
+    report = records._citation_candidates_validated(data)
+    report['authoring_profile'] = profile
+    if profile == 'focused':
+        report = records._selected_candidate_report(data, report)
+    return report
 
 
 def scaffold_audits(db_path, output_folder):
     """Write one empty edge-audit file per major row; never overwrites or records."""
+    if _database_profile(db_path) == 'focused':
+        raise DatabaseError('Exhaustive scaffold/reconcile is outside focused overview authoring. Use get and optional candidates to review selected connections.')
     data = export_snapshot(db_path)
     majors = [item["id"] for item in data["items"] if item["kind"] in records.MAJOR_KINDS]
     folder = Path(output_folder).resolve()
@@ -642,6 +701,8 @@ def _reconcile_one(audit, path, data, head, items, anchor_ids):
 
 def reconcile_audits(db_path, audits):
     """Diff filled edge-audit files against recorded uses; prints rows, writes nothing."""
+    if _database_profile(db_path) == 'focused':
+        raise DatabaseError('Exhaustive scaffold/reconcile is outside focused overview authoring. Use get and optional candidates to review selected connections.')
     path = Path(audits).resolve()
     if path.is_dir():
         files = sorted(path.glob("*.json"))
@@ -692,14 +753,16 @@ def validate_database(db_path, snapshot_id=None):
     try:
         connection.execute("BEGIN")
         storage_id, data = _read_snapshot(connection, snapshot_id)
+        profile = _authoring_profile(connection)
     finally:
         connection.close()
-    prepared = records.record_report(data, _source_root(db_path))
     fidelity = records.fidelity_by_row(data)
+    prepared = records.record_report(data, _source_root(db_path), fidelity)
     stale_targets = [{"collection": collection, "id": identifier}
                      for (collection, identifier), status in sorted(fidelity.items()) if status == "stale"]
-    return {"valid": True, "snapshot_id": storage_id, "items": len(data["items"]), "uses": len(data["uses"]),
-            "warnings": prepared["warnings"], "graph_mode": prepared["graph_mode"],
+    return {"valid": True, "snapshot_id": storage_id, "authoring_profile": profile,
+            "items": len(data["items"]), "uses": len(data["uses"]), "selected_inventory": prepared["inventory"],
+            "warnings": prepared["warnings"], "graph_mode": prepared["graph_mode"], "graph_cycles": prepared["graph_cycles"],
             "uses_without_evidence": prepared["uses_without_evidence"],
             "citation_candidates": prepared["build_context"]["citation_candidates"],
             "stale_targets": stale_targets,
@@ -707,15 +770,17 @@ def validate_database(db_path, snapshot_id=None):
 
 
 def render_database(db_path, output_path, snapshot_id=None):
-    from proof_overview import render_dataset
+    from proof_overview import _render_validated_dataset
     connection = _connect(db_path)
     try:
         connection.execute("BEGIN")
         storage_id, data = _read_snapshot(connection, snapshot_id)
+        profile = _authoring_profile(connection)
     finally:
         connection.close()
-    receipt = render_dataset(data, _source_root(db_path), Path(output_path), protected_paths=(Path(db_path),))
+    receipt = _render_validated_dataset(data, _source_root(db_path), Path(output_path), protected_paths=(Path(db_path),))
     receipt["snapshot_id"] = storage_id
+    receipt["authoring_profile"] = profile
     connection = None
     try:
         connection = _connect(db_path, write=True)
@@ -810,6 +875,7 @@ def main():
         command.add_argument("database", type=Path)
         if name == "init":
             command.add_argument("dataset", type=Path)
+            command.add_argument("--focused", action="store_true", help="Author selected major statements and sourced connections with explicit main results")
         if name in ("init", "refresh"):
             command.add_argument("--source", type=Path, action="append", default=[], help="Additional appendix or macro source; repeat as needed")
             command.add_argument("--source-root", type=Path, help="Manuscript root, separate from the seed and output folders")
@@ -838,7 +904,7 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == "init":
-            result = init_database(args.database, args.dataset, extra_files=args.source, source_root=args.source_root)
+            result = init_database(args.database, args.dataset, extra_files=args.source, source_root=args.source_root, focused=args.focused)
         elif args.command == "get":
             result = get_packet(args.database, args.item, args.snapshot)
         elif args.command == "apply":

@@ -442,7 +442,7 @@
     "kernel-ridge"
   ],
   "schema_version": 3,
-  "scope": "All six numbered items in the accompanying standalone exposition. Numbering is local to proof.md, not the cited research paper. The nondecreasing-penalty remark is included with Theorem 5. Background Hilbert-space projection and finite-dimensional compactness stay within the proofs. Arrows record direct uses in this written argument, including the different contributions to existence and representation in Corollary 6; they do not independently certify correctness.",
+  "scope": "The representer theorem and kernel-ridge corollary, with the assumptions, training-span definition, and projection lemma that explain their argument. Numbering is local to proof.md, a standalone exposition, not the cited research paper. The nondecreasing-penalty remark stays with Theorem 5. Background projection and compactness arguments are not expanded into proof steps. Connections distinguish the contributions to existence and representation in Corollary 6; they do not certify correctness.",
   "source_revision": {
     "created_at": "2026-09-12T19:20:33+00:00",
     "files": [
@@ -776,5 +776,5 @@
       }
     }
   ],
-  "snapshot_id": "b8f045980b28c40a9ba324624b9f3932308cf189e8fb73261ecb00c5605c6f94"
+  "snapshot_id": "57fd2ff53d434cdf128c5656b440a4baa258b246aaf5e0828eb1547c7491adf0"
 }

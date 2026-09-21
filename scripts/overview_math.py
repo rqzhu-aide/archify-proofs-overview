@@ -19,7 +19,7 @@ _ENVIRONMENTS = frozenset((
     "substack displaylines eqalign eqalignno"
 ).split())
 CONFIGURATION = {
-    "adapter_version": 3,
+    "adapter_version": 4,
     "delimiters": [["$", "$"], ["$$", "$$"], [r"\(", r"\)"], [r"\[", r"\]"]],
     "output": "static native MathML with original LaTeX annotation",
     "maximum_formula_characters": 8192,
@@ -206,6 +206,13 @@ def _sized_named_bars(tex: str) -> str:
     return _SIZED_BAR_RE.sub(replace, tex)
 
 
+def _argument_operator(tex: str) -> str:
+    r"""Render the actual \arg command as an operator in converter input only."""
+    return re.sub(r"\\arg(?![A-Za-z])", lambda match: (
+        match.group(0) if _escaped(tex, match.start()) else r"\operatorname{arg}"
+    ), tex)
+
+
 @lru_cache(maxsize=512)
 def _convert(tex: str, display: str) -> tuple[str | None, str]:
     if not tex.strip() or len(tex) > CONFIGURATION["maximum_formula_characters"]:
@@ -216,7 +223,7 @@ def _convert(tex: str, display: str) -> tuple[str | None, str]:
         return None, "The shared LaTeX converter is unavailable."
     try:
         _check_tex(tex)
-        adapted = _sized_named_bars(_group_scripted_binomials(tex))
+        adapted = _argument_operator(_sized_named_bars(_group_scripted_binomials(tex)))
         return _safe_mathml(convert(adapted, display=display), tex, display), ""
     except Exception as exc:
         # Converter failures must never remove the original mathematical text.
@@ -253,3 +260,35 @@ def render_text(text: str, diagnostics=None) -> str:
         previous = end
     parts.append(html.escape(text[previous:], quote=True))
     return "".join(parts)
+
+
+def render_scope(text: str, diagnostics=None) -> dict[str, str]:
+    """Render a first-paragraph preview and optional full scope disclosure.
+
+    The preview keeps the existing 100-word limit, extending a cutoff to the
+    end of any explicit math it crosses. Paragraph breaks inside math are
+    ignored. A shortened lead retains the full original in the disclosure;
+    otherwise only later paragraphs are disclosed. Repeated preview formulas
+    are displayed twice but diagnosed only once, in the complete disclosure.
+    """
+    original = str(text or "").strip()
+    spans = list(_spans(original))
+    paragraph = next((match for match in re.finditer(r"\n\s*\n", original)
+                      if not any(start < match.end() and end > match.start()
+                                 for start, end, _, _ in spans)), None)
+    lead = original[:paragraph.start()] if paragraph else original
+    remainder = original[paragraph.end():].strip() if paragraph else ""
+    words = list(re.finditer(r"\S+", lead))
+    if len(words) > 100:
+        cutoff = words[100].start()
+        for start, end, _, _ in spans:
+            if start < cutoff < end:
+                cutoff = end
+                break
+        preview = lead[:cutoff].rstrip()
+        if cutoff < len(lead):
+            preview += "…"
+        return {"lead_html": render_text(preview),
+                "details_html": render_text(original, diagnostics=diagnostics)}
+    return {"lead_html": render_text(lead.strip(), diagnostics=diagnostics),
+            "details_html": render_text(remainder, diagnostics=diagnostics)}

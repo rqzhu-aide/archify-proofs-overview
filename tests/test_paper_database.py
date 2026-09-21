@@ -65,6 +65,13 @@ class PaperDatabaseTests(unittest.TestCase):
         finally:
             connection.close()
 
+    @staticmethod
+    def packet_observations(packet):
+        """Resolve the packet's shared notes to reconstruct complete observations."""
+        return [{**{key: value for key, value in observation.items() if key != "note_ref"},
+                 "note": packet["comparison_notes"][observation["note_ref"]]}
+                for observation in packet["observations"]]
+
     def test_native_seed_capture_preserves_paper(self):
         original = self.dataset.read_bytes()
         data = database.export_snapshot(self.db)
@@ -98,6 +105,48 @@ class PaperDatabaseTests(unittest.TestCase):
         self.assertTrue(packet["anchors"])
         self.assertNotIn("content_base64", json.dumps(packet))
         self.assertEqual(len(packet["target_digests"]), 3)
+        self.assertEqual(packet["observations"], [])
+        self.assertEqual(packet["comparison_notes"], {})
+
+    def test_packet_shares_complete_notes_without_changing_observations_or_export(self):
+        note = "Compared the hypotheses and conclusion: α ≤ β.\n" * 100
+        self.compare_everything(note=note)
+        before = database.export_snapshot(self.db)
+        packet = database.get_packet(self.db, "variance")
+        self.assertEqual(list(packet["comparison_notes"].values()), [note])
+        self.assertEqual(len(packet["observations"]), 3)
+        self.assertEqual(len({row["note_ref"] for row in packet["observations"]}), 1)
+        self.assertTrue(all("note" not in row for row in packet["observations"]))
+        self.assertEqual(self.packet_observations(packet), records.applicable_observations(before))
+        self.assertEqual(database.export_snapshot(self.db), before)
+        unpacked = {key: value for key, value in packet.items() if key != "comparison_notes"}
+        unpacked["observations"] = self.packet_observations(packet)
+        self.assertLess(len(json.dumps(packet, ensure_ascii=False)), len(json.dumps(unpacked, ensure_ascii=False)))
+        again = database.get_packet(self.db, "variance")
+        self.assertEqual(again["comparison_notes"], packet["comparison_notes"])
+        self.assertEqual(again["observations"], packet["observations"])
+
+    def test_packet_deduplicates_text_without_merging_reviewers_or_results(self):
+        data = database.export_snapshot(self.db)
+        target_notes = [
+            ("items", "sampling", "Reviewer A", "Shared source check.", "matched"),
+            ("items", "variance", "Reviewer B", "Shared source check.", "needs_attention"),
+            ("uses", data["uses"][0]["id"], "Reviewer A", "Distinct dependency check.", "matched"),
+        ]
+        for collection, identifier, reviewer, note, result in target_notes:
+            database.compare_records(self.db, {"expected_snapshot": data["snapshot_id"],
+                                               "targets": [{"collection": collection, "id": identifier}],
+                                               "reviewer": reviewer, "note": note, "result": result})
+        packet = database.get_packet(self.db, "variance")
+        self.assertEqual(len(packet["comparison_notes"]), 2)
+        original = records.applicable_observations(database.export_snapshot(self.db))
+        self.assertEqual(self.packet_observations(packet), original)
+        self.assertEqual(packet["target_fidelity"], "needs_attention")
+        self.assertEqual(packet["comparison_status"]["matched"], 2)
+        self.assertEqual(packet["comparison_status"]["needs_attention"], 1)
+        narrow = database.get_packet(self.db, "sampling")
+        self.assertEqual(list(narrow["comparison_notes"].values()), ["Shared source check."])
+        self.assertEqual([row["target"]["id"] for row in narrow["observations"]], ["sampling"])
 
     def test_packet_keeps_latest_comparisons_while_export_preserves_history(self):
         for number in range(1, 4):
@@ -106,7 +155,8 @@ class PaperDatabaseTests(unittest.TestCase):
                                               "reviewer": "test reviewer", "note": f"Comparison {number}."})
         packet = database.get_packet(self.db, "variance")
         self.assertEqual(len(packet["observations"]), 1)
-        self.assertEqual(packet["observations"][0]["note"], "Comparison 3.")
+        self.assertEqual(self.packet_observations(packet)[0]["note"], "Comparison 3.")
+        self.assertEqual(list(packet["comparison_notes"].values()), ["Comparison 3."])
         self.assertEqual(packet["observation_history_count"], 3)
         self.assertEqual(len(database.export_snapshot(self.db)["observations"]), 3)
         self.assertEqual(packet["source_status"], "current")
@@ -123,8 +173,10 @@ class PaperDatabaseTests(unittest.TestCase):
                                           "reviewer": "test reviewer", "note": "Compared the revised record."})
         historical = database.get_packet(self.db, "variance", original)
         current = database.get_packet(self.db, "variance")
-        self.assertEqual(historical["observations"][0]["note"], "Compared the original statement.")
-        self.assertEqual(current["observations"][0]["note"], "Compared the revised record.")
+        self.assertEqual(self.packet_observations(historical)[0]["note"], "Compared the original statement.")
+        self.assertEqual(self.packet_observations(current)[0]["note"], "Compared the revised record.")
+        self.assertEqual(len(historical["comparison_notes"]), 1)
+        self.assertEqual(len(current["comparison_notes"]), 1)
         self.assertEqual(historical["observation_history_count"], 2)
         self.assertEqual(current["observation_history_count"], 2)
 
@@ -185,6 +237,11 @@ class PaperDatabaseTests(unittest.TestCase):
         current = database.export_snapshot(self.db)
         self.assertEqual(current["observations"][0], old)
         self.assertNotEqual(old["input_snapshot"], records.target_digest(current, "items", "variance"))
+        packet = database.get_packet(self.db, "variance")
+        self.assertEqual(self.packet_observations(packet), [old])
+        self.assertEqual(packet["target_fidelity"], "stale")
+        self.assertEqual(packet["observation_history_count"], 1)
+        self.assertEqual(list(packet["comparison_notes"].values()), [""])
 
     def test_stale_comparison_batch_is_rejected(self):
         original = self.initial["snapshot_id"]
@@ -303,6 +360,48 @@ class PaperDatabaseTests(unittest.TestCase):
         self.assertEqual(result["source_status"], "historical_changed")
         self.assertTrue(any("live manuscript differs" in warning for warning in result["warnings"]))
 
+    def test_read_commands_bind_the_captured_input_once(self):
+        for command in (lambda: database.get_packet(self.db, "variance"),
+                        lambda: database.candidates_database(self.db),
+                        lambda: database.validate_database(self.db)):
+            with self.subTest(command=command), patch.object(records, "validate_records", wraps=records.validate_records) as check:
+                command()
+            self.assertEqual(check.call_count, 1)
+
+    def test_comparison_checks_input_once_and_still_rejects_stale_work(self):
+        batch = {"expected_snapshot": self.initial["snapshot_id"],
+                 "targets": [{"collection": "items", "id": "variance"}],
+                 "reviewer": "reader", "note": "Compared the variance identity and its independence premise."}
+        with patch.object(records, "validate_records", wraps=records.validate_records) as check:
+            result = database.compare_records(self.db, batch)
+        self.assertEqual(check.call_count, 1)
+        self.assertEqual(result["recorded"], 1)
+        database.apply_edits(self.db, self.update_caption())
+        with self.assertRaisesRegex(database.DatabaseError, "Stale comparison"):
+            database.compare_records(self.db, batch)
+
+    @unittest.skipUnless(shutil.which("node"), "HTML rendering requires shared Node.js.")
+    def test_database_render_checks_input_once_and_keeps_integrity_gate(self):
+        output = self.base / "overview.html"
+        with patch.object(records, "validate_records", wraps=records.validate_records) as check:
+            receipt = database.render_database(self.db, output)
+        self.assertEqual(check.call_count, 1)
+        self.assertEqual(receipt["graph_preservation"]["status"], "pass")
+        previous = output.read_bytes()
+        # Corrupt the captured bytes without updating their registered digest.
+        connection = sqlite3.connect(self.db)
+        try:
+            with connection:
+                connection.execute("UPDATE source_blobs SET content_base64='Y29ycnVwdA=='")
+        finally:
+            connection.close()
+        for command in (lambda: database.validate_database(self.db),
+                        lambda: database.candidates_database(self.db),
+                        lambda: database.render_database(self.db, output)):
+            with self.assertRaises((database.DatabaseError, records.RecordError)):
+                command()
+        self.assertEqual(output.read_bytes(), previous)
+
     def test_validation_scans_citations_once_and_preserves_coverage_summary(self):
         source = self.source.read_text(encoding="utf-8").replace(
             "Independence removes", r"Assumption \ref{ass:independence} removes")
@@ -312,7 +411,7 @@ class PaperDatabaseTests(unittest.TestCase):
         self.assertEqual(expected, {"pairs": 1, "not_mechanically_matchable": 0, "missing_uses": 0,
                                     "unsupported_uses": 0, "unmatched_labels": 0,
                                     "attributed": 1, "unattributed": 1})
-        with patch.object(records, "citation_candidates", wraps=records.citation_candidates) as scan:
+        with patch.object(records, "_citation_candidates_validated", wraps=records._citation_candidates_validated) as scan:
             result = database.validate_database(self.db)
         self.assertEqual(scan.call_count, 1)
         self.assertEqual(result["citation_candidates"], expected)
@@ -336,7 +435,7 @@ class PaperDatabaseTests(unittest.TestCase):
             if write:
                 raise database.DatabaseError("Simulated database write lock")
             return original_connect(path, write=write)
-        with patch("proof_overview.render_dataset", side_effect=renderer), patch.object(database, "_connect", side_effect=connection):
+        with patch("proof_overview._render_validated_dataset", side_effect=renderer), patch.object(database, "_connect", side_effect=connection):
             receipt = database.render_database(self.db, output)
         self.assertTrue(output.is_file())
         self.assertFalse(receipt["build_recorded"])

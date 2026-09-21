@@ -107,7 +107,7 @@ class ProjectionSplitTests(unittest.TestCase):
         closing["from"], closing["to"] = "main-result", "key-bound"
         cyclic["uses"].append(closing)
         prepared = records.prepare_records(revalidate(cyclic), FIXTURE.parent)
-        self.assertEqual(prepared["graph_mode"], "index")
+        self.assertEqual(prepared["graph_mode"], "cyclic")
         self.assertEqual(len(prepared["details"]), 2)
         self.assertEqual(len(prepared["detail_uses"]), 1)
 
@@ -416,14 +416,14 @@ class ProjectionRenderTests(unittest.TestCase):
                 self.render_artifact()
         self.assertEqual(output.read_bytes(), previous)
 
-    def test_index_mode_lists_intermediates_and_annotates_groups(self):
+    def test_cyclic_graph_lists_intermediates_and_annotates_groups(self):
         cyclic = deepcopy(self.data)
         closing = deepcopy(cyclic["uses"][2])
         closing["id"] = "use-closing-loop"
         closing["from"], closing["to"] = "main-result", "key-bound"
         cyclic["uses"].append(closing)
         receipt, output = self.render_artifact(revalidate(cyclic))
-        self.assertEqual(receipt["graph_mode"], "index")
+        self.assertEqual(receipt["graph_mode"], "cyclic")
         self.assertEqual(receipt["graph_preservation"]["status"], "pass")
         html = output.read_text(encoding="utf-8")
         reader = self.parse(html)
@@ -432,7 +432,8 @@ class ProjectionRenderTests(unittest.TestCase):
         self.assertEqual([(use, start, end) for use, start, end, _ in reader.detail_uses],
                          [("use-display-in-theorem", "eq-key-display", "main-result")])
         self.assertIn("Joint: prereqs", html)
-        self.assertIn("Cyclic mappings alone do not establish a circular proof", html)
+        self.assertIn("it does not establish a circular proof", html)
+        self.assertEqual(receipt["geometry"]["status"], "pass")
 
 
 if __name__ == "__main__":
