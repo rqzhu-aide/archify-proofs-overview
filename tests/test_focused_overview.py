@@ -80,7 +80,10 @@ class FocusedOverviewTests(unittest.TestCase):
         path = self.base / f"{name}.json"
         path.write_text(json.dumps(self.seed if seed is None else seed), encoding="utf-8")
         db_path = self.base / f"{name}.sqlite"
-        receipt = database.init_database(db_path, path, focused=focused)
+        # Non-focused fixtures here exercise historical unsourced comparisons
+        # and native migration; new focused work uses the common SQL authority.
+        initialize = database.init_database if focused else database._native_init_database
+        receipt = initialize(db_path, path, focused=focused)
         return db_path, receipt
 
     def compare(self, db_path, targets=None, **extra):
@@ -102,6 +105,9 @@ class FocusedOverviewTests(unittest.TestCase):
     def counts(self, db_path):
         connection = sqlite3.connect(db_path)
         try:
+            if connection.execute("SELECT 1 FROM sqlite_master WHERE name='record_versions'").fetchone():
+                return {name: connection.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
+                        for name in ("commits", "record_versions", "blobs", "publications")}
             return {name: connection.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
                     for name in ("snapshots", "observations", "source_blobs", "builds")}
         finally:
@@ -453,7 +459,10 @@ class FocusedOverviewTests(unittest.TestCase):
                 handoff = self.base / f"{name}-copy.sqlite"
                 shutil.copy2(db_path, handoff)
                 backup = self.base / f"{name}-backup.sqlite"
-                self.audit_command("migrate-overview", handoff, "--backup", backup)
+                if focused:
+                    database.backup_database(handoff, backup)
+                else:
+                    self.audit_command("migrate-overview", handoff, "--backup", backup)
                 self.assertEqual(db_path.read_bytes(), original_bytes)
                 self.assertEqual(database.export_snapshot(backup), before)
                 export_path = self.base / f"{name}-audit.json"

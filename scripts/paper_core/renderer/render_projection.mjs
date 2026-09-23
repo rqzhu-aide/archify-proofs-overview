@@ -11,7 +11,7 @@
 // bytes produce identical HTML bytes.
 //
 // The palette, box metrics, longest-path layering, orthogonal edge routing and
-// badge placement are adapted from archify-proofs-overview/scripts/render.mjs
+// badge placement are adapted from proof-graphify/scripts/render.mjs
 // (MIT). See THIRD_PARTY_NOTICES.md.
 
 import { readFileSync, writeFileSync, renameSync, unlinkSync, existsSync } from 'node:fs';
@@ -49,7 +49,7 @@ const REVIEW_LABELS = { not_required: 'not required', pending: 'pending', comple
 const SECTION_KINDS = ['statement', 'applications', 'derivations', 'premises', 'coverage', 'findings', 'sources', 'review', 'composition', 'limitations'];
 const ROLES = ['primary', 'independent', 'coordinator'];
 const BUILD_KINDS = ['working', 'release'];
-const LAYOUT_MODES = ['dag', 'index'];
+const LAYOUT_MODES = ['dag', 'cyclic', 'index'];
 const DISPLAY_KEYS = ['statement_html', 'reason_html', 'needed_form_html', 'rationale_html', 'conditions_html', 'reasoning_html', 'description_html'];
 // Record body field -> display fragment that replaces its raw text.
 const FRAGMENT_FIELDS = { statement: 'statement_html', reason: 'reason_html', needed_form: 'needed_form_html', rationale: 'rationale_html', conditions: 'conditions_html', reasoning: 'reasoning_html', description: 'description_html' };
@@ -450,7 +450,7 @@ export function validateInput(input) {
 }
 
 // ---------------------------------------------------------------------------
-// Layout (dag mode)
+// Layout (directed graphs)
 // ---------------------------------------------------------------------------
 
 function findCycle(stuckIds, outgoing) {
@@ -482,20 +482,45 @@ function findCycle(stuckIds, outgoing) {
   return stuckIds;
 }
 
-// Longest-path layers keep prerequisites to the left. Ordering uses stable
-// barycentres; coordinates are never authored.
+// DFS back edges are omitted only from ranking. They retain their identity,
+// direction and assessment and are drawn on separate exterior rails.
+function feedbackEdges(nodes, outgoing) {
+  const state = new Map(), feedback = new Set();
+  for (const id of [...nodes.keys()].sort()) {
+    if (state.has(id)) continue;
+    const stack = [{ id, edges: [...outgoing.get(id)].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0), next: 0 }];
+    state.set(id, 1);
+    while (stack.length) {
+      const frame = stack.at(-1);
+      if (frame.next === frame.edges.length) { state.set(frame.id, 2); stack.pop(); continue; }
+      const edge = frame.edges[frame.next++];
+      if (state.get(edge.to) === 1) feedback.add(edge.id);
+      else if (!state.has(edge.to)) {
+        state.set(edge.to, 1);
+        stack.push({ id: edge.to, edges: [...outgoing.get(edge.to)].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0), next: 0 });
+      }
+    }
+  }
+  return feedback;
+}
+
+// Longest-path layers keep prerequisites to the left when acyclic. Ordering
+// uses stable barycentres; coordinates confer no mathematical assessment.
 export function layoutGraph(model) {
   const nodes = new Map(model.nodeList.map((node, order) => [node.id, { id: node.id, order, rank: 0, source: node }]));
   const incoming = new Map(model.nodeList.map((node) => [node.id, []]));
   const outgoing = new Map(model.nodeList.map((node) => [node.id, []]));
   model.connectionList.forEach((connection) => { incoming.get(connection.to).push(connection); outgoing.get(connection.from).push(connection); });
-  const remaining = new Map([...incoming].map(([id, list]) => [id, list.length]));
+  const feedback = model.layout.mode === 'cyclic' ? feedbackEdges(nodes, outgoing) : new Set();
+  const rankingIncoming = new Map([...incoming].map(([id, list]) => [id, list.filter((edge) => !feedback.has(edge.id))]));
+  const rankingOutgoing = new Map([...outgoing].map(([id, list]) => [id, list.filter((edge) => !feedback.has(edge.id))]));
+  const remaining = new Map([...rankingIncoming].map(([id, list]) => [id, list.length]));
   const queue = model.nodeList.filter((node) => !remaining.get(node.id)).map((node) => node.id);
   let visited = 0;
   for (let index = 0; index < queue.length; index += 1) {
     const id = queue[index];
     visited += 1;
-    for (const connection of outgoing.get(id)) {
+    for (const connection of rankingOutgoing.get(id)) {
       const target = nodes.get(connection.to);
       target.rank = Math.max(target.rank, nodes.get(id).rank + 1);
       remaining.set(connection.to, remaining.get(connection.to) - 1);
@@ -526,20 +551,24 @@ export function layoutGraph(model) {
     for (let round = 0; round < 4; round += 1) {
       for (let r = 1; r < ranks.length; r += 1) {
         const centre = (node) => {
-          const parents = incoming.get(node.id).map((connection) => nodes.get(connection.from).position);
+          const parents = rankingIncoming.get(node.id).map((connection) => nodes.get(connection.from).position);
           return parents.length ? parents.reduce((sum, value) => sum + value, 0) / parents.length : node.position;
         };
         ranks[r].sort((a, b) => centre(a) - centre(b) || a.order - b.order);
         ranks[r].forEach((node, index) => { node.position = index; });
       }
     }
-    components.push({ members, ranks, rowCount: Math.max(...ranks.map((rank) => rank.length)) });
+    const memberIds = new Set(ids);
+    const returnConnections = model.connectionList.filter((edge) => feedback.has(edge.id) && memberIds.has(edge.from))
+      .sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    components.push({ members, ranks, returnConnections, rowCount: Math.max(...ranks.map((rank) => rank.length)) });
   });
   const longConnections = model.connectionList.filter((connection) => nodes.get(connection.to).rank > nodes.get(connection.from).rank + 1);
   let top = BOX.margin;
   components.forEach((component, componentIndex) => {
     component.top = top;
-    component.nodeTop = top + (components.length > 1 ? 32 : 0);
+    component.railTop = top + (components.length > 1 ? 32 : 0);
+    component.nodeTop = component.railTop + (component.returnConnections.length ? 20 + component.returnConnections.length * 24 : 0);
     component.ranks.forEach((rank, r) => rank.forEach((node, index) => {
       node.x = BOX.margin + r * BOX.column;
       node.y = component.nodeTop + index * BOX.row;
@@ -552,7 +581,7 @@ export function layoutGraph(model) {
   });
   const rankCount = Math.max(...components.map((component) => component.ranks.length));
   return {
-    nodes, components, incoming, outgoing, longConnections,
+    nodes, components, incoming, outgoing, longConnections, feedback,
     width: BOX.margin * 2 + (rankCount - 1) * BOX.column + BOX.w,
     height: top - 68 + BOX.margin,
   };
@@ -577,6 +606,13 @@ function edgePoints(connection, graph) {
   const outs = graph.outgoing.get(a.id), ins = graph.incoming.get(b.id);
   const port = (node, list) => round2(node.y + 13 + (list.indexOf(connection) + 1) / (list.length + 1) * (BOX.h - 26));
   const start = [a.x + BOX.w, port(a, outs)], end = [b.x, port(b, ins)];
+  if (graph.feedback.has(connection.id)) {
+    const component = graph.components[a.component];
+    const rail = component.railTop + component.returnConnections.indexOf(connection) * 24;
+    const exit = round2(start[0] + 12 + (outs.indexOf(connection) + 1) / (outs.length + 1) * 16);
+    const enter = round2(end[0] - 12 - (ins.indexOf(connection) + 1) / (ins.length + 1) * 16);
+    return [start, [exit, start[1]], [exit, rail], [enter, rail], [enter, end[1]], end];
+  }
   const longIndex = graph.longConnections.indexOf(connection);
   if (longIndex >= 0) {
     const component = graph.components[a.component];
@@ -685,6 +721,8 @@ class Renderer {
     const parts = [`<div class="proof-assessment s-${esc(assessment.state)}">`];
     parts.push(`<p class="proof-assessment-head">${stateBadge(assessment.state)} <strong class="proof-assessment-label">${esc(assessment.label)}</strong></p>`);
     if (assessment.explanation) parts.push(`<p class="proof-assessment-text">${esc(assessment.explanation)}</p>`);
+    if (assessment.availability) parts.push(`<p class="proof-assessment-meta proof-availability">Exact target support: <strong>${esc(assessment.availability)}</strong></p>`);
+    if (assessment.local_label) parts.push(`<p class="proof-assessment-meta proof-local-outcome">Recorded local work: <strong>${esc(assessment.local_label)}</strong></p>`);
     parts.push(`<p class="proof-assessment-meta">${reviewNote(assessment.independent_review)}</p>`);
     if (!options.compact) {
       if (assessment.check_refs.length) parts.push(`<p class="proof-assessment-meta">Checks: ${assessment.check_refs.map((ref) => this.recordLink(ref, true)).join(', ')}</p>`);
@@ -762,9 +800,9 @@ ${limitItems.length ? `<ul class="proof-finding-list">${limitItems.join('')}</ul
 <div class="proof-card">
 <h3>Scope</h3>
 <dl class="proof-kv">
-<dt>Mode</dt><dd>${esc(scope.mode)}</dd>
-<dt>Audit targets</dt><dd>${scope.target_refs.length ? scope.target_refs.map((ref) => this.recordLink(ref, false)).join(', ') : `<span class="proof-muted">${projection.audit_id === null ? 'Recorded items; no audit selected' : 'No explicit audit targets recorded'}</span>`}</dd>
-<dt>Audit exclusions</dt><dd>${exclusionItems.length ? `<ul class="proof-plain-list">${exclusionItems.join('')}</ul>` : '<span class="proof-muted">none recorded</span>'}</dd>
+<dt>Mode</dt><dd data-proof-scope-mode>${esc(scope.mode)}</dd>
+<dt>Audit targets</dt><dd data-proof-scope-targets>${scope.target_refs.length ? scope.target_refs.map((ref) => this.recordLink(ref, false)).join(', ') : `<span class="proof-muted">${projection.audit_id === null ? 'Recorded items; no audit selected' : 'No explicit audit targets recorded'}</span>`}</dd>
+<dt>Audit exclusions</dt><dd data-proof-scope-exclusions>${exclusionItems.length ? `<ul class="proof-plain-list">${exclusionItems.join('')}</ul>` : '<span class="proof-muted">none recorded</span>'}</dd>
 <dt>Snapshot revision</dt><dd>${projection.snapshot_revision}</dd>
 <dt>Published revision</dt><dd>${summary.published_revision === null ? '<span class="proof-muted">not published</span>' : summary.published_revision}</dd>
 <dt>Audit</dt><dd>${projection.audit_id === null ? '<span class="proof-muted">none</span>' : `<code>${esc(projection.audit_id)}</code>`}</dd>
@@ -944,6 +982,7 @@ ${connection.assessment.explanation ? `<p class="proof-index-text">${esc(connect
 <div class="proof-panel-head"><h2 id="proof-details-heading">Details</h2><label class="proof-check"><input id="proof-show-all" type="checkbox"> Show all details</label></div>
 <p id="proof-detail-empty" class="proof-muted">Select an item or connection above, or use the search, to open its detail here.</p>
 ${articles.join('\n')}
+<div id="proof-record-templates" hidden>${[...this.model.records.values()].map((record) => `<template data-record-template="${esc(refKey(record.ref))}">${this.recordHtml(record).replace('data-record-ref=', 'data-record-body=')}</template>`).join('\n')}</div>
 </section>`;
   }
 
@@ -982,7 +1021,7 @@ ${this.assessmentBlock(node.assessment)}
 
   connectionHeader(connection) {
     const groups = connection.groups.map((group, i) => `<li class="proof-group">
-<p class="proof-group-head"><strong>Group ${i + 1}</strong> ${group.group_id ? this.idLink(group.group_id, 'groups') : '<span class="proof-muted">no group id</span>'} ${group.argument_id ? `<span class="proof-muted">argument</span> ${this.idLink(group.argument_id, 'arguments')}` : ''}</p>
+<p class="proof-group-head"><strong>${group.group_id ? `${esc(humanize(group.inference_kind || 'inference'))} inference` : 'Summary connections'}</strong> ${group.group_id ? this.idLink(group.group_id, 'groups') : '<span class="proof-muted">no authored inference</span>'} ${group.argument_id ? `<span class="proof-muted">argument</span> ${this.idLink(group.argument_id, 'arguments')}` : ''}</p>
 ${group.use_ids.length ? `<p class="proof-assessment-meta">Uses: ${group.use_ids.map((id) => this.idLink(id, 'uses')).join(', ')}</p>` : ''}
 ${group.obligation_ids.length ? `<p class="proof-assessment-meta">Obligations: ${group.obligation_ids.map((id) => `<code>${esc(id)}</code>`).join(', ')}</p>` : ''}
 ${this.assessmentBlock(group.assessment)}
@@ -992,17 +1031,18 @@ ${this.assessmentBlock(group.assessment)}
 <h3 class="proof-detail-heading" tabindex="-1">${this.jump(this.model.nodes.get(connection.from).detail_key, esc(this.nodeLabel(connection.from)))} <span aria-hidden="true">→</span><span class="proof-visually-hidden"> to </span> ${this.jump(this.model.nodes.get(connection.to).detail_key, esc(this.nodeLabel(connection.to)))}</h3>
 ${this.assessmentBlock(connection.assessment)}
 <dl class="proof-kv">
-<dt>Primary applications</dt><dd>${connection.primary_use_ids.length ? connection.primary_use_ids.map((id) => this.idLink(id, 'uses')).join(', ') : '<span class="proof-muted">none</span>'}</dd>
+<dt>Source connections</dt><dd>${connection.primary_use_ids.length ? connection.primary_use_ids.map((id) => this.idLink(id, 'uses')).join(', ') : '<span class="proof-muted">none</span>'}</dd>
 <dt>Support</dt><dd>${connection.support_refs.length ? connection.support_refs.map((ref) => this.recordLink(ref, false)).join(', ') : '<span class="proof-muted">none</span>'}</dd>
 <dt>Context</dt><dd>${connection.context_refs.length ? connection.context_refs.map((ref) => this.recordLink(ref, false)).join(', ') : '<span class="proof-muted">none</span>'}</dd>
 <dt>Obligations</dt><dd>${connection.obligation_ids.length ? connection.obligation_ids.map((id) => `<code>${esc(id)}</code>`).join(', ') : '<span class="proof-muted">none</span>'}</dd>
 </dl>
-${groups.length ? `<h4>Hidden-claim groups (${groups.length})</h4><ul class="proof-group-list">${groups.join('')}</ul>` : ''}
+${(connection.applications || []).length ? `<h4>Exact applications</h4><ul class="proof-group-list">${connection.applications.map((app) => `<li class="proof-application-assessment" data-application-id="${esc(app.use_id)}"><p>${this.idLink(app.use_id, 'uses')} ${app.scope_id ? `in scope ${this.idLink(app.scope_id, 'scopes')}` : 'in global scope'}</p>${this.assessmentBlock(app.assessment, {compact:true})}</li>`).join('')}</ul>` : ''}
+${groups.length ? `<h4>Connection contexts (${groups.length})</h4><ul class="proof-group-list">${groups.join('')}</ul>` : ''}
 </div>`;
   }
 
   sectionHtml(detailKey, section) {
-    const records = section.record_refs.map((ref) => this.recordHtml(this.model.records.get(refKey(ref))));
+    const records = section.record_refs.map((ref) => `<div class="proof-record-slot" data-record-ref="${esc(refKey(ref))}" tabindex="-1"><span class="proof-muted">${esc(ref.collection)}:${esc(ref.id)}</span></div>`);
     const obligations = section.obligation_ids.map((id) => this.obligationHtml(this.model.obligations.get(id)));
     const empty = !records.length && !obligations.length ? '<p class="proof-muted">Nothing recorded in this section.</p>' : '';
     return `<section class="proof-section proof-section-${esc(section.kind)}" data-proof-section="${esc(section.key)}" data-proof-section-kind="${esc(section.kind)}" tabindex="-1">
@@ -1072,6 +1112,14 @@ ${headline}
         const label = take('label');
         return isString(label) ? `<p class="proof-record-title"><strong>${esc(label)}</strong></p>` : '';
       }
+      case 'target_specs':
+        return '<p class="proof-record-title"><strong>Exact audited target</strong></p>';
+      case 'application_details':
+        return '<p class="proof-record-title"><strong>Exact supplier application</strong></p>';
+      case 'connection_refinements':
+        return '<p class="proof-record-title"><strong>Summary to detailed applications</strong></p>';
+      case 'proof_boundaries':
+        return '<p class="proof-record-title"><strong>Reviewed proof boundaries</strong></p>';
       case 'anchors': {
         const source = take('source_id'), locator = take('locator');
         const parts = [];
@@ -1152,7 +1200,7 @@ ${headline}
   page(fontStyle) {
     const { model } = this;
     const requested = model.summary.scope.target_refs.filter((ref) => ref.collection === 'items').map((ref) => ref.id);
-    const beforeGraph = `<div id="proof-main" class="proof-reader"><p class="proof-kicker">Proof audit${model.build.kind === 'release' ? ' · release' : ' · working copy'}</p><details class="proof-build-disclosure"><summary>Audit progress, findings and source version</summary><p class="proof-build">${this.buildLine()}</p>${this.summaryHtml()}</details></div>
+    const beforeGraph = `<div id="proof-main" class="proof-reader"><p class="proof-kicker">Proof audit${model.build.kind === 'release' ? ' · release' : ' · working copy'}</p><details class="proof-build-disclosure"><summary>Audit progress, findings and source version</summary><p class="proof-build">${this.buildLine()}</p>${this.summaryHtml()}</details>${this.graph && model.layout.reasons.length ? `<ul class="proof-reasons">${model.layout.reasons.map((reason) => `<li>${esc(reason)}</li>`).join('')}</ul>` : ''}</div>
 ${mainNavigation(model.nodeList, model.connectionList, requested)}
 <h2 id="proof-graph-heading" class="proof-visually-hidden">Dependency graph</h2><p id="proof-graph-desc" class="proof-visually-hidden">Major results and their recorded uses. Connection colors describe the represented assessments under declared premises.</p>`;
     const afterGraph = `<div class="proof-reader">${this.graph ? this.legendHtml() : this.indexHtml()}
@@ -1219,7 +1267,8 @@ const classList = (element) => String(element.attrs.class || '').split(/\s+/).fi
 
 export function geometryReceipt(model, scan) {
   const checks = ['finite_node_geometry', 'node_clipping', 'node_overlaps', 'finite_route_geometry', 'edge_endpoints_on_boxes', 'routes_through_unrelated_nodes'];
-  if (model.layout.mode !== 'dag') return { status: 'not_applicable', checks: [], diagnostics: [] };
+  if (model.layout.mode === 'index') return { status: 'not_applicable', checks: [], diagnostics: [] };
+  if (model.layout.mode === 'cyclic') checks.push('route_clipping');
   const diagnostics = [];
   const svg = scan.elements.find((element) => element.tag === 'svg' && classList(element).includes('proof-svg'));
   if (!svg) return { status: 'fail', checks, diagnostics: ['no svg.proof-svg element was emitted'] };
@@ -1250,6 +1299,7 @@ export function geometryReceipt(model, scan) {
     const id = element.attrs['data-edge-id'];
     const vertices = parsePathVertices(element.attrs.d);
     if (!vertices || vertices.length < 2 || vertices.some((vertex) => !Number.isFinite(vertex.x) || !Number.isFinite(vertex.y))) { diagnostics.push(`edge ${id} has a non-finite or unparseable route`); continue; }
+    if (vertices.some((vertex) => vertex.x < 0 || vertex.y < 0 || vertex.x > width || vertex.y > height)) diagnostics.push(`edge ${id} extends beyond the viewBox`);
     const from = boxes.get(element.attrs['data-edge-from']), to = boxes.get(element.attrs['data-edge-to']);
     if (!from || !to) { diagnostics.push(`edge ${id} refers to a node without a box`); continue; }
     const first = vertices[0], last = vertices[vertices.length - 1];
@@ -1295,7 +1345,7 @@ export function representationReceipt(model, scan) {
   const nodeElements = byAttr('data-node-id');
   const edgeElements = byAttr('data-edge-id');
   const insideSvg = (element) => { for (let parent = element.parent; parent; parent = parent.parent) if (parent.tag === 'svg') return true; return false; };
-  if (model.layout.mode === 'dag') {
+  if (model.layout.mode !== 'index') {
     check('dag_nodes', sameMultiset(nodeElements.map((element) => element.attrs['data-node-id']), nodeIds)
       && nodeElements.every((element) => element.tag === 'g' && insideSvg(element) && element.attrs.tabindex === '0' && element.attrs.role === 'button'
         && element.attrs['data-node-state'] === model.nodes.get(element.attrs['data-node-id']).assessment.state
@@ -1307,7 +1357,7 @@ export function representationReceipt(model, scan) {
         && element.attrs['data-edge-to'] === model.connections.get(element.attrs['data-edge-id']).to
         && element.attrs['data-edge-state'] === model.connections.get(element.attrs['data-edge-id']).assessment.state),
     'svg edge paths do not match the projection connections exactly once with from, to and state');
-    check('no_index_articles', !byAttr('data-proof-index-item').length && !byAttr('data-proof-index-connection').length && !all.some((element) => element.attrs.id === 'proof-major-index'), 'dag mode must not emit index articles');
+    check('no_index_articles', !byAttr('data-proof-index-item').length && !byAttr('data-proof-index-connection').length && !all.some((element) => element.attrs.id === 'proof-major-index'), 'diagram mode must not emit index articles');
   } else {
     check('no_graph_elements', !nodeElements.length && !edgeElements.length, 'index mode must not emit data-node-id or data-edge-id elements');
     const sections = all.filter((element) => element.tag === 'section' && element.attrs.id === 'proof-major-index');
@@ -1354,6 +1404,57 @@ export function representationReceipt(model, scan) {
   check('detail_sections', sectionsOk, 'detail sections are missing or out of order');
   check('section_record_refs', recordsOk && byAttr('data-record-ref').every((element) => recordElementsSeen.has(element)), 'record ref elements do not match section record_refs, or appear outside sections');
   check('section_obligation_ids', obligationsOk && byAttr('data-obligation-id').every((element) => obligationElementsSeen.has(element)), 'obligation elements do not match section obligation_ids, or appear outside sections');
+  const templates = byAttr('data-record-template');
+  const canonicalRenderer = new Renderer(model, null);
+  check('canonical_record_templates', sameMultiset(templates.map((element) => element.attrs['data-record-template']), [...model.records.keys()])
+    && templates.every((element) => element.tag === 'template' && scan.html.slice(element.openEnd, element.closeStart)
+      === canonicalRenderer.recordHtml(model.records.get(element.attrs['data-record-template'])).replace('data-record-ref=', 'data-record-body=')),
+  'record bodies must have exactly one canonical template with faithful text and mathematics');
+  const assessmentMatches = (element, assessment) => {
+    if (!element || !classList(element).includes(`s-${assessment.state}`)) return false;
+    const children = [...descendants(element)];
+    const field = (name) => children.find((child) => classList(child).includes(name));
+    const label = field('proof-assessment-label'), explanation = field('proof-assessment-text');
+    const glyph = field('proof-state-glyph'), badge = field('proof-state-badge');
+    if (!label || textOf(scan, label) !== assessment.label || !badge || !classList(badge).includes(`s-${assessment.state}`)
+        || !glyph || textOf(scan, glyph) !== STATE_GLYPHS[assessment.state]) return false;
+    if (assessment.explanation && (!explanation || textOf(scan, explanation) !== assessment.explanation)) return false;
+    if (assessment.availability && !textOf(scan, field('proof-availability') || element).includes(`Exact target support: ${assessment.availability}`)) return false;
+    return true;
+  };
+  const ownerAssessment = (detailKey) => {
+    const element = detailElements.find((entry) => entry.attrs['data-proof-detail'] === detailKey);
+    return element && [...descendants(element)].find((child) => classList(child).includes('proof-assessment'));
+  };
+  check('visible_assessments', model.nodeList.every((node) => assessmentMatches(ownerAssessment(node.detail_key), node.assessment))
+    && model.connectionList.every((connection) => assessmentMatches(ownerAssessment(connection.detail_key), connection.assessment))
+    && byAttr('data-obligation-id').every((element) => assessmentMatches([...descendants(element)].find((child) => classList(child).includes('proof-assessment')),
+       model.obligations.get(element.attrs['data-obligation-id']).assessment)),
+  'visible assessment colors, glyphs, labels or support wording disagree with the canonical assessment');
+  const applicationAssessments = new Map(model.connectionList.flatMap((connection) => (connection.applications || []).map((app) => [app.use_id, app.assessment])));
+  check('visible_applications', byAttr('data-application-id').every((element) => {
+    const assessment = applicationAssessments.get(element.attrs['data-application-id']);
+    return assessment && assessmentMatches([...descendants(element)].find((child) => classList(child).includes('proof-assessment')), assessment);
+  }), 'visible exact-application outcomes disagree with the recorded assessments');
+  check('visible_graph_states', nodeElements.every((element) => {
+    const node = model.nodes.get(element.attrs['data-node-id']);
+    const children = [...descendants(element)];
+    const label = children.find((child) => child.tag === 'text' && classList(child).includes('proof-node-label'));
+    const state = children.find((child) => classList(child).includes('proof-node-state'));
+    return node && classList(element).includes(`s-${node.assessment.state}`) && label && textOf(scan, label) === node.label
+      && state && textOf(scan, state) === STATE_GLYPHS[node.assessment.state];
+  }) && edgeElements.every((element) => {
+    const connection = model.connections.get(element.attrs['data-edge-id']);
+    return connection && classList(element).includes(`s-${connection.assessment.state}`)
+      && element.attrs['marker-end'] === `url(#proof-arrow-${connection.assessment.state})`;
+  }), 'visible node or edge colors, glyphs or labels disagree with the saved graph');
+  check('assessment_styles', all.some((element) => element.tag === 'style' && element.text?.includes(PAGE_CSS)),
+    'the assessment display stylesheet was changed');
+  const summaryElement = all.find((element) => element.attrs.id === 'proof-summary');
+  const expectedSummary = scanHtml(canonicalRenderer.summaryHtml()).root.children[0];
+  const summaryScan = scanHtml(canonicalRenderer.summaryHtml());
+  check('visible_scope', summaryElement && textOf(scan, summaryElement) === textOf(summaryScan, expectedSummary),
+    'the visible audit scope, exclusions or completion text differs from the saved summary');
 
   const tally = (list) => Object.fromEntries(STATES.map((state) => [state, list.filter((entry) => entry.assessment.state === state).length]));
   const nodeTally = tally(model.nodeList), connectionTally = tally(model.connectionList);
@@ -1390,7 +1491,7 @@ export function representationReceipt(model, scan) {
 export function renderProjection(inputBytes, options = {}) {
   const input = parseInput(inputBytes);
   const model = validateInput(input);
-  const graph = model.layout.mode === 'dag' ? layoutGraph(model) : null;
+  const graph = model.layout.mode !== 'index' ? layoutGraph(model) : null;
   const fontStyle = options.fontStyle === undefined ? loadFontStyle() : options.fontStyle;
   const renderer = new Renderer(model, graph);
   const html = renderer.page(fontStyle);
@@ -1658,11 +1759,24 @@ const RUNTIME_JS = `(function () {
     return scope.querySelector('[' + attribute + '="' + cssEscape(value) + '"]');
   }
   function detailFor(key) { return query(doc, 'data-proof-detail', key); }
+  function hydrateDetail(article) {
+    if (!article || article.getAttribute('data-hydrated') === 'true') return;
+    article.querySelectorAll('[data-record-ref]').forEach(function (slot) {
+      var template = query(doc, 'data-record-template', slot.getAttribute('data-record-ref'));
+      if (template) slot.replaceChildren(template.content.cloneNode(true));
+    });
+    article.setAttribute('data-hydrated', 'true');
+  }
+  function hydrateAll() { doc.querySelectorAll('[data-proof-detail]').forEach(hydrateDetail); }
 
   // Details: one at a time unless "show all" is checked.
   var showAll = doc.getElementById('proof-show-all');
-  function applyShowAll() { root.classList.toggle('show-all-details', !!(showAll && showAll.checked)); }
+  function applyShowAll() {
+    if (showAll && showAll.checked) hydrateAll();
+    root.classList.toggle('show-all-details', !!(showAll && showAll.checked));
+  }
   if (showAll) { showAll.addEventListener('change', applyShowAll); applyShowAll(); }
+  window.addEventListener('beforeprint', hydrateAll);
 
   function clearTargets() {
     var previous = doc.querySelectorAll('.is-target');
@@ -1671,6 +1785,7 @@ const RUNTIME_JS = `(function () {
   function showDetail(key, sectionKey, recordRef, options) {
     var article = detailFor(key);
     if (!article) return false;
+    hydrateDetail(article);
     viewerKey = key;
     if (svg && viewer && viewer.focus && !(options && options.fromViewer)) {
       var selected = projection.nodes.find(function (node) { return node.detail_key === key; });

@@ -1,4 +1,4 @@
 interface:
-  display_name: "Archify Proofs Overview"
+  display_name: "Proof Graphify"
   short_description: "Map main results and important prerequisites"
-  default_prompt: "Use $archify-proofs-overview to create a source-backed interactive map of this paper's main results, important prerequisites, and connections."
+  default_prompt: "Use $proof-graphify to create a source-backed interactive map of this paper's main results, important prerequisites, and connections."

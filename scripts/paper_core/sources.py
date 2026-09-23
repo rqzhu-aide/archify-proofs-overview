@@ -5,7 +5,7 @@ local TeX inputs they name; it never crawls directories. Anchors are resolved
 in code: the command extracts the excerpt bytes, hashes them, and records the
 method (`exact_lines`, `label_match`, `reviewed_page`, `exact_relocation`).
 Source reviews and issues travel in the generic edit envelope restricted to
-their collections. Adapted from archify-proofs-overview ``paper_records.py``
+their collections. Adapted from proof-graphify ``paper_records.py``
 (``_capture``, ``_binding``, ``_inventory``) with the same discovery rules.
 """
 from __future__ import annotations

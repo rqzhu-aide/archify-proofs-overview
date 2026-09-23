@@ -364,7 +364,7 @@ class NativeSeedDatabaseTests(unittest.TestCase):
                 records.normalize(native, self.base)
 
     def test_old_database_commands_refuse_without_modification(self):
-        database.init_database(self.db, self.dataset)
+        database._native_init_database(self.db, self.dataset)
         head = database.export_snapshot(self.db)["snapshot_id"]
         connection = sqlite3.connect(self.db)
         try:

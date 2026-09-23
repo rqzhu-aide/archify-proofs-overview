@@ -1,4 +1,4 @@
-"""Behavioral tests for portable paper snapshots and atomic database edits."""
+"""Compatibility tests for native overview snapshots and atomic database edits. Common SQL continuation is tested in tests/new_format/test_sql_overview.py."""
 from __future__ import annotations
 
 from copy import deepcopy
@@ -47,7 +47,7 @@ class PaperDatabaseTests(unittest.TestCase):
         }
         self.dataset.write_text(json.dumps(self.seed), encoding="utf-8")
         self.db = self.base / "paper.sqlite"
-        self.initial = database.init_database(self.db, self.dataset)
+        self.initial = database._native_init_database(self.db, self.dataset)
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -84,7 +84,7 @@ class PaperDatabaseTests(unittest.TestCase):
 
     def test_existing_database_is_not_reinitialized(self):
         with self.assertRaisesRegex(database.DatabaseError, "already exists"):
-            database.init_database(self.db, self.dataset)
+            database._native_init_database(self.db, self.dataset)
         self.assertEqual(database.export_snapshot(self.db)["snapshot_id"], self.initial["snapshot_id"])
 
     def test_export_is_portable_without_live_source(self):
@@ -94,7 +94,7 @@ class PaperDatabaseTests(unittest.TestCase):
         second = self.base / "export.json"
         database._write_export(data, second, self.db)
         relocated = self.base / "relocated" / "paper.sqlite"
-        result = database.init_database(relocated, second)
+        result = database._native_init_database(relocated, second)
         self.assertEqual(result["snapshot_id"], self.initial["snapshot_id"])
 
     def test_packet_has_source_context_but_not_file_payloads(self):
@@ -342,7 +342,7 @@ class PaperDatabaseTests(unittest.TestCase):
         appendix = self.base / "appendix.tex"
         appendix.write_text("\\newcommand{\\bound}{1}\n", encoding="utf-8")
         extra = self.base / "with-appendix.sqlite"
-        database.init_database(extra, self.dataset, extra_files=[appendix])
+        database._native_init_database(extra, self.dataset, extra_files=[appendix])
         self.assertEqual(len(database.export_snapshot(extra)["source_revision"]["files"]), 2)
         moved = self.base / "moved"
         moved.mkdir()
@@ -591,7 +591,7 @@ class BundledSeedExampleTests(unittest.TestCase):
         example = SKILL / "examples" / "representer-theorem"
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "paper-records.sqlite"
-            result = database.init_database(db, example / "seed.json", source_root=example)
+            result = database._native_init_database(db, example / "seed.json", source_root=example)
             self.assertEqual((result["items"], result["uses"]), (3, 2))
             report = database.validate_database(db)
             self.assertTrue(report["valid"])

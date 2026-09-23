@@ -14,12 +14,15 @@ from .canonical import canonical_bytes, digest
 from .contract import CONTEXT_EXTENSION, MAJOR_KINDS, validate_body, validate_shape
 from .errors import ConflictError, InvalidRequest, SourceUnavailable
 from .ids import new_id
-from .refs import RELATIONS, membership_digest, referrers, relation_members
+from .refs import RELATIONS, facet_digests, membership_digest, referrers, relation_members
 from .storage import Database
+from .semantics import application
 
 MODES = ("author", "primary", "independent", "reconcile")
 TARGET_COLLECTIONS = ("papers", "items", "parts", "audits")
-STRUCTURAL = ("items", "parts", "scopes", "arguments", "groups", "uses", "coverage")
+STRUCTURAL = ("items", "parts", "scopes", "arguments", "groups", "uses", "coverage",
+              "target_specs", "application_details", "connection_refinements", "overview_selections",
+              "proof_boundaries")
 SOURCE_META = ("anchors", "sources", "source_issues", "source_reviews")
 ASSESSMENT = ("audits", "checks", "findings", "repairs", "observations", "reconciliations",
               "reuse_decisions", "qualifications")
@@ -35,12 +38,15 @@ WRITE_COLLECTIONS = {
     "reconcile": SOURCE_META + ("checks", "findings", "responses"),
     "independent": (),
 }
+ROUTE_REVIEW_COLLECTIONS = ("items", "parts", "scopes", "arguments", "groups", "uses",
+                            "target_specs", "application_details", "anchors", "sources", "source_issues")
 INDEPENDENT_KINDS = ("assumption", "definition", "external_result")
 # Collections and fields an independent packet must never carry (handoff 6).
 BLINDED_COLLECTIONS = tuple(c for c in ("papers", "scopes", "arguments", "groups", "uses", "coverage", "checks",
                                         "findings", "repairs", "observations", "reconciliations", "responses",
                                         "reuse_decisions", "identity_maps", "qualifications", "audits",
-                                        "source_reviews"))
+                                        "source_reviews", "target_specs", "application_details",
+                                        "connection_refinements", "overview_selections", "proof_boundaries"))
 
 
 def source_context_digest(db: Database) -> str:
@@ -60,6 +66,7 @@ def _ref(record):
 class _Closure:
     def __init__(self, db: Database, mode: str):
         self.db, self.mode = db, mode
+        self.read_collections = ROUTE_REVIEW_COLLECTIONS if mode == "route_review" else READ_COLLECTIONS[mode]
         self.records = {}
         self.guards = set()
         self.omitted = []
@@ -79,7 +86,7 @@ class _Closure:
         return self._heads[collection]
 
     def add(self, record):
-        if record is None or record.retired or record.collection not in READ_COLLECTIONS[self.mode]:
+        if record is None or record.retired or record.collection not in self.read_collections:
             return None
         self.records.setdefault(record.key, record)
         return record
@@ -132,11 +139,29 @@ class _Closure:
             return record
         if record.collection == "parts":
             self.supplier({"collection": "items", "id": record.body["item_id"]})
+        self.exact_target(record.ref)
         for passage in record.body["passages"]:
             self.add_id("anchors", passage["anchor_id"])
         if record.body.get("scope_id"):
             self.scope_chain(record.body["scope_id"])
         return record
+
+    def exact_target(self, ref):
+        if self.mode == "independent" or not self.once("exact_target", ref["collection"], ref["id"]):
+            return
+        self.guard("target_specs_for_target", ref["collection"], ref["id"])
+        for spec in self.pull(("target_specs",), ("/target", [(ref["collection"], ref["id"])], False)):
+            self.add(spec)
+            self.anchors(spec.body["evidence_refs"])
+            self.scope_chain(spec.body["scope_id"])
+            if spec.body["statement_ref"]:
+                self.add_ref(spec.body["statement_ref"])
+
+    def proof_boundary(self, argument_id):
+        for boundary in self.pull(("proof_boundaries",), ("/argument_ids", [("arguments", argument_id)], True)):
+            self.add(boundary)
+            self.add_ref(boundary.body["source_review_ref"])
+            self.anchors(ref["id"] for ref in boundary.body["anchor_refs"])
 
     def assessments(self, collection, id):
         if self.mode not in ("primary", "reconcile"):
@@ -154,6 +179,14 @@ class _Closure:
         if use is None or not self.once("use", use_id):
             return use
         self.supplier(use.body["from"])
+        detail = self.add_id("application_details", use_id)
+        if detail is not None:
+            self.scope_chain(detail.body.get("scope_id"))
+        for refinement in self.pull(("connection_refinements",), ("/summary_use_id", [use.key], False)):
+            if self.add(refinement) is not None:
+                self.add_id("arguments", refinement.body["argument_id"])
+                for refined_id in refinement.body["use_ids"]:
+                    self.use(refined_id)
         self.anchors(use.body["evidence_refs"])
         self.assessments("uses", use_id)
         return use
@@ -164,6 +197,7 @@ class _Closure:
             return argument
         self.scope_chain(argument.body["scope_id"])
         self.anchors(argument.body["evidence_refs"])
+        self.proof_boundary(argument_id)
         for relation in ("groups_in_argument", "coverage_in_argument", "scopes_in_argument"):
             self.guard(relation, "arguments", argument_id)
         for _, group_id, _ in self.members("groups_in_argument", "arguments", argument_id):
@@ -207,6 +241,7 @@ class _Closure:
             statements.append(record)
         for statement in statements:
             self.add(statement)
+            self.exact_target(statement.ref)
             if statement.body.get("scope_id"):
                 self.scope_chain(statement.body["scope_id"])
             for passage in statement.body["passages"]:
@@ -236,7 +271,7 @@ class _Closure:
         self.add_id("qualifications", audit.body["qualification_id"])
 
     def paper_closure(self):
-        for collection in READ_COLLECTIONS[self.mode]:
+        for collection in self.read_collections:
             for record in self.heads(collection):
                 self.add(record)
         for collection in ("items", "parts"):
@@ -276,7 +311,7 @@ class _Closure:
                                ("/anchor_id", anchor_keys, False)):
             if issue.body["lifecycle"] == "open":
                 self.add(issue)
-        if "source_reviews" in READ_COLLECTIONS[self.mode]:
+        if "source_reviews" in self.read_collections:
             for review in self.pull(("source_reviews",), ("/source_refs", source_keys, True),
                                     ("/anchor_refs", anchor_keys, True)):
                 self.add(review)
@@ -332,8 +367,13 @@ def _independent(db: Database, targets: list, extra_anchor_ids=(), extra_paths=(
         closure.add(record)
         for passage in record.body["passages"]:
             closure.add_id("anchors", passage["anchor_id"])
+        # Supply neutral complete source segments without the coordinator's
+        # boundary verdict, route structure, or exact specification.
+        for boundary in closure.pull(("proof_boundaries",), ("/target", [record.key], False)):
+            for pin in boundary.body["anchor_refs"]:
+                closure.add_id("anchors", pin["id"])
         item = record if record.collection == "items" else closure.add_id("items", record.body["item_id"])
-        if item is not None:
+        if item is not None and record.collection == "items":
             closure.guard("parts_of_item", "items", item.id)
             for _, part_id, _ in closure.members("parts_of_item", "items", item.id):
                 part = closure.record("parts", part_id)
@@ -344,6 +384,13 @@ def _independent(db: Database, targets: list, extra_anchor_ids=(), extra_paths=(
                     continue
                 closure.add(part)
                 for passage in part.body["passages"]:
+                    closure.add_id("anchors", passage["anchor_id"])
+        elif item is not None:
+            # A part packet needs its parent's standing statement/setup, not every
+            # sibling part or the parent's full proof. Explicit context extensions
+            # can add any additional source actually needed.
+            for passage in item.body["passages"]:
+                if passage["role"] in ("statement", "definition", "evidence"):
                     closure.add_id("anchors", passage["anchor_id"])
         # Controller selection already derives the audit's effective consumed
         # closure, including prerequisite results and source-origin parts. A
@@ -383,7 +430,7 @@ def blinding_violations(packet: dict) -> list:
     """Return every way a packet payload exposes primary work to an independent worker."""
     problems = []
     for field in ("work", "instructions", "assigned_task_ids", "conditional_on_task_ids", "tasks", "units",
-                  "_manifest", "manifest"):
+                  "_manifest", "manifest", "historical_records", "supplied_derivations"):
         if field in packet:
             problems.append(f"{field} exposes coordinator work")
     for entry in packet.get("records", []):
@@ -402,6 +449,24 @@ def blinding_violations(packet: dict) -> list:
         if guard["relation"] not in BLIND_SAFE_GUARDS:
             problems.append(f"membership guard {guard['relation']} exposes primary work")
     return problems
+
+
+def _historical_statements(closure):
+    """Read-only pinned statement content, never a duplicate live identity."""
+    found = {}
+    for spec in list(closure.records.values()):
+        if spec.collection != "target_specs" or spec.body["statement_ref"] is None:
+            continue
+        pin = spec.body["statement_ref"]
+        current = closure.record(pin["collection"], pin["id"])
+        if current is not None and current.version == pin["version"]:
+            continue
+        reader = closure.state if hasattr(closure, "state") else closure.db
+        original = reader.version(pin["collection"], pin["id"], pin["version"])
+        if original is not None:
+            found[(original.collection, original.id, original.version)] = {"ref": original.pinned,
+                                                                          "body": original.body}
+    return [found[key] for key in sorted(found)]
 
 
 def _build(db: Database, *, targets: list, mode: str, extra_anchor_ids=(), extra_paths=(), extends=None) -> dict:
@@ -464,6 +529,9 @@ def _build(db: Database, *, targets: list, mode: str, extra_anchor_ids=(), extra
     packet["omitted"] = closure.omitted
     packet["extends"] = extends
     packet["truncated"] = False
+    historical = _historical_statements(closure)
+    if historical:
+        packet["historical_records"] = historical
     if mode == "independent":
         problems = blinding_violations(packet)
         if problems:
@@ -624,7 +692,14 @@ class _WorkState:
             owners, field, legal = RELATIONS[relation]
             if legal is not None and key["collection"] not in legal:
                 raise InvalidRequest(f"{relation} cannot be keyed by {key['collection']}")
-            self.relations[cache_key] = self.referrers(owners, field, [(key["collection"], key["id"])])
+            members = self.referrers(owners, field, [(key["collection"], key["id"])])
+            if relation == "uses_in_group":
+                for _, identity, _ in self.referrers(("application_details",), "/group_id",
+                                                      [(key["collection"], key["id"])]):
+                    use = self.live("uses", identity)
+                    if use is not None:
+                        members.append(("uses", use.id, use.version))
+            self.relations[cache_key] = sorted(set(members))
         return self.relations[cache_key]
 
 
@@ -673,6 +748,7 @@ class _LocalClosure(_Closure):
             return record
         if record.collection not in ("items", "parts"):
             return record
+        self.exact_target(record.ref)
         self.anchors(p["anchor_id"] for p in record.body["passages"] if p["role"] in ("statement", "definition"))
         self.scope_chain(record.body.get("scope_id"))
         if record.collection == "parts":
@@ -689,7 +765,7 @@ class _LocalClosure(_Closure):
             self.borrowed_proof({"collection": "items", "id": record.body["item_id"]})
 
     def assessments(self, collection, id):
-        if self.mode == "independent":
+        if self.mode not in ("primary", "reconcile"):
             return
         for record in self.pull(("checks", "findings"), ("/target", [(collection, id)], False)):
             self.add(record)
@@ -736,6 +812,7 @@ class _LocalClosure(_Closure):
         self.guard("incoming_uses", argument.body["target"]["collection"], argument.body["target"]["id"])
         self.scope_chain(argument.body["scope_id"])
         self.anchors(argument.body["evidence_refs"])
+        self.proof_boundary(argument_id)
         for relation in ("groups_in_argument", "scopes_in_argument", "coverage_in_argument"):
             self.guard(relation, "arguments", argument_id)
         for _, group_id, _ in self.members("groups_in_argument", "arguments", argument_id):
@@ -744,6 +821,8 @@ class _LocalClosure(_Closure):
             self.scope_chain(scope_id)
         for _, coverage_id, _ in self.members("coverage_in_argument", "arguments", argument_id):
             coverage = self.add_id("coverage", coverage_id)
+            if coverage is None:
+                continue
             self.add_id("anchors", coverage.body["anchor_id"])
             for check_id in coverage.body["check_ids"]:
                 self.add_id("checks", check_id)
@@ -766,10 +845,17 @@ class _LocalClosure(_Closure):
         if action == "compare_source":
             if target["collection"] == "uses":
                 use = self.add_id("uses", target["id"])
-                if use and use.body["group_id"]:
-                    self.group(use.body["group_id"])
+                detail = application(self.state, use)
+                if use and detail["group_id"]:
+                    self.group(detail["group_id"])
                 else:
                     self.use(target["id"])
+            elif target["collection"] == "target_specs":
+                spec = self.add_id("target_specs", target["id"])
+                if spec:
+                    self.supplier(spec.body["target"])
+                    self.anchors(spec.body["evidence_refs"])
+                    self.scope_chain(spec.body["scope_id"])
             else:
                 statement = self.supplier(target)
                 if statement:
@@ -778,8 +864,9 @@ class _LocalClosure(_Closure):
                         self.guard("parts_of_item", "items", statement.id)
         elif target["collection"] == "uses":
             use = self.add_id("uses", target["id"])
-            if use and use.body["group_id"]:
-                self.group(use.body["group_id"])
+            detail = application(self.state, use)
+            if use and detail["group_id"]:
+                self.group(detail["group_id"])
             else:
                 self.use(target["id"])
         elif target["collection"] == "groups":
@@ -799,7 +886,7 @@ class _LocalClosure(_Closure):
             self.add(self.state.version(pin["collection"], pin["id"], pin["version"]))
 
     def finish(self):
-        if self.mode == "independent":
+        if self.mode in ("independent", "route_review"):
             # The independent helper already selected source targets/assumptions.
             # Its source-only branch in the original finish is safe and bounded by pull.
             super().finish()
@@ -888,6 +975,9 @@ def _assignment_packet(closure, *, audit_id, mode, selection, units, tasks, spec
                 "write_scope": write_scope}
     packet = dict(manifest, records=[{"ref": r.pinned, "body": r.body} for r in records],
                   declared_scope=declared_scope, omitted=closure.omitted, extends=None, truncated=False)
+    historical = _historical_statements(closure)
+    if historical:
+        packet["historical_records"] = historical
     task_ids = {task["id"] for task in tasks}
     unit_rows = [{"id": unit["id"], "task_ids": [id for id in unit["task_ids"] if id in task_ids],
                   "prerequisite_unit_ids": list(unit.get("prerequisite_unit_ids", []))} for unit in units]
@@ -974,7 +1064,8 @@ def prepare_assignment(db: Database, *, audit_id: str, mode: str, selection: dic
             for task in unit_tasks:
                 binding_task = task
                 if mode == "independent":
-                    binding_task = dict(task, target=_source_target(closure, task), action="compare_source")
+                    binding_task = dict(task, target=_source_target(closure, task), action="compare_source",
+                                        source_only=True)
                 bound = task_binding(closure.state, binding_task)
                 spec = {key: task[key] for key in ("id", "target", "kind", "role", "action", "prerequisite_ids")}
                 spec.update(bound, draft_refs=task.get("draft_refs", []))
@@ -1017,6 +1108,124 @@ def prepare_assignment(db: Database, *, audit_id: str, mode: str, selection: dic
             "assigned_task_ids": [t["id"] for t in assigned],
             "conditional_on_task_ids": manifest["work"]["conditional_on_task_ids"],
             "deferred": deferred, "size": manifest["work"]["size"], "diagnostics": diagnostics}
+
+
+def prepare_route_assignment(db: Database, *, audit_id, route_id, max_bytes=DEFAULT_WORK_BYTES):
+    """Prepare a supplied derivation for independent review without primary verdicts."""
+    from .assessment import obligation_id
+
+    revision = db.max_revision()
+    audit, route = db.head("audits", audit_id), db.head("arguments", route_id)
+    if audit is None or audit.retired or route is None or route.retired:
+        raise InvalidRequest("route review needs a live audit and argument", code="ROUTE_REVIEW_SCOPE")
+    if route.body["lifecycle"] != "registered":
+        raise InvalidRequest("register the proposed route before independent review", code="ROUTE_REVIEW_SCOPE")
+    qualification = db.head("qualifications", audit.body["qualification_id"]) if audit.body["qualification_id"] else None
+    if (qualification is None or qualification.retired or not qualification.body["qualified"]
+            or qualification.body["protocol_version"] != audit.body["protocol_version"]
+            or validate_body("qualifications", qualification.body)):
+        raise InvalidRequest("route review needs the audit's valid qualification", code="QUALIFICATION_INVALID")
+    target = route.body["target"]
+    statement = db.head(target["collection"], target["id"])
+    owner = ({"collection": "items", "id": statement.body["item_id"]} if statement.collection == "parts"
+             else {"collection": "items", "id": statement.body["owner_id"]} if statement.body.get("owner_id")
+             else target)
+    candidates = [target] if owner == target else [target, owner]
+    # A restricted repair may be a new major target. Its finding identifies the
+    # original source result whose blind written-proof review must be preserved.
+    for _, repair_id, _ in referrers(db.conn, ("repairs",), "/argument_id", [route.key]):
+        repair = db.head("repairs", repair_id)
+        finding = db.head("findings", repair.body["finding_id"])
+        if finding is not None and finding.body["target"]["collection"] in ("items", "parts"):
+            candidates.append(finding.body["target"])
+    initial = []
+    for _, response_id, _ in referrers(db.conn, ("responses",), "/covered_targets",
+                                       [(r["collection"], r["id"]) for r in candidates], prefix=True):
+        response = db.head("responses", response_id)
+        if (response.body["audit_id"] == audit_id and response.body["exposure"] == "source_only"
+                and response.body["state"] == "accepted"):
+            for _, check_id, _ in referrers(db.conn, ("checks",), "/response_id", [response.key]):
+                check = db.head("checks", check_id)
+                written = (db.head("arguments", check.body["target"]["id"])
+                           if check.body["kind"] == "composition" else None)
+                if (check.body["state"] == "complete" and written is not None
+                        and written.body["target"] in candidates):
+                    initial.append(response.pinned)
+                    break
+    if not initial:
+        raise InvalidRequest("preserve the initial source-only review of this result before supplying a route",
+                             code="SOURCE_ONLY_REVIEW_REQUIRED")
+    if audit.body["mode"] != "full" and not any(ref in audit.body["targets"] for ref in candidates):
+        # Focused prerequisites are admitted by a previously accepted review in
+        # this same audit; no unrelated source-only response can qualify.
+        if not any(target in db.head("responses", pin["id"]).body["covered_targets"] for pin in initial):
+            raise InvalidRequest("the supplied route is outside the audit's reviewed scope", code="ROUTE_REVIEW_SCOPE")
+
+    closure = _LocalClosure(db, "route_review", audit_id, max_bytes)
+    try:
+        closure.argument(route_id)
+        closure.finish()
+        pairs = [(route.ref, "composition")]
+        for _, group_id, _ in closure.members("groups_in_argument", "arguments", route_id):
+            group = closure.record("groups", group_id)
+            pairs.append((group.ref, "derivation"))
+            if group.body["kind"] == "cases":
+                pairs.append((group.ref, "case_coverage"))
+            if group.body["discharges"]:
+                pairs.append((group.ref, "scope_discharge"))
+            pairs.extend(({"collection": "uses", "id": use_id}, "application")
+                         for _, use_id, _ in closure.members("uses_in_group", "groups", group_id))
+        tasks, specs, supplied, supplied_refs = [], [], [], []
+        for exact_target, kind in pairs:
+            task = {"id": obligation_id(audit_id, exact_target, kind, "independent"), "target": exact_target,
+                    "kind": kind, "role": "independent", "action": "check", "prerequisite_ids": [], "owner": target}
+            bound = task_binding(closure.state, task)
+            checks = [r for r in closure.pull(("checks",), ("/target", [(exact_target["collection"], exact_target["id"])], False))
+                      if r.body["role"] == "primary" and r.body["kind"] == kind and r.body["state"] == "complete"]
+            superseded = {r.body["supersedes"]["id"] for r in checks if r.body["supersedes"]}
+            checks = [r for r in checks if r.id not in superseded]
+            for check in checks:
+                # Preserve substantive proposed mathematics, never its outcome,
+                # role, grading hints, findings, or prior independent opinions.
+                supplied.append({key: check.body[key] for key in
+                                 ("target", "kind", "reasoning", "evidence_refs", "conditions")})
+                supplied_refs.append(check.pinned)
+                closure.anchors(check.body["evidence_refs"])
+                bound["consumed_inputs"].append({"ref": check.pinned, "facet": "full",
+                                                 "digest": facet_digests("checks", check.body)["full"]})
+            specs.append({**{k: task[k] for k in ("id", "target", "kind", "role", "action", "prerequisite_ids")},
+                          **bound, "draft_refs": []})
+            tasks.append(task)
+        closure.finish()
+        unit = {"id": "unit_" + digest(["route_review", audit_id, route_id]), "task_ids": [t["id"] for t in tasks]}
+        scope = {"audit_id": audit_id, "mode": audit.body["mode"], "targets": [target],
+                 "exclusions": audit.body["exclusions"], "protocol_version": audit.body["protocol_version"]}
+        selection = {"context": {"owner": owner, "argument": route.ref}, "max_units": 1}
+        manifest, packet = _assignment_packet(closure, audit_id=audit_id, mode="independent", selection=selection,
+            units=[unit], tasks=tasks, specs=specs, packet_id=new_id("packet"), revision=revision,
+            max_bytes=max_bytes, declared_scope=scope)
+        manifest.update(review_basis="route_provided", route_ref=route.pinned,
+                        initial_response_refs=initial, supplied_derivation_refs=supplied_refs)
+        packet.update(review_basis="route_provided", route_ref=route.pinned, supplied_derivations=supplied)
+        # The worker sees the reviewed proposal but none of the author judgments.
+        # Source review records and coverage are coordinator provenance only.
+        if any(r["ref"]["collection"] not in ROUTE_REVIEW_COLLECTIONS for r in packet["records"]):
+            raise InvalidRequest("supplied-route packet contains assessment records")
+        size = manifest["work"]["size"]
+        size["worker_bytes"] = len(canonical_bytes(packet))
+        if size["worker_bytes"] > max_bytes:
+            raise _ContextLimit(records=size["unique_records"], bytes=size["worker_bytes"],
+                                contributors=closure.state.contributors())
+    except _ContextLimit as exc:
+        return {"prepared": False, "diagnostics": [{"code": "OVERSIZED_CONTEXT", "reason": "oversized_context",
+                "measured_or_lower_bound_bytes": exc.bytes, "unique_record_count": exc.records,
+                "largest_contributors": exc.contributors}], "deferred": [route_id]}
+    _persist(db, manifest, packet)
+    return {"prepared": True, "packet_id": manifest["packet_id"], "revision": revision,
+            "audit_id": audit_id, "mode": "independent", "review_basis": "route_provided",
+            "manifest": manifest, "packet": packet, "selected_unit_ids": [unit["id"]],
+            "assigned_task_ids": unit["task_ids"], "conditional_on_task_ids": [],
+            "deferred": [], "size": size, "diagnostics": []}
 
 
 __all__ = ["MODES", "READ_COLLECTIONS", "WRITE_COLLECTIONS", "blinding_violations", "get_packet", "load_packet",

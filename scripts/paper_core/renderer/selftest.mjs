@@ -1,9 +1,9 @@
-// Renderer self-test: vendored-file hashes, fixture renders, and the cycle failure.
+// Renderer self-test: vendored-file hashes, fixture renders, and explicit cycle modes.
 //
 // Usage: node selftest.mjs            (exit 0 when every check passes, 1 otherwise)
 // Prints one JSON object with the individual check results.
 import { createHash } from 'node:crypto';
-import { readFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -77,6 +77,32 @@ function checkFixtures(results, workdir) {
     if (existsSync(output)) problems.push('a failed render left an output file behind');
     results.push({ check: `fail:${entry.file}`, ok: problems.length === 0, problems });
   }
+  // The same cyclic dataset is drawable when it declares its actual layout
+  // mode. The dag declaration above must still fail, rather than change mode.
+  const cyclic = JSON.parse(readFileSync(path.join(FIXTURES, 'cycle_dag.json'), 'utf8'));
+  cyclic.title = 'Cycle sample with every recorded direction';
+  cyclic.projection.layout = { mode: 'cyclic', reasons: ['Every recorded arrow is retained.'] };
+  const source = path.join(workdir, 'cyclic.json'), output = path.join(workdir, 'cyclic.html');
+  writeFileSync(source, JSON.stringify(cyclic));
+  const run = runRenderer(source, output), receipt = run.stdout || {};
+  const problems = [];
+  if (run.status !== 0) problems.push(`exit ${run.status}: ${JSON.stringify(run.stderr)}`);
+  if (receipt.representation?.status !== 'pass') problems.push('representation check did not pass');
+  if (receipt.geometry?.status !== 'pass') problems.push('geometry check did not pass');
+  if (receipt.nodes !== cyclic.projection.nodes.length || receipt.connections !== cyclic.projection.connections.length)
+    problems.push('cycle rendering changed the graph counts');
+  results.push({ check: 'render:cyclic', ok: problems.length === 0, problems, layout_mode: receipt.layout_mode,
+    nodes: receipt.nodes, connections: receipt.connections });
+  // Dense return edges exercise distinct rails, both directions between each
+  // pair, and routes that pass other ranks and rows without crossing boxes.
+  const template = cyclic.projection.connections[0];
+  cyclic.projection.connections = cyclic.projection.nodes.flatMap((from) => cyclic.projection.nodes
+    .filter((to) => to.id !== from.id).map((to) => ({ ...template, id: `dense_${from.id}_${to.id}`, from: from.id, to: to.id })));
+  writeFileSync(source, JSON.stringify(cyclic));
+  const denseRun = runRenderer(source, output), denseReceipt = denseRun.stdout || {};
+  results.push({ check: 'render:cyclic-dense', ok: denseRun.status === 0 && denseReceipt.geometry?.status === 'pass'
+    && denseReceipt.representation?.status === 'pass' && denseReceipt.connections === cyclic.projection.connections.length,
+  diagnostics: denseRun.stderr, nodes: denseReceipt.nodes, connections: denseReceipt.connections });
 }
 
 export function main() {

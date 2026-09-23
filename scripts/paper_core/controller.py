@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
+from . import CONTRACT_VERSION
 
 from .acceptance import accept_in_transaction
 from .bindings import task_binding_changes
@@ -12,7 +13,7 @@ from .contract import (BATCH, CHECK_TARGETS, WORK_PRIMARY_RESPONSE, WORK_SUBMISS
                        extract_refs, validate_body, validate_shape)
 from .errors import CoreError, ConflictError, InvalidRequest
 from .ids import new_id, valid_id
-from .packets import load_packet, prepare_assignment, source_context_digest
+from .packets import load_packet, prepare_assignment, prepare_route_assignment, source_context_digest
 from .review import _check_body, plan_review_submission
 from .refs import facet_digests
 from .storage import Database
@@ -88,8 +89,11 @@ def _provenance(db, envelope, manifest):
                 or body["protocol_version"] != audit.body["protocol_version"]):
             raise InvalidRequest("reviewer qualification does not match this assignment",
                                  code="QUALIFICATION_INVALID")
-        if envelope["exposure"] not in ("source_only", "compromised"):
+        if envelope["exposure"] not in ("source_only", "route_provided", "compromised"):
             raise InvalidRequest("independent work needs coordinator exposure provenance")
+        if envelope["exposure"] not in (manifest.get("review_basis", "source_only"), "compromised"):
+            raise InvalidRequest("exposure must identify the packet's actual review basis",
+                                 code="REVIEW_BASIS_MISMATCH")
         if envelope["exposure"] == "compromised" and not envelope["exposure_note"].strip():
             raise InvalidRequest("compromised exposure needs a note")
     elif envelope["qualification_id"] is not None or envelope["exposure"] is not None:
@@ -454,6 +458,12 @@ def submit_work(db, *, envelope_bytes: bytes, response_bytes: bytes) -> dict:
             current_work = derive_work(db, audit_id=original["work"]["audit_id"])
             task_states = {t["id"]: t["state"] for t in current_work["tasks"]}
             remaining = [tid for tid in _task_map(original) if task_states.get(tid) != "satisfied"]
+            if original.get("review_basis") == "route_provided":
+                completed = {(j["target"].get("collection"), j["target"].get("id"), j["kind"])
+                             for j in worker["judgments"] if j["state"] == "complete"
+                             and "source_anchor_id" not in j["target"]}
+                remaining = [tid for tid, task in _task_map(original).items()
+                             if (task["target"]["collection"], task["target"]["id"], task["kind"]) not in completed]
             result = {"request_id": request_id, "packet_id": original["packet_id"],
                       "acceptance_packet_id": active["packet_id"], "stored": True, "state": plan["state"],
                       "committed_revision": receipt["revision"], "receipt": receipt,
@@ -501,7 +511,7 @@ def response_scaffold(manifest):
         return {"packet_id": manifest["packet_id"], "covered_targets": manifest["targets"],
                 "coverage_note": "", "exposure_report": {"status": "none_known", "note": ""}, "judgments": []}
     if mode == "reconcile":
-        return {"contract_version": 3, "request_id": new_id("request"), "packet_id": manifest["packet_id"],
+        return {"contract_version": CONTRACT_VERSION, "request_id": new_id("request"), "packet_id": manifest["packet_id"],
                 "edits": []}
     results = []
     for task in manifest["work"]["tasks"]:
@@ -516,11 +526,18 @@ def response_scaffold(manifest):
 
 
 def prepare_work(db, *, audit_id, mode, focus=None, task_ids=(), exclude_task_ids=(),
-                 max_units=5, max_bytes=131072, allow_provisional=False):
+                 max_units=5, max_bytes=131072, allow_provisional=False, route_id=None):
     if mode not in ("primary", "independent", "reconcile"):
         raise InvalidRequest("unknown assignment mode")
     if type(max_bytes) is not int or not 1 <= max_bytes <= 1048576:
         raise InvalidRequest("max_bytes must be between 1 and 1048576")
+    if route_id is not None:
+        if mode != "independent" or task_ids or exclude_task_ids or allow_provisional:
+            raise InvalidRequest("--route requires independent mode without task overrides or provisional work")
+        prepared = prepare_route_assignment(db, audit_id=audit_id, route_id=route_id, max_bytes=max_bytes)
+        if prepared.get("prepared"):
+            prepared["scaffold"] = response_scaffold(prepared["manifest"])
+        return prepared
     view = derive_work(db, audit_id=audit_id, focus=focus)
     selection = select_assignment(view, {"mode": mode, "focus": focus, "task_ids": list(task_ids),
                                         "exclude_task_ids": list(exclude_task_ids), "max_units": max_units,

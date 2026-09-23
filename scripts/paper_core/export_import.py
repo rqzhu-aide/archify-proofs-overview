@@ -3,8 +3,9 @@
 Implements record-contract section 7 (export shape and adapter rules) and the
 ``export``, ``migrate-overview`` and ``import-legacy`` commands of
 implementation-handoff section 5. Both importers write through the ordinary
-acceptance engine with ``command="import"``; they never edit SQLite rows
-directly and never import the legacy monolith or the legacy overview scripts.
+acceptance engine with ``command="import"``. Native migration then activates
+the converted tables in one exclusive transaction. Neither importer imports
+the legacy monolith or the legacy overview scripts.
 """
 from __future__ import annotations
 
@@ -90,7 +91,7 @@ def export_snapshot(db: Database, *, revision=None, history: bool = False) -> di
     sources = sorted([s.id, s.version, s.body["blob_sha256"]]
                      for s in records if s.collection == "sources" and not s.retired)
     result = {
-        "contract_version": CONTRACT_VERSION,
+        "contract_version": int(db.metadata["contract_version"]),
         "storage_format": int(db.metadata["storage_format"]),
         "revision": revision,
         "paper_id": papers[0].id,
@@ -354,15 +355,18 @@ def _overview_edits(paper: Record, legacy: dict, mapper: _IdMapper, limitations:
         if start is None and page is None and label is None:
             raise IncompatibleError(f"legacy anchor {a['id']} records no line range, page or label")
         if page is not None and file_media[file_id] != "pdf":
-            raise IncompatibleError(f"legacy anchor {a['id']} reviews page {page} of {file_id}, which is not a "
-                                    "captured PDF; re-anchor it in the overview before migrating")
-        # The locator keeps every recorded field; the method names how the excerpt was established.
+            if start is None and label is None:
+                raise IncompatibleError(f"legacy anchor {a['id']} reviews page {page} of {file_id}, which is not a "
+                                        "captured PDF; re-anchor it in the overview before migrating")
+            # Supplemental compiled-page navigation survives in the overview
+            # selection; canonical evidence remains bound to captured text.
+            page = None
         method = "exact_lines" if start is not None else "label_match" if label is not None else "reviewed_page"
         excerpt = a["excerpt"]
         limitation = None
         text = anchor_verify.get(file_id)
         if a.get("verification", {}).get("status") != "checked":
-            limitation = f"legacy verification status {a.get('verification', {}).get('status')!r}"
+            limitation = a.get("verification", {}).get("note") or f"legacy verification status {a.get('verification', {}).get('status')!r}"
         elif start is not None and text is not None and _extract_lines(text, start, end) != excerpt:
             limitation = "legacy excerpt differs from the captured source lines; re-anchor before reuse"
         if a.get("excerpt_hash") != sha256_bytes(excerpt.encode("utf-8")):
@@ -437,10 +441,12 @@ def _overview_edits(paper: Record, legacy: dict, mapper: _IdMapper, limitations:
         edits.append(_create("uses", use_ids[u["id"]], {
             "from": {"collection": "items", "id": item_ids[u["from"]]},
             "to": {"collection": "items", "id": item_ids[u["to"]]}, "type": u["type"],
-            "group_id": group_ids.get((group["id"], u["to"])) if group else None,
-            "reason": u.get("reason") or "Legacy overview use; no reason was recorded.", "needed_form": None,
-            "substitutions": [], "evidence_refs": evidence_refs,
+            "reason": u.get("reason") or "Legacy overview use; no reason was recorded.", "evidence_refs": evidence_refs,
             "regime": u.get("regime") or None, "uncertainty": u.get("issue") or None}))
+        if group:
+            edits.append(_create("application_details", use_ids[u["id"]], {
+                "use_id": use_ids[u["id"]], "group_id": group_ids[group["id"], u["to"]],
+                "needed_form": None, "substitutions": [], "scope_id": None, "state": "draft"}))
     inventory = payload.get("inventory") or {}
     for entry in inventory.get("unresolved", []):
         # Each legacy unresolved-inventory entry becomes an open source issue, so the coverage
@@ -451,10 +457,26 @@ def _overview_edits(paper: Record, legacy: dict, mapper: _IdMapper, limitations:
             "source_id": _unresolved_issue_source(entry, payload, file_sources), "anchor_id": None,
             "category": category, "description": entry, "lifecycle": "open", "resolution": None,
             "reviewer": "migrate-overview"}))
+    from .overview import SELECTION_ID, selection_body
+    selected = selection_body(paper.id, dict(payload, observations=legacy["observations"]),
+                              profile=legacy["metadata"].get("authoring_profile", "compatibility"))
+    # Native identifiers normally already satisfy the common contract. Preserve
+    # an explicit map where a historical identifier had to change.
+    selected["item_ids"] = [item_ids[i] for i in selected["item_ids"]]
+    selected["use_ids"] = [use_ids[i] for i in selected["use_ids"]]
+    selected["main_item_ids"] = [item_ids[i] for i in selected["main_item_ids"]]
+    selected["source_ids"] = [file_sources[i] for i in selected["source_ids"]]
+    selected["native_context"]["anchor_ids"] = [anchor_ids[i] for i in selected["native_context"]["anchor_ids"]]
+    for name, mapping in (("items", item_ids), ("uses", use_ids)):
+        fields = selected["native_context"]["optional_fields"][name]
+        selected["native_context"]["optional_fields"][name] = {mapping[k]: v for k, v in fields.items()}
+    selected["native_context"]["anchor_metadata"] = {anchor_ids[k]: v for k, v in selected["native_context"]["anchor_metadata"].items()}
+    selected["native_context"]["groups"] = {use_ids[k]: v for k, v in selected["native_context"]["groups"].items()}
+    edits.append(_create("overview_selections", SELECTION_ID, selected))
     noted_observation_fields = False
     applicable = _applicable_observations(legacy)
     archived_observations = 0
-    for o in legacy["observations"]:
+    for observation_order, o in enumerate(legacy["observations"]):
         target = o["target"]
         if target.get("collection") == "items" and target.get("id") in item_ids:
             new_target = {"collection": "items", "id": item_ids[target["id"]]}
@@ -464,10 +486,7 @@ def _overview_edits(paper: Record, legacy: dict, mapper: _IdMapper, limitations:
             limitations.append(f"observation {o['id']}: target {target} is not an imported item or use; skipped")
             continue
         if o["id"] not in applicable:
-            # Stale or superseded review history stays historical: it remains in the archived
-            # legacy export, never as a live observation bound to the current record versions.
             archived_observations += 1
-            continue
         result = o["result"] if o["result"] in ("matched", "needs_attention") else "needs_attention"
         note = o.get("note") or ""
         if result != o["result"]:
@@ -488,18 +507,20 @@ def _overview_edits(paper: Record, legacy: dict, mapper: _IdMapper, limitations:
             else:
                 limitations.append(f"observation {o['id']}: evidence anchor {ref} is not an imported anchor; dropped")
         obs_id = mapper.assign("observations", o["id"], rationale="legacy overview observation")
+        native_observation = dict(o, target=new_target, id=obs_id)
         obs_body = {"target": new_target, "result": result,
                     "reviewer": o.get("reviewer") or "legacy-overview", "note": note,
-                    "evidence_refs": evidence_refs}
+                    "evidence_refs": evidence_refs, "context_kind": "overview",
+                    "context_data": {"selection_id": SELECTION_ID, "input_snapshot": o["input_snapshot"],
+                                     "native_observation": native_observation,
+                                     "observation_order": observation_order,
+                                     "applicable_on_import": o["id"] in applicable}}
         if isinstance(o.get("created_at"), str) and o["created_at"]:
             obs_body["created_at"] = o["created_at"]
         edits.append(_create("observations", obs_id, obs_body))
-    if noted_observation_fields:
-        limitations.append("legacy observation fields created_at, input_snapshot and carried_from have no "
-                           "contract-3 home; each observation preserves them in its note")
     if archived_observations:
-        limitations.append(f"{archived_observations} historical observations archived, not imported: they "
-                           "reviewed older or superseded content")
+        limitations.append(f"{archived_observations} historical observations preserved with their original "
+                           "comparison inputs; they do not acquire current comparison credit")
     main_items = []
     kinds = {it["id"]: it["kind"] for it in payload["items"]}
     for old in payload.get("main_items", []):
@@ -517,28 +538,54 @@ def _overview_edits(paper: Record, legacy: dict, mapper: _IdMapper, limitations:
 
 
 def migrate_overview(db_path, *, backup) -> dict:
-    """Upgrade a legacy overview database in place: back it up, then rebuild it as storage format 3."""
+    """Offline conversion with SQLite locking and transactional in-place cutover.
+
+    A reserved writer lock precedes the backup and freezes observation appends,
+    including appends that do not change the native snapshot id. Schema replacement
+    upgrades that lock to exclusive. No file is replaced under an open connection.
+    """
     db_path, backup = Path(db_path), Path(backup)
     if not db_path.is_file():
         raise InvalidRequest(f"database not found: {db_path}")
-    legacy = _read_legacy_overview(db_path)
-    payload = legacy["payload"]
-    limitations: list = []
-    source_root = legacy["metadata"].get("source_root")
-    root = Path(source_root) if source_root else None
-    if root is None or not root.is_dir():
-        limitations.append(f"legacy source_root {source_root!r} is not a directory here; using the database folder")
-        root = db_path.resolve().parent
-    title = payload.get("title") or db_path.stem
-    backup_info = _backup_legacy(db_path, backup, legacy["snapshot_id"])
     temp = db_path.with_name(f"{db_path.name}.migrating-{uuid.uuid4().hex}")
     receipt = None
+    lock = sqlite3.connect(str(db_path), timeout=0, isolation_level=None)
     try:
-        init = initialize(temp, source_root=root, title=title)
+        # WAL readers retain older schemas; require their closure before the
+        # offline conversion. Changing journal mode is a SQLite-coordinated
+        # operation, not manual manipulation of -wal/-shm sidecars.
+        if lock.execute("PRAGMA journal_mode=DELETE").fetchone()[0].lower() != "delete":
+            raise IncompatibleError("Offline conversion requires all other clients to close the database", code="DATABASE_BUSY")
+        lock.execute("BEGIN IMMEDIATE")
+        metadata = dict(lock.execute("SELECT key,value FROM metadata"))
+        if metadata.get("storage_format") is not None:
+            raise InvalidRequest(f"{db_path} is already storage format {metadata['storage_format']}; nothing to migrate", code="ALREADY_MIGRATED")
+        if metadata.get("format") != LEGACY_OVERVIEW_FORMAT:
+            raise IncompatibleError(f"Unsupported overview format {metadata.get('format')!r}")
+        current = lock.execute("SELECT snapshot_id FROM current_snapshot WHERE singleton=1").fetchone()
+        if current is None:
+            raise IncompatibleError("Native overview has no current snapshot")
+        native_payload = lock.execute("SELECT payload FROM snapshots WHERE id=?", (current[0],)).fetchone()
+        schema_version = json.loads(native_payload[0]).get("schema_version") if native_payload else None
+        if type(schema_version) is not int or schema_version not in LEGACY_OVERVIEW_SCHEMA_VERSIONS:
+            raise IncompatibleError("migrate-overview accepts native schema-3 overview records only; start a new v3 overview from the manuscript for older versions")
+        backup_info = _backup_legacy(db_path, backup, current[0])
+        legacy = _read_legacy_overview(backup)
+        payload = legacy["payload"]
+        limitations: list = []
+        source_root = legacy["metadata"].get("source_root")
+        if not source_root:
+            raise IncompatibleError("Native overview has no source-root provenance; supply an explicit verified root before conversion")
+        root = Path(source_root)
+        if not root.is_dir():
+            limitations.append(f"Registered source root {source_root!r} is unavailable; captured bytes and the original root remain authoritative")
+        title = payload.get("title") or db_path.stem
+        init = initialize(temp, source_root=root, title=title, allow_missing_source_root=True)
         with Database(temp, write=True) as db:
             paper = paper_record(db)
             mapper = _IdMapper()
             edits, blobs = _overview_edits(paper, legacy, mapper, limitations)
+            next(e for e in edits if e["collection"] == "papers")["body"]["source_root"] = root.as_posix()
             legacy_export = canonical_bytes({"format": LEGACY_OVERVIEW_FORMAT, "snapshot_id": legacy["snapshot_id"],
                                              "snapshot": payload, "observations": legacy["observations"]})
             blobs.append(legacy_export)
@@ -564,10 +611,38 @@ def migrate_overview(db_path, *, backup) -> dict:
             if opened:
                 counts["source_issues"] = opened
             remapped, paper_id = mapper.remapped, paper.id
-        os.replace(temp, db_path)
+        # Keep historical snapshots/builds in the backup. Remove every old
+        # writable native table so even a preopened old writer cannot append
+        # after activation. All DDL and data copying share this transaction.
+        lock.execute("ATTACH DATABASE ? AS converted", (str(temp),))
+        schema = lock.execute("SELECT type,name,sql FROM converted.sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 WHEN 'view' THEN 2 ELSE 3 END").fetchall()
+        for name in ("observations", "builds", "current_snapshot", "snapshots", "source_blobs", "metadata"):
+            lock.execute(f'DROP TABLE "{name}"')
+        for kind, name, sql in schema:
+            if kind == "table":
+                lock.execute(sql)
+                quoted = '"' + name.replace('"', '""') + '"'
+                lock.execute(f"INSERT INTO main.{quoted} SELECT * FROM converted.{quoted}")
+        for kind, name, sql in schema:
+            if kind != "table":
+                lock.execute(sql)
+        if lock.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise IncompatibleError("Converted database failed foreign-key validation; original authority preserved")
+        lock.execute("COMMIT")
+        lock.execute("DETACH DATABASE converted")
+    except sqlite3.DatabaseError as exc:
+        if lock.in_transaction:
+            lock.execute("ROLLBACK")
+        if "locked" in str(exc).lower() or "busy" in str(exc).lower():
+            raise IncompatibleError("Database is busy. Close all overview clients and retry the explicit offline conversion; original authority preserved.", code="DATABASE_BUSY") from exc
+        raise IncompatibleError(f"Cannot convert overview database {db_path}: {exc}") from exc
     except Exception:
-        Path(temp).unlink(missing_ok=True)
+        if lock.in_transaction:
+            lock.execute("ROLLBACK")
         raise
+    finally:
+        lock.close()
+        temp.unlink(missing_ok=True)
     return {"database": str(db_path), "backup": backup_info, "paper_id": paper_id, "revision": receipt["revision"],
             "legacy": {"format": LEGACY_OVERVIEW_FORMAT, "snapshot_id": legacy["snapshot_id"],
                        "snapshots": len(legacy["snapshot_ids"]), "builds": legacy["builds"]},

@@ -122,6 +122,89 @@ class ConverterAdaptationTests(unittest.TestCase):
         self.assertEqual(html.count('class="math-fallback"'), 1)
         self.assertEqual(html.count("<math"), 2)
 
+    def test_doubled_commands_do_not_silently_render_as_word_letters(self):
+        for literal in (r"$\\mathbf{U}$", r"$\\frac{1}{n}$", r"$x + \\alpha$", r"$\\frac 1n$"):
+            with self.subTest(literal=literal):
+                # Exercise the decoded canonical text, as a JSON record supplies it.
+                decoded = json.loads(json.dumps({"text": literal}))["text"]
+                diagnostics = []
+                markup = math_display.render_text(decoded, diagnostics)
+                self.assertIn('class="math-fallback"', markup)
+                self.assertNotIn("<math", markup)
+                self.assertIn(literal, markup)
+                self.assertEqual(diagnostics[0]["excerpt"], decoded)
+                self.assertIn("likely doubled LaTeX command slash", diagnostics[0]["reason"])
+
+    def test_paired_doubled_delimiters_are_located_without_losing_math(self):
+        for literal in (r"\\(x_n\\to 0\\)", r"\\[\\frac{1}{n}\\]"):
+            with self.subTest(literal=literal):
+                diagnostics = []
+                markup = math_display.render_text("Before " + literal + " after $y$.", diagnostics)
+                self.assertIn('class="math-fallback"', markup)
+                self.assertIn(literal, markup)
+                self.assertEqual(markup.count("<math"), 1)
+                self.assertEqual(len(diagnostics), 1)
+                self.assertEqual(diagnostics[0]["excerpt"], literal)
+                self.assertIn("doubled LaTeX delimiter", diagnostics[0]["reason"])
+
+    def test_correct_delimiters_and_commands_keep_their_rendering_and_annotation(self):
+        literal = r"\(\mathbf{U}\) and $\frac{1}{n}$ and \[\alpha\to0\]"
+        diagnostics = []
+        markup = math_display.render_text(literal, diagnostics)
+        self.assertEqual(diagnostics, [])
+        self.assertEqual(markup.count("<math"), 3)
+        self.assertIn("<mfrac", markup)
+        self.assertIn(r'encoding="application/x-tex">\mathbf{U}</annotation>', markup)
+
+    def test_legitimate_row_breaks_are_not_misdiagnosed_as_doubled_commands(self):
+        namespace = {"m": math_display.MATHML_NS}
+        for tex in (r"\begin{matrix}a\\beta\end{matrix}",
+                    r"\begin{align}x&=1\\frac&=2\end{align}",
+                    r"\substack{a\\beta}"):
+            with self.subTest(tex=tex):
+                markup, reason = math_display._convert(tex, "block")
+                self.assertIsNotNone(markup, reason)
+                root = ET.fromstring(markup)
+                self.assertGreaterEqual(len(root.findall(".//m:mtr", namespace)), 2)
+                self.assertEqual(root.find(".//m:annotation", namespace).text, tex)
+        # aligned already lacks reliable converter support. Preserve that
+        # existing fallback instead of blaming its valid row separator.
+        markup, reason = math_display._convert(r"\begin{aligned}x&=1\\beta&=2\end{aligned}", "block")
+        self.assertIsNone(markup)
+        self.assertIn("unsupported environment", reason)
+        self.assertNotIn("doubled", reason)
+
+    def test_commands_after_a_row_environment_are_still_checked(self):
+        tex = r"\begin{matrix}a\\beta\end{matrix}+\\mathbf{U}"
+        markup, reason = math_display._convert(tex, "block")
+        self.assertIsNone(markup)
+        self.assertIn("likely doubled LaTeX command slash", reason)
+
+    def test_literal_prose_backslashes_are_not_reported_as_math(self):
+        literal = r"Open C:\papers\main.tex or \\server\share; literal \\mathbf and an unmatched \\( path."
+        diagnostics = []
+        self.assertEqual(math_display.render_text(literal, diagnostics), literal)
+        self.assertEqual(diagnostics, [])
+
+    def test_groups_repeated_macro_failures_and_keeps_all_record_locations(self):
+        diagnostics = []
+        for record_id, literal in (("a", r"$x\in\privateClass$ and $y\in\privateClass$"),
+                                   ("b", r"$z\in\privateClass$ and $z\in\anotherClass$")):
+            failures = []
+            math_display.render_text(literal, failures)
+            diagnostics.extend({"collection": "items", "id": record_id, "field": "statement", **row}
+                               for row in failures)
+        original = deepcopy(diagnostics)
+        groups = math_display.group_diagnostics(diagnostics)
+        self.assertEqual(len(groups), 2)
+        self.assertEqual(groups[0]["count"], 3)
+        self.assertEqual(groups[0]["locations"], [
+            {"collection": "items", "id": "a", "field": "statement"},
+            {"collection": "items", "id": "b", "field": "statement"}])
+        self.assertIn(r"\privateClass", groups[0]["reason"])
+        self.assertEqual(groups[0]["example"], r"$x\in\privateClass$")
+        self.assertEqual(diagnostics, original)
+
 
 class ScopeDisplayTests(unittest.TestCase):
     def test_short_lead_discloses_only_later_paragraphs(self):
@@ -265,6 +348,22 @@ class PrepareDiagnosticsTests(unittest.TestCase):
         self.assertEqual(prepared["build_context"]["source_comparison"]["status"], "complete")
         self.assertTrue(all(row["fidelity"] == "matched"
                             for row in prepared["items"] + prepared["uses"]))
+
+    def test_corrupted_escaping_is_located_but_never_rewrites_canonical_text(self):
+        literal = r"The map is $\\mathbf{U}$ with \\(x_n\\to0\\)."
+        self.seed["items"][0]["statement"]["text"] = literal
+        data = records.normalize(deepcopy(self.seed), self.base)
+        original = deepcopy(data)
+        prepared = records.prepare_records(data, self.base)
+        lemma = next(row for row in prepared["items"] if row["id"] == "norm-bound")
+        failures = [row for row in prepared["math_diagnostics"] if row["id"] == "norm-bound"]
+        self.assertEqual(data, original)
+        self.assertEqual(lemma["statement"], literal)
+        self.assertEqual(lemma["statement_html"].count('class="math-fallback"'), 2)
+        self.assertEqual(len(failures), 2)
+        self.assertTrue(all(row["collection"] == "items" and row["field"] == "statement"
+                            for row in failures))
+        self.assertEqual(prepared["build_context"]["input_snapshot"], original["snapshot_id"])
 
 
 @unittest.skipUnless(NODE, "node is needed for the renderer")

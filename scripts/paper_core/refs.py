@@ -19,6 +19,8 @@ RELATIONS = {
     "coverage_in_argument": (("coverage",), "/argument_id", ("arguments",)),
     "scopes_in_argument": (("scopes",), "/argument_id", ("arguments",)),
     "checks_or_findings_for_target": (("checks", "findings"), "/target", None),
+    "target_specs_for_target": (("target_specs",), "/target", ("items", "parts")),
+    "refinements_for_use": (("connection_refinements",), "/summary_use_id", ("uses",)),
 }
 
 
@@ -44,8 +46,14 @@ def facet_digests(collection: str, body: dict) -> dict:
         facets["proof"] = digest({"excerpt": body["excerpt"]})
         facets["source"] = digest(_pick(body, "source_id", "source_version", "locator", "method", "excerpt_sha256"))
     elif collection == "uses":
-        facets["application"] = digest(_pick(body, "from", "to", "type", "needed_form", "substitutions",
-                                             "regime", "reason", "evidence_refs", "group_id"))
+        fields = ("from", "to", "type", "needed_form", "substitutions", "regime", "reason", "evidence_refs", "group_id")
+        facets["application"] = digest({k: body[k] for k in fields if k in body})
+    elif collection == "application_details":
+        facets["application"] = digest(body)
+    elif collection == "target_specs":
+        facets["statement"] = digest({k: v for k, v in body.items() if k != "fidelity_ref"})
+    elif collection == "proof_boundaries":
+        facets["coverage"] = digest(body)
     elif collection == "groups":
         facets["inference"] = digest(_pick(body, "conclusion", "kind", "scope_id", "case_scope_ids",
                                            "discharges", "rationale", "evidence_refs"))
@@ -143,7 +151,25 @@ def relation_members(conn, relation: str, key: dict, *, revision=None):
     owners, field_path, legal = RELATIONS[relation]
     if legal is not None and key["collection"] not in legal:
         raise ValueError(f"relation {relation} does not accept keys in {key['collection']}")
-    return referrers(conn, owners, field_path, [(key["collection"], key["id"])], revision=revision)
+    members = referrers(conn, owners, field_path, [(key["collection"], key["id"])], revision=revision)
+    if relation == "uses_in_group":
+        # New applications own inference membership. Historical v3 uses remain
+        # queryable at their original revisions, but never override an extension.
+        apps = referrers(conn, ("application_details",), "/group_id",
+                         [(key["collection"], key["id"])], revision=revision)
+        for _, identity, _ in apps:
+            if revision is None:
+                row = conn.execute("SELECT h.version FROM record_heads h JOIN record_versions v "
+                                   "USING(collection,id,version) WHERE h.collection='uses' AND h.id=? AND v.retired=0",
+                                   (identity,)).fetchone()
+            else:
+                row = conn.execute("SELECT version,retired FROM record_versions WHERE collection='uses' AND id=? "
+                                   "AND revision<=? ORDER BY version DESC LIMIT 1", (identity, revision)).fetchone()
+                if row is not None and row[1]:
+                    row = None
+            if row:
+                members.append(("uses", identity, row[0]))
+    return sorted(set(members))
 
 
 def body_members(collection: str, body: dict, relation: str, key: dict) -> bool:

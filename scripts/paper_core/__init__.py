@@ -1,4 +1,4 @@
-"""Shared proofcheck core: storage format 3, record contract 3.
+"""Shared proofcheck core: storage format 4, record contract 4.
 
 One maintained source lives at ``shared/paper_core``. Skill packages receive
 byte-identical generated bundles built by ``tools/build_paper_core_bundles.py``.
@@ -6,10 +6,10 @@ New-format code never imports the legacy ``proofcheck.py`` monolith.
 """
 from __future__ import annotations
 
-CORE_VERSION = "2.0.0"
-STORAGE_FORMAT = 3
-CONTRACT_VERSION = 3
-CONTRACT_NAME = "proofcheck-records/3"
+CORE_VERSION = "2.1.0"
+STORAGE_FORMAT = 4
+CONTRACT_VERSION = 4
+CONTRACT_NAME = "proofcheck-records/4"
 PACKET_VERSION = 2
 PROJECTION_VERSION = 2
 PROTOCOL_VERSION = "item-audit/1"
@@ -27,8 +27,11 @@ SUPPORTED_FEATURES = (
     # Overview bridging: intermediate item kinds equation/claim/derivation and
     # provenance groups with null argument_id/scope_id (record-contract 3).
     "overview-bridge/1",
+    "sql-superset/1",
+    "records/4",
+    "route-review/1",
 )
-STORAGE_FORMATS_READABLE = (2, 3)
-STORAGE_FORMATS_WRITABLE = (3,)
+STORAGE_FORMATS_READABLE = (2, 3, 4)
+STORAGE_FORMATS_WRITABLE = (4,)
 LEGACY_OVERVIEW_FORMAT = "archify-paper-database-1"
 LEGACY_OVERVIEW_SCHEMA_VERSIONS = (3,)

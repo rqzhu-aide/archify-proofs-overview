@@ -128,7 +128,9 @@ class PacketTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.base = Path(self.tmp.name)
         self.db = self.base / "paper.sqlite"
-        database.init_database(self.db, FIXTURE)
+        # This historical projection fixture has source-free anchors. Keep the
+        # legacy reader test explicit; new common stores require captured files.
+        database._native_init_database(self.db, FIXTURE)
 
     def tearDown(self):
         self.tmp.cleanup()

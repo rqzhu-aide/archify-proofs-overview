@@ -645,7 +645,17 @@ function scopeHtml(scope, prepared) {
 function mathDiagnosticsHtml(data) {
   const entries = Array.isArray(data.math_diagnostics) ? data.math_diagnostics : [];
   if (!entries.length) return '';
-  const rows = entries.map((entry) => `<li><code>${esc(entry.id)}</code> (${esc(entry.field)}): ${esc(entry.reason)}<br><code>${esc(entry.excerpt)}</code></li>`).join('');
+  const groups = new Map();
+  for (const entry of entries) {
+    if (!groups.has(entry.reason)) groups.set(entry.reason, []);
+    groups.get(entry.reason).push(entry);
+  }
+  const itemNames = new Map([...(data.items || []), ...(data.details || [])].map((item) => [item.id, item.label]));
+  const useNames = new Map();
+  for (const use of [...(data.uses || []), ...(data.detail_uses || [])]) {
+    useNames.set(use.id, `${itemNames.get(use.from) || use.from} → ${itemNames.get(use.to) || use.to}`);
+  }
+  const rows = [...groups].map(([reason, occurrences]) => `<li><details><summary>${esc(reason)} (${occurrences.length})</summary><ul>${occurrences.map((entry) => `<li>${esc((entry.collection === 'uses' ? useNames : itemNames).get(entry.id) || entry.id)} (${esc(entry.field)}): <code>${esc(entry.id)}</code><br><code>${esc(entry.excerpt)}</code></li>`).join('')}</ul></details></li>`).join('');
   return `<details class="proof-render-warnings"><summary>Math display notes: ${entries.length} expression(s) kept as labeled LaTeX</summary><ul>${rows}</ul></details>`;
 }
 
@@ -872,7 +882,7 @@ function render(input) {
   html = html.replace('<div class="diagram-container"', () => `<div class="proof-caption"><p>${esc(data.source?.title || data.title)} · ${data.items.length} selected statements · ${data.uses.length} connections</p><p><strong>Selected main results and important prerequisites.</strong> Select a result for its statement, source, and connections. This map explains the written argument; it does not verify the proofs.</p>${buildContextHtml(data)}</div>${scopeHtml(data.scope, data.scope_display)}${warnings}${mathDiagnosticsHtml(data)}${cycleContextHtml(graph)}${navigation}\n<div class="diagram-container"`);
   const fragments = data.items.map((node) => `<template id="proof-detail-${esc(node.id)}">${fullItemHtml(node, graph)}</template><template id="proof-hover-${esc(node.id)}">${fullItemHtml(node, graph, { hover: true })}</template>`).join('');
   const useFragments = data.uses.map((use) => `<template id="proof-use-${esc(use.id)}">${fullUseHtml(use, graph)}</template>`).join('');
-  const index = `${fullIndexHtml(data, graph)}<p class="proof-attribution">Viewer adapted from Archify 2.17 by tt-a1i and Cocoon AI, MIT licensed. Proof-specific dataset and rendering by archify-proofs-overview.</p>`;
+  const index = `${fullIndexHtml(data, graph)}<p class="proof-attribution">Viewer adapted from Archify 2.17 by tt-a1i and Cocoon AI, MIT licensed. Proof-specific dataset and rendering by proof-graphify.</p>`;
   // applyTemplate replaces the complete cards slot including its sentinels.
   html = html.replace(cards, () => `${cards}${index}`);
   html = html.replace('</body>', () => `${fragments}${useFragments}${recordsHtml(data, graphMode)}${proofRuntime({ items: [...graph.nodes.values()].map(({ id, x, y }) => ({ id, x: x + box.w / 2, y: y + box.h / 2 })), uses: data.uses.map(({ id }) => ({ id })), main_items: mainItems })}</body>`);

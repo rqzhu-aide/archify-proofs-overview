@@ -7,8 +7,8 @@ CREATE TABLE metadata (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
-INSERT INTO metadata VALUES ('storage_format', '3');
-INSERT INTO metadata VALUES ('contract_version', '3');
+INSERT INTO metadata VALUES ('storage_format', '4');
+INSERT INTO metadata VALUES ('contract_version', '4');
 
 CREATE TABLE blobs (
     sha256 TEXT PRIMARY KEY CHECK (length(sha256) = 64),
@@ -30,7 +30,8 @@ CREATE TABLE record_versions (
         'papers','sources','anchors','items','parts','scopes','arguments',
         'groups','uses','coverage','checks','findings','source_issues','repairs',
         'observations','responses','reconciliations','audits','qualifications',
-        'source_reviews','reuse_decisions','identity_maps'
+        'source_reviews','reuse_decisions','identity_maps','overview_selections',
+        'target_specs','application_details','connection_refinements','proof_boundaries'
     )),
     id TEXT NOT NULL,
     version INTEGER NOT NULL CHECK (version >= 1),
@@ -189,3 +190,68 @@ BEGIN SELECT RAISE(ABORT, 'commits are immutable'); END;
 -- Follow implementation-handoff 4.3: next = COALESCE(MAX(revision), 0) + 1 while
 -- holding the writer lock; compute the final receipt and INSERT commits first,
 -- then blobs, versions, heads, refs/facets/bindings. Never update the receipt.
+
+-- SQL superset views: all derived from canonical immutable versions.
+CREATE TRIGGER writer_format_barrier BEFORE INSERT ON commits
+BEGIN
+  SELECT CASE WHEN proofcheck_writer_format() != 4
+    THEN RAISE(ABORT, 'incompatible writer; reopen with SQL superset core') END;
+END;
+
+CREATE VIEW current_records AS
+SELECT v.* FROM record_heads h JOIN record_versions v USING(collection,id,version)
+WHERE v.retired=0;
+
+CREATE VIEW overview_items AS
+SELECT s.id AS selection_id, i.id, i.version, i.body_json,
+       EXISTS(SELECT 1 FROM json_each(s.body_json,'$.main_item_ids') m WHERE m.value=i.id) AS is_main
+FROM current_records s JOIN json_each(s.body_json,'$.item_ids') m
+JOIN current_records i ON i.collection='items' AND i.id=m.value
+WHERE s.collection='overview_selections';
+
+CREATE VIEW overview_connections AS
+SELECT s.id AS selection_id,u.id,u.version,u.body_json,
+       json_extract(u.body_json,'$.from.id') AS supplier_id,
+       json_extract(u.body_json,'$.to.id') AS consumer_id
+FROM current_records s JOIN json_each(s.body_json,'$.use_ids') m
+JOIN current_records u ON u.collection='uses' AND u.id=m.value
+WHERE s.collection='overview_selections';
+
+CREATE VIEW proof_targets AS
+SELECT s.id,s.version,json_extract(s.body_json,'$.target.collection') AS target_collection,
+       json_extract(s.body_json,'$.target.id') AS target_id,
+       json_extract(s.body_json,'$.scope_id') AS scope_id,
+       json_extract(s.body_json,'$.state') AS state,s.body_json
+FROM current_records s WHERE s.collection='target_specs';
+
+CREATE VIEW proof_applications AS
+SELECT u.id,u.version AS use_version,a.version AS application_version,
+       json_extract(u.body_json,'$.from.collection') AS supplier_collection,
+       json_extract(u.body_json,'$.from.id') AS supplier_id,
+       json_extract(u.body_json,'$.to.collection') AS conclusion_collection,
+       json_extract(u.body_json,'$.to.id') AS conclusion_id,
+       json_extract(a.body_json,'$.group_id') AS group_id,
+       json_extract(a.body_json,'$.scope_id') AS scope_id,
+       json_extract(a.body_json,'$.state') AS state,
+       u.body_json AS connection_json,a.body_json AS application_json
+FROM current_records u JOIN current_records a ON a.collection='application_details' AND a.id=u.id
+WHERE u.collection='uses';
+
+CREATE VIEW proof_inferences AS
+SELECT g.id,g.version,json_extract(g.body_json,'$.argument_id') AS argument_id,
+       json_extract(g.body_json,'$.conclusion.id') AS conclusion_id,
+       json_extract(g.body_json,'$.scope_id') AS scope_id,g.body_json
+FROM current_records g WHERE g.collection='groups';
+
+CREATE VIEW proof_checks AS
+SELECT c.id,c.version,c.revision,c.retired,
+       json_extract(c.body_json,'$.target.collection') AS target_collection,
+       json_extract(c.body_json,'$.target.id') AS target_id,
+       json_extract(c.body_json,'$.kind') AS kind,
+       json_extract(c.body_json,'$.outcome') AS outcome,c.body_json,
+       EXISTS(SELECT 1 FROM record_heads h WHERE h.collection=c.collection AND h.id=c.id AND h.version=c.version) AS is_head
+FROM record_versions c WHERE c.collection='checks';
+
+CREATE VIEW proof_consumers AS
+SELECT r.target_collection,r.target_id,r.owner_collection,r.owner_id,r.field_path
+FROM record_refs r JOIN current_records v ON v.collection=r.owner_collection AND v.id=r.owner_id AND v.version=r.owner_version;

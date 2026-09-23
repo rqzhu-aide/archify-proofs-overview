@@ -63,7 +63,11 @@ def validate_snapshot(db: Database, *, revision=None) -> dict:
             tc, ti, tv = ref["target_collection"], ref["target_id"], ref["target_version"]
             if tv is None:
                 if snap.live(tc, ti) is None:
-                    errors.append(f"{_ref_text(record)} {ref['field_path']}: no live {tc} record {ti} at revision {revision}")
+                    historical = record.collection in ('checks','findings','observations','reconciliations','responses','identity_maps','source_reviews')
+                    withdrawn = record.collection in ('application_details','connection_refinements') and record.body.get('state') == 'draft'
+                    old = db.latest_at(tc, ti, revision)
+                    if not (historical or withdrawn) or old is None:
+                        errors.append(f"{_ref_text(record)} {ref['field_path']}: no live {tc} record {ti} at revision {revision}")
             elif db.version(tc, ti, tv) is None:
                 errors.append(f"{_ref_text(record)} {ref['field_path']}: {tc} record {ti} has no version {tv}")
     papers = snap.all("papers")

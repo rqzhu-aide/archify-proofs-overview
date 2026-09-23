@@ -73,6 +73,7 @@ def _open(path: Path, *, write: bool) -> sqlite3.Connection:
     uri = path.resolve().as_uri() + ("?mode=rw" if write else "?mode=ro")
     conn = sqlite3.connect(uri, uri=True, timeout=10, autocommit=True)
     conn.row_factory = sqlite3.Row
+    conn.create_function('proofcheck_writer_format', 0, lambda: STORAGE_FORMAT)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
@@ -91,7 +92,8 @@ def _validate_metadata(meta: dict, path, *, write: bool):
         raise IncompatibleError(
             f"storage_format {fmt} is read-only in this core; run migrate DB --backup BACKUP.db",
             code="MIGRATION_REQUIRED")
-    if meta.get("contract_version") != str(CONTRACT_VERSION):
+    expected_contract = str(CONTRACT_VERSION) if int(fmt) == STORAGE_FORMAT else '3'
+    if meta.get("contract_version") != expected_contract:
         raise IncompatibleError(f"unsupported contract_version {meta.get('contract_version')!r}; "
                                 f"this core requires {CONTRACT_VERSION}")
     try:
@@ -145,6 +147,13 @@ class Database:
     # -- transactions -----------------------------------------------------
     def begin_immediate(self):
         self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            current = self.check_compatibility()
+            if current.get('generation') != self.metadata.get('generation'):
+                raise IncompatibleError('database generation changed; close and reopen this client')
+        except BaseException:
+            self.rollback()
+            raise
 
     def commit(self):
         self.conn.execute("COMMIT")
@@ -410,8 +419,8 @@ class Database:
     def _require_work_transaction(self):
         if not self.write or not self.conn.in_transaction:
             raise InvalidRequest("submission writes require a caller-owned write transaction")
-        if int(self.metadata["storage_format"]) != 3:
-            raise IncompatibleError("work submissions require storage format 3", code="MIGRATION_REQUIRED")
+        if int(self.metadata["storage_format"]) != STORAGE_FORMAT:
+            raise IncompatibleError("work submissions require the current storage format", code="MIGRATION_REQUIRED")
 
     def insert_work_submission(self, *, request_id: str, request_digest: str, packet_id: str,
                                audit_id: str, role: str, envelope_bytes: bytes, response_bytes: bytes):
@@ -551,8 +560,9 @@ def migrate_database(path, *, backup) -> dict:
         if int(meta["storage_format"]) == STORAGE_FORMAT:
             return {"database": str(path), "storage_format": STORAGE_FORMAT, "migrated": False,
                     "already_current": True, "backup": None}
-        if int(meta["storage_format"]) != 2:
-            raise IncompatibleError("native migration requires storage format 2")
+        previous_format = int(meta['storage_format'])
+        if previous_format not in (2, 3):
+            raise IncompatibleError("native migration requires storage format 2 or 3")
         before = conn.execute("PRAGMA data_version").fetchone()[0]
         try:
             fd = os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -572,28 +582,67 @@ def migrate_database(path, *, backup) -> dict:
         if after != before:
             raise ConflictError("database changed during migration backup; retry with a new backup destination")
         conn.execute("PRAGMA foreign_keys = OFF")
-        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("BEGIN EXCLUSIVE")
         if conn.execute("PRAGMA data_version").fetchone()[0] != after:
             raise ConflictError("database changed after migration backup; retry with a new backup destination")
         if dict(conn.execute("SELECT key, value FROM metadata")) != meta:
             raise ConflictError("database metadata changed before migration backup; retry with a new backup destination")
         revision = conn.execute("SELECT COALESCE(MAX(revision), 0) FROM commits").fetchone()[0]
         schema = SCHEMA_PATH.read_text(encoding="utf-8")
-        packet_ddl = schema[schema.index("CREATE TABLE packets ("):schema.index("CREATE TABLE evidence_bindings (")]
-        packet_ddl = packet_ddl.replace("CREATE TABLE packets (", "CREATE TABLE packets_v3 (", 1)
-        for statement in _schema_statements(packet_ddl):
+        if previous_format == 2:
+            packet_ddl = schema[schema.index("CREATE TABLE packets ("):schema.index("CREATE TABLE evidence_bindings (")]
+            packet_ddl = packet_ddl.replace("CREATE TABLE packets (", "CREATE TABLE packets_v3 (", 1)
+            for statement in _schema_statements(packet_ddl):
+                conn.execute(statement)
+            conn.execute("INSERT INTO packets_v3 SELECT * FROM packets")
+            conn.execute("DROP TABLE packets")
+            conn.execute("ALTER TABLE packets_v3 RENAME TO packets")
+            work_ddl = schema[schema.index("CREATE TABLE work_submissions ("):schema.index("CREATE TABLE publications (")]
+            for statement in _schema_statements(work_ddl):
+                conn.execute(statement)
+        record_ddl = schema[schema.index('CREATE TABLE record_versions ('):schema.index('CREATE INDEX versions_at_revision')]
+        conn.execute(record_ddl.replace('CREATE TABLE record_versions (', 'CREATE TABLE record_versions_v4 (', 1))
+        conn.execute('INSERT INTO record_versions_v4 SELECT * FROM record_versions')
+        conn.execute('DROP TABLE record_versions')
+        conn.execute('ALTER TABLE record_versions_v4 RENAME TO record_versions')
+        conn.execute('CREATE INDEX versions_at_revision ON record_versions(revision,collection,id)')
+        triggers = schema[schema.index('CREATE TRIGGER immutable_versions_update'):schema.index('CREATE TRIGGER immutable_commits_update')]
+        for statement in _schema_statements(triggers):
             conn.execute(statement)
-        conn.execute("INSERT INTO packets_v3 SELECT * FROM packets")
-        conn.execute("DROP TABLE packets")
-        conn.execute("ALTER TABLE packets_v3 RENAME TO packets")
-        work_ddl = schema[schema.index("CREATE TABLE work_submissions ("):schema.index("CREATE TABLE publications (")]
-        for statement in _schema_statements(work_ddl):
+        for statement in _schema_statements(schema[schema.index('-- SQL superset views'):]):
             conn.execute(statement)
-        updates = dict(INIT_METADATA, storage_format=str(STORAGE_FORMAT))
+        updates = dict(INIT_METADATA, storage_format=str(STORAGE_FORMAT), contract_version=str(CONTRACT_VERSION),
+                       generation=new_id('request'))
         # Preserve every supported requirement already declared by the older database.
         updates["features"] = json.dumps(sorted(set(json.loads(meta.get("features", "[]"))) | set(SUPPORTED_FEATURES)))
         conn.executemany("INSERT INTO metadata(key, value) VALUES (?, ?) "
                          "ON CONFLICT(key) DO UPDATE SET value = excluded.value", updates.items())
+        # Preserve old bodies and judgments verbatim. Only new heads use the
+        # separated representation; old evidence is never silently re-certified.
+        from .semantics import normalize_edits
+        from .refs import extract_refs, facet_digests
+        bridge = Database.__new__(Database)
+        bridge.path, bridge.conn, bridge.write, bridge.metadata = path, conn, True, dict(meta, **updates)
+        edits = [{'op': 'replace', 'collection': 'uses', 'id': r.id, 'expected_version': r.version, 'body': r.body}
+                 for r in bridge.heads('uses') if any(k in r.body for k in ('group_id', 'needed_form', 'substitutions'))]
+        if edits:
+            normalized = normalize_edits(bridge, edits)
+            revision += 1
+            request_id = new_id('request')
+            receipt = {'request_id': request_id, 'revision': revision, 'rebased_from': None,
+                       'changed': [], 'warnings': ['Historical mathematical examinations retained; exact targets and boundaries require review.']}
+            for edit in normalized:
+                version = (edit['expected_version'] or 0) + 1
+                receipt['changed'].append({'collection': edit['collection'], 'id': edit['id'], 'version': version, 'op': edit['op']})
+            bridge.insert_commit(revision=revision,parent_revision=revision-1,base_revision=revision-1,
+                                 request_id=request_id,request_digest=digest({'migration':4,'edits':normalized}),receipt=receipt)
+            for edit in normalized:
+                c, identity, body = edit['collection'], edit['id'], edit['body']
+                version = (edit['expected_version'] or 0) + 1
+                bridge.insert_version(c,identity,version,revision,body)
+                bridge.set_head(c,identity,version)
+                bridge.insert_refs(c,identity,version,extract_refs(c,body))
+                bridge.insert_facets(c,identity,version,facet_digests(c,body))
         violations = [dict(row) for row in conn.execute("PRAGMA foreign_key_check")]
         integrity = [row[0] for row in conn.execute("PRAGMA integrity_check")]
         if violations or integrity != ["ok"]:
@@ -603,7 +652,7 @@ def migrate_database(path, *, backup) -> dict:
         conn.execute("PRAGMA foreign_keys = ON")
         with Database(path, write=True) as checked:
             checked.check_compatibility()
-        return {"database": str(path), "storage_format": STORAGE_FORMAT, "previous_storage_format": 2,
+        return {"database": str(path), "storage_format": STORAGE_FORMAT, "previous_storage_format": previous_format,
                 "migrated": True, "revision": revision, "backup": str(destination),
                 "backup_sha256": sha256_bytes(destination.read_bytes())}
     except BaseException:
@@ -615,13 +664,13 @@ def migrate_database(path, *, backup) -> dict:
         conn.close()
 
 
-def initialize(path, *, source_root, title: str) -> dict:
+def initialize(path, *, source_root, title: str, allow_missing_source_root=False) -> dict:
     """Create a new database with the initialization commit (revision 1) holding the paper record."""
     path = Path(path)
     root = Path(source_root)
     if not isinstance(title, str) or not title.strip():
         raise InvalidRequest("title must be nonempty text")
-    if not root.is_dir():
+    if not root.is_dir() and not allow_missing_source_root:
         raise SourceUnavailable(f"source root is not a directory: {root}")
     try:
         fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -635,6 +684,7 @@ def initialize(path, *, source_root, title: str) -> dict:
         conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
         for key, value in INIT_METADATA.items():
             conn.execute("INSERT INTO metadata (key, value) VALUES (?, ?)", (key, value))
+        conn.execute('INSERT INTO metadata(key,value) VALUES (?,?)', ('generation',new_id('request')))
         conn.execute("INSERT INTO metadata (key, value) VALUES (?, ?)", ("created_at", now_iso()))
         paper_id = new_id("papers")
         body = {"title": title, "source_root": root.resolve().as_posix(), "main_items": [], "report_paths": []}

@@ -78,6 +78,21 @@ function runFixture(name, withWork = false) {
       if (child.parentElement) child.parentElement.children.splice(child.parentElement.children.indexOf(child), 1);
       this.children.push(child); child.parentElement = this; return child;
     }
+    cloneNode(deep) {
+      const clone = new Element({tag:this.tagName, attrs:this.attrs, text:this._text});
+      if (deep) this.children.forEach(child => clone.appendChild(child.cloneNode(true)));
+      return clone;
+    }
+    get content() {
+      const fragment = new Element({tag:'#fragment'});
+      this.children.forEach(child => fragment.appendChild(child.cloneNode(true)));
+      return fragment;
+    }
+    replaceChildren(child) {
+      this.textContent = '';
+      if (child.tagName === '#fragment') [...child.children].forEach(entry => this.appendChild(entry));
+      else this.appendChild(child);
+    }
     insertAdjacentElement(position, child) {
       assert.equal(position, 'afterend');
       if (child.parentElement) child.parentElement.children.splice(child.parentElement.children.indexOf(child), 1);
@@ -142,7 +157,7 @@ function runFixture(name, withWork = false) {
     },
   };
   const Archify = { focus, view: { centerAt(x, y) { assert(Number.isFinite(x) && Number.isFinite(y)); centers++; }, reset() { reset++; } } };
-  const context = vm.createContext({ document, window: { Archify }, location: { hash: '' },
+  const context = vm.createContext({ document, window: { Archify, addEventListener() {} }, location: { hash: '' },
     MutationObserver: class { constructor(callback) { this.callback = callback; } observe(target, options) { observers.push({ callback: this.callback, options }); } },
     requestAnimationFrame: schedule, setTimeout: schedule, clearTimeout: id => callbacks.delete(id) });
   const runtime = scripts.find(s => s.attrs.id === 'proof-runtime');

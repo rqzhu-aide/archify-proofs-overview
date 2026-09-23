@@ -8,6 +8,7 @@ supplier's binding.
 from __future__ import annotations
 
 from .refs import facet_digests, membership_digest, relation_members
+from .semantics import application, target_spec, boundaries
 
 BOUND_COLLECTIONS = ("checks", "observations", "reconciliations", "reuse_decisions", "source_reviews")
 
@@ -42,7 +43,9 @@ class _Builder:
 
     def anchors(self, ids, facet="proof"):
         for anchor_id in ids:
-            self.add("anchors", anchor_id, facet)
+            anchor = self.add("anchors", anchor_id, facet)
+            if anchor:
+                self.add('sources', anchor.body['source_id'], 'source')
 
     def relation(self, relation, key):
         members = self.state.relation_members(relation, key)
@@ -60,7 +63,7 @@ class _Builder:
             scope_id = scope.body["parent_id"]
 
     def statement(self, ref):
-        record = self.add_ref(ref, "statement")
+        record = self.state.live(ref['collection'], ref['id'])
         if record is None:
             return None
         key = (record.collection, record.id, record.version)
@@ -69,6 +72,25 @@ class _Builder:
         # A scope may name an assumption declared in that same scope. Expand each
         # consumed statement once, while still binding every record in the cycle.
         self.statements_seen.add(key)
+        self.relation('target_specs_for_target', ref)
+        spec = target_spec(self.state, ref)
+        if spec:
+            self.add('target_specs', spec.id, 'statement')
+            if spec.body['statement_ref']:
+                pin = spec.body['statement_ref']
+                pinned = self.state.version(pin['collection'],pin['id'],pin['version'])
+                if pinned and facet_digests(pinned.collection,pinned.body)['statement'] == facet_digests(record.collection,record.body)['statement']:
+                    self.add_ref(ref, 'statement')
+                else:
+                    self.add_ref(pin, 'statement')
+            self.anchors(spec.body['evidence_refs'], 'statement')
+            for aid in spec.body['evidence_refs']:
+                anchor = self.state.live('anchors', aid)
+                if anchor:
+                    self.add('sources', anchor.body['source_id'], 'source')
+            self.scope_chain(spec.body['scope_id'])
+        else:
+            self.add_ref(ref, 'statement')
         self.anchors([p["anchor_id"] for p in record.body["passages"]
                       if p["role"] in ("statement", "definition")], "statement")
         self.scope_chain(record.body["scope_id"])
@@ -94,11 +116,14 @@ class _Builder:
         if use.body["type"] == "proof_argument":
             self.borrowed_proof(use.body["from"])
         self.anchors(use.body["evidence_refs"])
-        if use.body["group_id"] is not None:
-            group = self.add("groups", use.body["group_id"], "inference")
+        detail = application(self.state, use)
+        self.add('application_details', use.id, 'application')
+        self.scope_chain(detail.get('scope_id'))
+        if detail["group_id"] is not None:
+            group = self.add("groups", detail["group_id"], "inference")
             if group is not None:
                 self.scope_chain(group.body["scope_id"])
-            self.relation("uses_in_group", {"collection": "groups", "id": use.body["group_id"]})
+            self.relation("uses_in_group", {"collection": "groups", "id": detail["group_id"]})
         return use
 
     def group(self, group_id, *, with_uses=True):
@@ -130,6 +155,11 @@ class _Builder:
         self.relation("incoming_uses", argument.body["target"])
         self.scope_chain(argument.body["scope_id"])
         self.anchors(argument.body["evidence_refs"])
+        for boundary in boundaries(self.state, argument_id):
+            self.add('proof_boundaries', boundary.id, 'coverage')
+            self.add_ref(boundary.body['source_review_ref'], 'source')
+            for ref in boundary.body['anchor_refs']:
+                self.add_ref(ref, 'source')
         key = {"collection": "arguments", "id": argument_id}
         for relation in ("groups_in_argument", "coverage_in_argument", "scopes_in_argument"):
             self.relation(relation, key)
@@ -143,17 +173,25 @@ class _Builder:
                 self.add("anchors", coverage.body["anchor_id"], "proof")
         return argument
 
-    def source_statement(self, ref):
-        record = self.statement(ref)
+    def source_statement(self, ref, *, source_only=False, exact=False):
+        if ref['collection'] == 'target_specs':
+            spec = self.add_ref(ref, 'statement')
+            if spec:
+                if spec.body['statement_ref']:
+                    self.add_ref(spec.body['statement_ref'], 'statement')
+                self.scope_chain(spec.body['scope_id'])
+                self.anchors(spec.body['evidence_refs'], 'source')
+            return spec
+        record = self.statement(ref) if exact and not source_only else self.add_ref(ref, 'statement')
         if record is None:
             return None
         self.add_ref(ref, "proof")
         for passage in record.body["passages"]:
             self.add("anchors", passage["anchor_id"], "source")
             self.add("anchors", passage["anchor_id"], "statement")
-        if record.body["scope_id"] is not None:
+        if record.body["scope_id"] is not None and not source_only:
             self.scope_chain(record.body["scope_id"])
-        if record.collection == "items":
+        if record.collection == "items" and not source_only:
             self.relation("parts_of_item", {"collection": "items", "id": record.id})
         return record
 
@@ -177,7 +215,7 @@ def _bind_check(b: _Builder, body: dict):
     elif kind == "composition":
         b.argument(target["id"])
     elif kind == "external_source":
-        b.source_statement(target)
+        b.source_statement(target, exact=True)
     else:
         audit = b.add("audits", target["id"], "full")
         if audit is not None:
@@ -194,7 +232,8 @@ MATHEMATICAL_FACETS = ("statement", "proof", "application", "inference", "scope"
 RELATION_FACETS = {"uses_in_group": "application", "incoming_uses": "application",
                    "groups_in_argument": "inference", "scopes_in_argument": "scope",
                    "coverage_in_argument": "coverage", "parts_of_item": "statement",
-                   "arguments_for_target": "proof", "checks_or_findings_for_target": "full"}
+                   "arguments_for_target": "proof", "checks_or_findings_for_target": "full",
+                   "target_specs_for_target": "statement", "refinements_for_use": "full"}
 
 
 def _semantic_members(b):
@@ -217,6 +256,13 @@ def binding_changes(state, binding: dict) -> dict:
     where ``actual`` is None when the bound record is no longer live.
     """
     records, relations = [], []
+    if binding.get('overview_context'):
+        from .overview import comparison_context
+        context = binding['overview_context']
+        actual = comparison_context(state, context['target'], context['selection_id'])
+        if actual != context['digest']:
+            records.append({'ref': context['target'], 'facet':'overview_context',
+                            'expected':context['digest'], 'actual':actual, 'live_version':None})
     for entry in binding["records"]:
         ref = entry["ref"]
         live = state.live(ref["collection"], ref["id"])
@@ -253,7 +299,7 @@ def task_binding(state, task: dict) -> dict:
         if target["collection"] == "uses":
             b.use(target["id"])
         else:
-            b.source_statement(target)
+            b.source_statement(target, source_only=task.get('source_only',False))
     elif task["action"] == "reconcile":
         if target["collection"] in ("items", "parts"):
             b.statement(target)
@@ -380,12 +426,38 @@ def compute_bindings(state, collection: str, body: dict, *, packet=None) -> dict
     """Bindings for one prospective record, or None when the collection carries none."""
     if collection not in BOUND_COLLECTIONS:
         return None
+    if collection == 'observations' and body.get('context_kind') == 'overview':
+        from .overview import comparison_context
+        selection_id = body.get('context_data', {}).get('selection_id')
+        return {'records': [], 'relations': [], 'source_context_digest': None,
+                'packet_id': (packet or {}).get('packet_id'),
+                'overview_context': {'selection_id':selection_id, 'target':body['target'],
+                                     'digest':comparison_context(state,body['target'],selection_id)}}
     b = _Builder(state)
     if collection == "checks":
         _bind_check(b, body)
         _work_composition_checks(b, body, packet)
+        if body.get('role') == 'independent' and body.get('response_id'):
+            response = state.live('responses', body['response_id'])
+            original = state.db.packet(response.body['packet_id']) if response else None
+            manifest = original['manifest'] if original else {}
+            for ref in manifest.get('supplied_derivation_refs', []):
+                check = b.add_ref(ref, 'full')
+                if check:
+                    b.relation('checks_or_findings_for_target', check.body['target'])
     elif collection == "observations":
-        if body["target"]["collection"] == "uses":
+        if body["target"]["collection"] == "target_specs":
+            spec = b.add_ref(body['target'], 'statement')
+            if spec:
+                if spec.body['statement_ref']:
+                    b.add_ref(spec.body['statement_ref'], 'statement')
+                b.scope_chain(spec.body['scope_id'])
+                b.anchors(spec.body['evidence_refs'], 'source')
+                for identity in spec.body['evidence_refs']:
+                    anchor = state.live('anchors', identity)
+                    if anchor:
+                        b.add('sources', anchor.body['source_id'], 'source')
+        elif body["target"]["collection"] == "uses":
             b.use(body["target"]["id"])
         else:
             b.source_statement(body["target"])
@@ -412,8 +484,11 @@ def compute_bindings(state, collection: str, body: dict, *, packet=None) -> dict
         for ref in body["anchor_refs"]:
             b.add_ref(ref, "source")
     manifest = (packet or {}).get("manifest", packet or {})
-    identities = _semantic_members(b) if _semantic_membership_origin(state, collection, body, manifest) else None
+    identities = _semantic_members(b) if collection == 'checks' or _semantic_membership_origin(state, collection, body, manifest) else None
     result = b.result(packet)
+    # Source currentness is tied to consumed sources/anchors. Adding an unrelated
+    # audit source is not a mathematical change to every prior examination.
+    result['source_context_digest'] = None
     if identities is not None:
         result["semantic_memberships"] = identities
     return result

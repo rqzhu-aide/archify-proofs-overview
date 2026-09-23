@@ -226,6 +226,44 @@ def _line_of(text, offset):
     return text.count('\n', 0, offset) + 1
 
 
+def _optional_input_guards(text):
+    """Locate literal same-file inputs in an IfFileExists true branch.
+
+    This recognizes a narrow source wrapper, not general TeX conditionals. A
+    guard for another file, a false-branch input, or dynamic names retain the
+    ordinary missing-source warning.
+    """
+    guarded = {}
+    for match in re.finditer(r'\\IfFileExists\s*\{', text):
+        groups, position = [], match.end() - 1
+        for _ in range(3):
+            while position < len(text) and text[position].isspace():
+                position += 1
+            if position >= len(text) or text[position] != '{':
+                break
+            end = _braced_end(text, position)
+            if end is None:
+                break
+            groups.append((position + 1, end - 1))
+            position = end
+        if len(groups) != 3:
+            continue
+        guard = text[slice(*groups[0])].strip()
+        if not guard or any(char in guard for char in '\\#{}'):
+            continue
+        guard_path = Path(guard)
+        guard_path = guard_path if guard_path.suffix else guard_path.with_suffix('.tex')
+        for source in re.finditer(r'\\(?:input|include|subfile)\s*\{([^{}]+)\}', text[groups[1][0]:groups[1][1]]):
+            name = source.group(1).strip()
+            if not name or any(char in name for char in '\\#{}'):
+                continue
+            input_path = Path(name)
+            input_path = input_path if input_path.suffix else input_path.with_suffix('.tex')
+            if input_path == guard_path:
+                guarded[groups[1][0] + source.start()] = guard
+    return guarded
+
+
 def _capture(paths, base_dir):
     """Capture supplied files and literal local TeX inputs, never a directory crawl."""
     base_dir = Path(base_dir).resolve()
@@ -277,6 +315,7 @@ def _capture(paths, base_dir):
             continue
         if path.suffix.lower() not in _TEX_SUFFIXES:
             unresolved.append(_tex_by_content_note(display_path))
+        optional_guards, absent_optional = _optional_input_guards(text), []
         for match in re.finditer(r'\\(?:input|include|subfile)\s*\{([^{}]+)\}', text):
             name = match.group(1).strip()
             if '\\' in name or '#' in name:
@@ -287,8 +326,15 @@ def _capture(paths, base_dir):
             candidate = next((p for p in candidates if p.is_file()), None)
             if candidate is not None:
                 queue.append((candidate, compilation_root))
+            elif match.start() in optional_guards:
+                absent_optional.append(name)
             else:
                 unresolved.append(f"{display_path}: unresolved input {name!r}; register or explain the missing source.")
+        if absent_optional:
+            names = ', '.join(repr(name) for name in dict.fromkeys(absent_optional))
+            unresolved.append(f"{display_path}: optional inputs not captured: {names} (literal same-file \\IfFileExists guards). "
+                              'Their contents are unavailable; disclose any effect on the selected overview in scope, '
+                              'and register them if needed as evidence.')
         if re.search(r'\\(?:input|include|subfile)\b(?!\s*\{)|\\(?:import|subimport|inputfrom)\b', text):
             unresolved.append(f"{display_path}: an input form needs manual source registration.")
         # Standard installed TeX packages are not copied. Capture local macro files.
@@ -462,6 +508,83 @@ def _inventory(source_revision, items, anchors, unresolved=(), sources=None):
     return {'method': 'literal_tex_declarations', 'declarations': declarations,
             'unresolved': list(dict.fromkeys(unresolved)), 'excluded': [],
             'note': 'Candidate inventory only. Custom macros, unnumbered prose, and proof meaning require source comparison.'}
+
+
+def locator_diagnostics(data, sources=None):
+    """Current source-consistency warnings without rewriting saved bindings.
+
+    A checked line range and an existing TeX key are independent mechanical
+    facts. Neither certifies that a statement passage belongs to that key.
+    These diagnostics leave historical snapshot identities and evidence intact.
+    """
+    sources = sources if sources is not None else _SourceContent()
+    names, texts, _ = _declared_kinds(data['source_revision'], [], sources)
+    files = {file['id']: file for file in data['source_revision']['files']}
+    anchors = {anchor['id']: anchor for anchor in data['anchors']}
+    records, statement_anchors = {}, set()
+    for item in data['items']:
+        for passage in item['passages']:
+            records.setdefault(passage['anchor_id'], set()).add(item['id'])
+            if passage['role'] == 'statement':
+                statement_anchors.add(passage['anchor_id'])
+    for use in data['uses']:
+        for anchor_id in use['evidence_refs']:
+            records.setdefault(anchor_id, set()).add(use['id'])
+    labels, declarations = {}, {}
+    for file_id, text in texts.items():
+        for match in re.finditer(r'\\label\s*\{\s*([^{}]+?)\s*\}', text):
+            labels.setdefault(match.group(1).strip(), []).append(
+                {'file_id': file_id, 'path': files[file_id]['path'], 'line': _line_of(text, match.start())})
+        spans = _environment_spans(text)
+        declarations[file_id] = [
+            {'labels': [label.strip() for label in _declaration_labels(text, span, spans)],
+             'kind': names[span[0].rstrip('*')], 'start_line': _line_of(text, span[1]),
+             'end_line': _line_of(text, span[4])}
+            for span in spans if span[0].rstrip('*') in names]
+    claimed = {}
+    for anchor in anchors.values():
+        label = anchor['locator'].get('label')
+        if label and anchor.get('file_id') in texts:
+            claimed.setdefault(label, []).append(anchor['id'])
+    diagnostics = []
+    for label, anchor_ids in claimed.items():
+        locations = labels.get(label, [])
+        if len(locations) > 1:
+            where = ', '.join(f"{row['path']}:{row['line']}" for row in locations)
+            diagnostics.append({'code': 'ambiguous_tex_label', 'label': label,
+                                'anchor_ids': anchor_ids,
+                                'record_ids': sorted({record for anchor_id in anchor_ids for record in records.get(anchor_id, ())}),
+                                'locations': locations,
+                                'message': f"TeX label {label!r} occurs more than once ({where}); its target is ambiguous. "
+                                           'Use an unambiguous source locator and disclose unresolved numbering.'})
+            continue
+        if len(locations) != 1:
+            continue
+        location = locations[0]
+        file_declarations = declarations[location['file_id']]
+        target = [row for row in file_declarations if label in row['labels']]
+        if len(target) != 1:
+            continue
+        target = target[0]
+        for anchor_id in anchor_ids:
+            anchor, locator = anchors[anchor_id], anchors[anchor_id]['locator']
+            if (anchor_id not in statement_anchors or anchor.get('file_id') != location['file_id']
+                    or 'start_line' not in locator):
+                continue
+            start, end = locator['start_line'], locator['end_line']
+            if start <= target['end_line'] and target['start_line'] <= end:
+                continue  # A statement subrange need not repeat the declaration's label.
+            other = [row for row in file_declarations if row['start_line'] <= start <= end <= row['end_line']]
+            if not other:
+                continue  # Narrative and proof support need interpretation, not a guessed rejection.
+            diagnostics.append({'code': 'statement_locator_conflict', 'label': label,
+                                'anchor_ids': [anchor_id], 'record_ids': sorted(records.get(anchor_id, ())),
+                                'locations': [location],
+                                'message': f"Statement anchor {anchor_id!r} uses TeX label {label!r}, declared at "
+                                           f"{location['path']}:{target['start_line']}-{target['end_line']}, but its lines "
+                                           f"{start}-{end} lie inside a different declaration. Correct the label or range; "
+                                           'use a separate proof/evidence passage for supporting material.'})
+    return diagnostics
 
 
 _REF_RE = re.compile(r'\\(eqref|autoref|[cC]ref|ref)\s*\{([^{}]+)\}')
@@ -998,9 +1121,10 @@ def _validate_records(data, sources):
             raise RecordError(f"{row['label']}: retain at least one source passage or explicitly unverified locator.")
         seen = set()
         for passage in passages:
-            _fields(passage, ('role', 'anchor_id'), (), 'Passage link')
-            _text(passage['role'], 'Passage role')
-            _text(passage['anchor_id'], 'Passage anchor_id')
+            context = f"Item {row['id']} ({row['label']}) passage"
+            _fields(passage, ('role', 'anchor_id'), (), context)
+            _text(passage['role'], context + '.role')
+            _text(passage['anchor_id'], context + '.anchor_id')
             if passage['role'] not in {'statement', 'proof', 'definition', 'evidence'} or passage['anchor_id'] not in anchor_map:
                 raise RecordError(f"{row['label']}: passage has an unknown role or anchor.")
             pair = passage['role'], passage['anchor_id']
@@ -1133,9 +1257,14 @@ def _relocate_exact(anchor, file, sources=None):
         locator.update(start_line=matches[0] + 1, end_line=matches[0] + len(prior))
 
 
-def refresh_sources(data, base_dir, extra_files=(), anchor_locations=None, relocate_exact=False, file_map=None):
+def refresh_sources(data, base_dir, extra_files=(), anchor_locations=None, relocate_exact=False, file_map=None,
+                    *, _common_projection=False):
     sources = _SourceContent()
-    original = _validate_records(data, sources)
+    # A common-store source capture can advance source bytes before its pinned
+    # overview anchors are refreshed. The adapter supplies canonical records
+    # under its writer lock; final refreshed records still undergo full native
+    # validation below. Ordinary native callers must validate their input first.
+    original = copy.deepcopy(data) if _common_projection else _validate_records(data, sources)
     result = copy.deepcopy(original)
     old_source = original['source_revision']
     renames = {} if file_map is None else file_map
@@ -1433,6 +1562,10 @@ def _graph_cycles(items, uses):
 def record_report(data, base_dir, fidelity=None):
     """Structural/source diagnostics for validated records, without math rendering."""
     report = {'warnings': []}
+    report['locator_diagnostics'] = locator_diagnostics(data)
+    for diagnostic in report['locator_diagnostics']:
+        report['warnings'].append('Source locator consistency: ' + diagnostic['message'] +
+                                  ' Stored line/label checks describe separate existence checks, not agreement between them.')
     # A cycle is a property of the recorded major-item map, not a proof verdict.
     # Intermediate annotations never enter this display-only analysis.
     report['graph_cycles'] = _graph_cycles(data['items'], data['uses'])

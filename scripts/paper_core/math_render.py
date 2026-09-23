@@ -1,6 +1,6 @@
 """Offline display of explicit LaTeX math; canonical text is never rewritten.
 
-Derived from archify-proofs-overview scripts/overview_math.py v1.0.0 (MIT). This is
+Derived from proof-graphify scripts/overview_math.py v1.0.0 (MIT). This is
 a presentation adapter, not a TeX interpreter. Unsupported expressions remain
 inspectable as labeled literal text. latex2mathml is optional at import time, so
 an unavailable converter cannot hide evidence.

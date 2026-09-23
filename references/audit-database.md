@@ -4,7 +4,7 @@ Read this reference for an existing detailed overview or a requested continuatio
 
 ## Existing detailed overviews
 
-Existing native databases, captured exports, and unflagged `init` retain the full schema-3 reader. There is no automatic conversion or pruning. An export has no focused profile metadata: import with `init --focused` to enforce focused authoring, or without the flag for lossless rich-record compatibility. Incompatible rich content is rejected by focused initialization rather than trimmed. A later user-requested rescoping should use atomic edits in the authoritative database. Removing a current record affects a future audit import even when history survives.
+Existing native databases and captured exports retain the full schema-3 reader. New `init` creates a common store; existing native databases need the explicit backed-up conversion below. An export has no focused profile metadata: import with `init --focused` to enforce focused authoring, or without the flag for rich-record compatibility. Incompatible rich content is rejected by focused initialization rather than trimmed. A later user-requested rescoping should use atomic edits in the authoritative database. On a common store, removing an overview item or use deselects it while retaining its shared identity and audit records.
 
 Legacy `equation`, `claim`, and `derivation` records retain their required major-item `owner`. Uses with an intermediate endpoint remain detail annotations under the relevant owner and stay outside major graph layout and cycle detection. An intermediate self-use appears once. Legacy use `group` values retain their `joint` or `cases` annotations and consistent group identities; they do not establish logical sufficiency. New focused work creates none of these objects.
 
@@ -12,7 +12,7 @@ Legacy comparison digests and packets remain unchanged. An owner's context inclu
 
 ## Hand off to proofcheck
 
-The overview store and audit store have distinct formats. The explicit handoff uses the bundled `paper_audit.py` wrapper and its local generated `paper_core/` package, without importing a sibling skill. Check the installed bundle before writing:
+Overview and proofcheck now share common storage format 4. Existing native overview stores need one explicit conversion using the bundled `paper_audit.py` wrapper and its generated `paper_core/` package, without importing a sibling skill. Check the installed bundle before writing:
 
 ```text
 python <skill>/scripts/paper_audit.py version
@@ -24,13 +24,15 @@ python <skill>/scripts/paper_audit.py version
 python <skill>/scripts/paper_audit.py migrate-overview <overview-folder>/data/paper-records.sqlite --backup <overview-folder>/data/paper-records.pre-migration.sqlite
 ```
 
-The command accepts the overview marker `archify-paper-database-1` with `schema_version: 3`, backs up the file, and rebuilds it in place as audit storage format 3. Other formats return exit 4 `INCOMPATIBLE`; this is a workflow handoff, not a universal format upgrade. A second migration returns `ALREADY_MIGRATED` without changes. Keep the verified backup.
+The command accepts the overview marker `archify-paper-database-1` with `schema_version: 3`, backs up the file, and converts it transactionally in place to common storage format 4. Close other database clients first. A busy database is refused and the original remains authoritative; conversion never swaps a file underneath an active writer. Keep the verified backup, which retains historical native snapshots and build rows.
 
-The bridge preserves stable item/use/anchor identities, source bytes and bindings, scope, main-result selection, authored fields, aliases, issues, regimes, and locators. Legacy owner and group records retain their mappings. A group spanning several conclusions becomes one audit group per conclusion, disclosed in `limitations`. Only the newest applicable comparison for each current record becomes a live audit observation. Other observations remain in the archived overview export with a disclosed count. Comparison timestamps and provenance are retained; the handoff creates no mathematical reviews.
+The bridge preserves stable item/use/anchor identities, source bytes and root provenance, scope, explicit selected items and connections, main-result selection, authored fields, aliases, issues, regimes, and locators. Legacy owner and group records retain their mappings. A group spanning several conclusions becomes one provisional group per conclusion, disclosed in `limitations`. Every retained comparison keeps its original broad input and chronology; historical comparisons acquire no current credit. The archived native export preserves original provenance, and conversion creates no mathematical reviews.
 
-Anchors must reference captured source files. An excerpt-only overview without registered files cannot migrate. A page locator on a non-PDF file or an unknown item, owner, or endpoint is also refused rather than narrowed. Correct source bindings in the overview first. The audit store requires the machine-readable feature `overview-bridge/1`; an incompatible bundle refuses it instead of guessing.
+Anchors must reference captured source files. An excerpt-only overview without registered files cannot migrate. A page alone requires a captured PDF; a supplemental page beside a valid text line or label locator survives as navigation metadata while evidence remains bound to captured text. Unknown items, owners, or endpoints are refused. Correct source bindings in the overview first. The audit store requires the machine-readable feature `overview-bridge/1`; an incompatible bundle refuses it instead of guessing.
 
-After handoff the audit database is authoritative. Do not keep independently editable overview and audit masters. The overview's `paper_database.py` cannot read the audit store; render through `checkpoint`. The proofcheck workflow determines further inventory and checking needs. Importing a selective graph does not imply that omitted proof steps or results were assessed.
+After conversion the same database remains authoritative for both skills. Continue using overview `get`, `apply`, `compare`, `refresh`, `changes`, `validate`, `candidates`, `render`, `export`, `backup`, and reviewed reuse on its selected view. Proofcheck additions remain outside that view until selected explicitly. Full overview upserts preserve exact targets, applications, judgments, and other audit extensions. The retained `scaffold` and `reconcile` utilities keep their non-focused behavior and refuse focused stores. Use proofcheck `checkpoint` for the detailed audit reader. Importing a selective graph does not imply that omitted proof steps or results were assessed.
+
+Overview JSON exports contain the selected view. Use the common audit export to inspect all mathematical records and history; use SQLite `backup` for complete recovery. Native snapshots predating conversion are retained in the backup and can be inspected there with the native reader. Registered relative source paths use the saved manuscript root. If the project moves, refresh with an explicit verified `--source-root` and any needed `--file-map`; no similarly named file or current working directory replaces captured evidence.
 
 ## Read an audit store
 

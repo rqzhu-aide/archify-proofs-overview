@@ -43,7 +43,7 @@ def display_fragments(projection: dict) -> dict:
         fragments = {}
         for field in FRAGMENT_FIELDS:
             value = body.get(field)
-            if field == "statement" and isinstance(value, dict):
+            if field in ("statement", "needed_form") and isinstance(value, dict):
                 value = value.get("text")
             if value is None:
                 continue
@@ -89,9 +89,16 @@ class _Scan(HTMLParser):
         self.limitations, self.limitation_open = [], False
         self.count_open, self.counts = None, {}
         self.external = []
+        self.elements, self.stack = [], []
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
+        element = {"tag": tag, "attrs": a, "text": [], "children": []}
+        self.elements.append(element)
+        if self.stack:
+            self.stack[-1]["children"].append(element)
+        if tag not in {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}:
+            self.stack.append(element)
         if tag == "script" and a.get("id") in ("proof-projection", "proof-render-input"):
             self.script_id = a["id"]
             self.scripts[self.script_id] = []
@@ -126,6 +133,10 @@ class _Scan(HTMLParser):
                 self.external.append(value)
 
     def handle_endtag(self, tag):
+        for index in range(len(self.stack) - 1, -1, -1):
+            if self.stack[index]["tag"] == tag:
+                del self.stack[index:]
+                break
         if tag == "script":
             self.script_id = None
         if tag == "span" and self.count_open is not None:
@@ -134,6 +145,8 @@ class _Scan(HTMLParser):
             self.limitation_open = False
 
     def handle_data(self, data):
+        for element in self.stack:
+            element["text"].append(data)
         if self.script_id is not None:
             self.scripts[self.script_id].append(data)
         if self.count_open is not None:
@@ -144,6 +157,61 @@ class _Scan(HTMLParser):
 
 def _multiset_equal(a, b) -> bool:
     return sorted(a) == sorted(b)
+
+
+def _visible_failures(scan, projection):
+    """Check actual visible classes/text as well as identity metadata."""
+    failures = []
+    glyphs = {"green": "✓", "red": "✕", "gray": "?", "amber": "!"}
+    text = lambda element: "".join(element["text"]).strip() if element else ""
+    classes = lambda element: element["attrs"].get("class", "").split() if element else []
+
+    def descendants(element):
+        for child in element["children"]:
+            yield child
+            yield from descendants(child)
+
+    def field(element, name):
+        return next((child for child in descendants(element) if name in classes(child)), None) if element else None
+
+    def assessment_matches(element, expected):
+        return element is not None and f"s-{expected['state']}" in classes(element) \
+            and text(field(element, "proof-assessment-label")) == expected["label"] \
+            and text(field(element, "proof-assessment-text")) == expected["explanation"] \
+            and text(field(element, "proof-state-glyph")) == glyphs[expected["state"]] \
+            and (not expected.get("availability") or text(field(element, "proof-availability"))
+                 == f"Exact target support: {expected['availability']}")
+
+    by_detail = {e["attrs"]["data-proof-detail"]: e for e in scan.elements if "data-proof-detail" in e["attrs"]}
+    for entry in projection["nodes"] + projection["connections"]:
+        if not assessment_matches(field(by_detail.get(entry["detail_key"]), "proof-assessment"), entry["assessment"]):
+            failures.append(f"visible assessment for {entry['id']} disagrees with its canonical state, glyph, label or support")
+    nodes = {entry["id"]: entry for entry in projection["nodes"]}
+    connections = {entry["id"]: entry for entry in projection["connections"]}
+    applications = {app["use_id"]: app for edge in projection["connections"] for app in edge.get("applications", ())}
+    for element in scan.elements:
+        attrs = element["attrs"]
+        if "data-node-id" in attrs and (node := nodes.get(attrs["data-node-id"])):
+            state = node["assessment"]["state"]
+            if f"s-{state}" not in classes(element) or text(field(element, "proof-node-label")) != node["label"] \
+                    or text(field(element, "proof-node-state")) != glyphs[state]:
+                failures.append(f"visible node {node['id']} has altered color, label or glyph")
+        if "data-edge-id" in attrs and (edge := connections.get(attrs["data-edge-id"])):
+            state = edge["assessment"]["state"]
+            if f"s-{state}" not in classes(element) or attrs.get("marker-end") != f"url(#proof-arrow-{state})":
+                failures.append(f"visible connection {edge['id']} has an altered color")
+        if "data-application-id" in attrs:
+            app = applications.get(attrs["data-application-id"])
+            if app is None or not assessment_matches(field(element, "proof-assessment"), app["assessment"]):
+                failures.append(f"visible application {attrs['data-application-id']} has an altered assessment")
+    scope = projection["summary"]["scope"]
+    mode = [e for e in scan.elements if "data-proof-scope-mode" in e["attrs"]]
+    targets = [e for e in scan.elements if "data-proof-scope-targets" in e["attrs"]]
+    expected_targets = ", ".join(f"{r['collection']}:{r['id']}" for r in scope["target_refs"]) or (
+        "Recorded items; no audit selected" if projection["audit_id"] is None else "No explicit audit targets recorded")
+    if len(mode) != 1 or text(mode[0]) != scope["mode"] or len(targets) != 1 or text(targets[0]) != expected_targets:
+        failures.append("visible audit scope differs from the canonical scope")
+    return failures
 
 
 def mechanical_acceptance(html_bytes: bytes, projection: dict) -> dict:
@@ -161,13 +229,13 @@ def mechanical_acceptance(html_bytes: bytes, projection: dict) -> dict:
         failures.append("embedded projection differs from the built projection")
     node_ids = [n["id"] for n in projection["nodes"]]
     connection_ids = [c["id"] for c in projection["connections"]]
-    if projection["layout"]["mode"] == "dag":
+    if projection["layout"]["mode"] in ("dag", "cyclic"):
         if not _multiset_equal(scan.node_ids, node_ids):
             failures.append("diagram node identities differ from projection nodes")
         if not _multiset_equal(scan.edge_ids, connection_ids):
             failures.append("diagram edge identities differ from projection connections")
         if scan.index_items or scan.index_connections:
-            failures.append("dag mode emitted index articles")
+            failures.append(f"{projection['layout']['mode']} mode emitted index articles")
     else:
         if not _multiset_equal(scan.index_items, node_ids):
             failures.append("index item identities differ from projection nodes")
@@ -207,6 +275,7 @@ def mechanical_acceptance(html_bytes: bytes, projection: dict) -> dict:
         failures.append("listed completion limitations differ from summary.limitations")
     if scan.external:
         failures.append(f"page references external resources: {scan.external[:3]}")
+    failures.extend(_visible_failures(scan, projection))
     return {"status": "pass" if not failures else "fail", "failures": failures,
             "nodes": len(node_ids), "connections": len(connection_ids), "layout_mode": projection["layout"]["mode"]}
 

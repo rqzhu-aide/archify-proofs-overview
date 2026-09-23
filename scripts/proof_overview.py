@@ -208,6 +208,7 @@ def _render_validated_dataset(canonical, base_dir, output_path, protected_paths=
             "bytes": output_path.stat().st_size, "seconds": round(time.perf_counter() - started, 3),
             "sha256": hashlib.sha256(html).hexdigest(), "warnings": prepared["warnings"],
             "math_diagnostics": prepared.get("math_diagnostics", []),
+            "locator_diagnostics": prepared.get("locator_diagnostics", []),
             **prepared['build_context'], 'graph_preservation': preservation,
             'geometry': renderer_receipt['geometry'], 'graph_mode': prepared['graph_mode'],
             'graph_cycles': prepared['graph_cycles'],
@@ -219,6 +220,21 @@ def render_file(input_path: Path, output_path: Path) -> dict:
     return render_dataset(load_data(input_path), input_path.parent, output_path, protected_paths=(input_path,))
 
 
+def compact_render_receipt(receipt, *, full=False):
+    """Keep routine CLI failures brief; the artifact and stored receipt stay complete."""
+    from overview_math import group_diagnostics
+    entries = receipt.get("math_diagnostics", [])
+    result = dict(receipt, math_diagnostic_count=len(entries))
+    if len(entries) > 5 and not full:
+        result["math_diagnostics"] = entries[:5]
+        result["math_diagnostic_groups"] = group_diagnostics(entries)
+        result["math_diagnostics_truncated"] = True
+        result["math_diagnostics_note"] = (
+            "First 5 expressions shown. All locations are grouped below; complete details remain "
+            "in the HTML Math display notes. Use --full-diagnostics for the full receipt.")
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -227,6 +243,7 @@ def main() -> int:
     render = commands.add_parser("render", help="Render the validated dataset as standalone HTML")
     render.add_argument("dataset", type=Path)
     render.add_argument("output", type=Path)
+    render.add_argument("--full-diagnostics", action="store_true", help="Print all math failures instead of grouping large diagnostic lists")
     args = parser.parse_args()
     try:
         if args.command == "validate":
@@ -237,7 +254,7 @@ def main() -> int:
             result = {"valid": True, "items": len(data["items"]), "uses": len(data["uses"]), "warnings": report["warnings"],
                       'graph_mode': report['graph_mode'], 'graph_cycles': report['graph_cycles'], **report['build_context']}
         else:
-            result = render_file(args.dataset, args.output)
+            result = compact_render_receipt(render_file(args.dataset, args.output), full=args.full_diagnostics)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except OverviewError as exc:

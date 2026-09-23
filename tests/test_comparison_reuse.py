@@ -81,7 +81,7 @@ class ComparisonReuseTests(unittest.TestCase):
             base = Path(temporary)
             source, db = base / "records.json", base / "paper.sqlite"
             source.write_text(json.dumps(self.data), encoding="utf-8")
-            database.init_database(db, source)
+            database._native_init_database(db, source)  # Source-free historical native fixture.
             with patch.object(records, "target_digest", wraps=records.target_digest) as digest:
                 packet = database.get_packet(db, "key-bound")
             self.assert_digests_once(digest.call_args_list, self.keys)
@@ -101,7 +101,7 @@ class ComparisonReuseTests(unittest.TestCase):
             base = Path(temporary)
             source, db = base / "records.json", base / "paper.sqlite"
             source.write_text(json.dumps(self.data), encoding="utf-8")
-            database.init_database(db, source)
+            database._native_init_database(db, source)  # Source-free historical native fixture.
             with patch.object(records, "target_digest", wraps=records.target_digest) as digest:
                 packet = database.get_packet(db, "independence")
             expected = {(target["collection"], target["id"]) for target in packet["target_digests"]}

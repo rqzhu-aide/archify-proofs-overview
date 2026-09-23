@@ -13,8 +13,10 @@ from .contract import MAJOR_KINDS, extract_refs, validate_body
 from .ids import COLLECTIONS
 from .refs import RELATIONS, body_members, relation_members
 from .storage import Database, Record
+from .semantics import application, target_spec, related
 
-STRUCTURAL = ("items", "parts", "scopes", "arguments", "groups", "uses", "coverage")
+STRUCTURAL = ("items", "parts", "scopes", "arguments", "groups", "uses", "coverage",
+              "target_specs", "application_details", "connection_refinements", "proof_boundaries", "overview_selections")
 ASSESSMENT = ("checks", "findings", "repairs")
 PAPER_LEVEL = ("audits", "identity_maps", "reuse_decisions", "qualifications", "sources", "anchors",
                "source_reviews", "source_issues", "responses", "papers")
@@ -22,6 +24,9 @@ IMMUTABLE_ONCE_CREATED = ("observations", "reconciliations", "qualifications")
 
 # Per command: collections that may be created / replaced / retired.
 COMMANDS = {
+    "overview": {"create": ("sources", "anchors", "items", "parts", "groups", "uses", "observations", "overview_selections"),
+                 "replace": ("papers", "sources", "anchors", "items", "parts", "groups", "uses", "overview_selections"),
+                 "retire": ()},
     "apply": {
         "create": STRUCTURAL + ASSESSMENT + ("audits", "identity_maps", "reuse_decisions"),
         "replace": ("papers",) + STRUCTURAL + ASSESSMENT + ("audits", "identity_maps", "reuse_decisions"),
@@ -43,8 +48,8 @@ COMMANDS = {
 }
 INDEPENDENT_CHECK_COMMANDS = ("review_submit", "review_map", "import")
 FINDING_TARGETS = ("items", "parts", "uses", "groups", "arguments", "audits")
-OBSERVATION_TARGETS = ("items", "parts", "uses")  # record-contract 2: compared statement or use facets
-USE_IDENTITY = ("from", "to", "type", "group_id", "needed_form", "substitutions", "regime")
+OBSERVATION_TARGETS = ("items", "parts", "uses", "target_specs")
+USE_IDENTITY = ("from", "to", "type", "group_id", "needed_form", "substitutions", "regime", "scope_id")
 
 
 @dataclass
@@ -117,6 +122,12 @@ class State:
         return rows
 
     def relation_members(self, relation, key) -> list:
+        if relation == "uses_in_group":
+            candidates = {i for _, i, _ in relation_members(self.db.conn, relation, key)}
+            candidates.update(p.id for p in self.overlay.values() if p.collection in ("uses", "application_details"))
+            return [("uses", use.id, use.version) for identity in sorted(candidates)
+                    if (use := self.live("uses", identity)) is not None
+                    and application(self, use)["group_id"] == key["id"]]
         members = [m for m in relation_members(self.db.conn, relation, key) if (m[0], m[1]) not in self.overlay]
         owners = RELATIONS[relation][0]
         for p in self.overlay.values():
@@ -176,7 +187,7 @@ def owners_of(state: State, collection: str, body: dict, _seen=None) -> set:
             return via_major(target)
         if target["collection"] == "audits":
             return {f"audit:{target['id']}"}
-        if target["collection"] in ("uses", "groups", "arguments"):
+        if target["collection"] in ("uses", "groups", "arguments", "target_specs", "application_details"):
             return via(target["collection"], target["id"])
         return set()
 
@@ -192,6 +203,12 @@ def owners_of(state: State, collection: str, body: dict, _seen=None) -> set:
         return via("arguments", body["argument_id"])
     if collection == "uses":
         return via_major(body["to"])
+    if collection == "application_details":
+        return via("uses", body["use_id"])
+    if collection in ("target_specs", "proof_boundaries"):
+        return via_major(body["target"])
+    if collection == "connection_refinements":
+        return via("uses", body["summary_use_id"])
     if collection == "scopes":
         if body["argument_id"] is not None:
             return via("arguments", body["argument_id"])
@@ -229,7 +246,9 @@ def _check_refs(state: State, p: Planned, errors: list):
         tc, ti, tv, path = ref["target_collection"], ref["target_id"], ref["target_version"], ref["field_path"]
         if tv is None:
             if state.live(tc, ti) is None:
-                errors.append(f"{where} {path}: no live {tc} record {ti}")
+                withdrawn = p.body.get('state') == 'draft' and p.collection in ('application_details', 'connection_refinements')
+                if not withdrawn or state.head(tc, ti) is None:
+                    errors.append(f"{where} {path}: no live {tc} record {ti}")
         elif state.version(tc, ti, tv) is None:
             errors.append(f"{where} {path}: {tc} record {ti} has no version {tv}")
 
@@ -256,7 +275,7 @@ def _semantic(state: State, p: Planned, errors: list, command: str):
     c = p.collection
 
     if c == "papers":
-        if p.prev is not None and p.prev.body["source_root"] != body["source_root"]:
+        if p.prev is not None and p.prev.body["source_root"] != body["source_root"] and command not in ('import', 'overview'):
             err("source_root is fixed at initialization")
         for item_id in body["main_items"]:
             item = live("items", item_id)
@@ -339,13 +358,113 @@ def _semantic(state: State, p: Planned, errors: list, command: str):
                 err(f"discharged scope {sid} is neither argument-local nor a case scope")
         for member in state.relation_members("uses_in_group", {"collection": "groups", "id": p.id}):
             use = live("uses", member[1])
-            if use is not None and use.body["to"] != body["conclusion"]:
+            if use is not None and application(state, use)['state'] == 'registered' and use.body["to"] != body["conclusion"]:
                 err(f"member use {use.id} concludes {use.body['to']} but the group concludes {body['conclusion']}")
     elif c == "uses":
-        if body["group_id"] is not None:
-            group = live("groups", body["group_id"])
+        detail = application(state, p.record)
+        if detail["state"] == "registered" and detail["group_id"] is not None:
+            group = live("groups", detail["group_id"])
             if group is not None and group.body["conclusion"] != body["to"]:
                 err("a grouped use must conclude the group's conclusion")
+    elif c == "application_details":
+        if p.id != body["use_id"]:
+            err("application_details identity must equal use_id")
+        use = live("uses", body["use_id"])
+        group = live("groups", body["group_id"]) if body["group_id"] else None
+        if body["state"] == "registered":
+            if group is None or group.body["argument_id"] is None:
+                err("a registered application needs a real argument inference")
+            elif use is not None and use.body["to"] != group.body["conclusion"]:
+                err("application conclusion disagrees with its inference")
+            if group is not None and body.get("scope_id") not in (None, group.body["scope_id"], *group.body["case_scope_ids"]):
+                err("application scope must be the group scope or an explicit case branch")
+    elif c == "target_specs":
+        if len(related(state, "target_specs", "/target", body["target"])) != 1:
+            err("an exact target has only one live specification")
+        if body["fidelity_ref"] is not None:
+            pin = body["fidelity_ref"]
+            observation = state.version("observations", pin["id"], pin["version"])
+            if observation is not None and (observation.body["result"] != "matched" or
+                    observation.body["target"] not in (body["target"], p.record.ref)):
+                err("fidelity reuse must identify a matched examination of this exact target")
+            if observation is not None and observation.body["target"] == body["target"] and body["statement_ref"] is None:
+                err("an examination of shared text cannot certify a newly supplied exact statement")
+            if observation is not None and observation.body['target'] == body['target'] and body['statement_ref']:
+                statement_pin=body['statement_ref']
+                statement=state.version(statement_pin['collection'],statement_pin['id'],statement_pin['version'])
+                binding=state.db.binding('observations',observation.id,observation.version)
+                if statement and (statement.body['statement']['form'] == 'synopsis' or statement.body.get('scope_id') != body['scope_id']):
+                    err('synopsis or newly normalized setup needs an exact-target source examination')
+                if not binding or any(binding_changes(state,binding['bindings']).values()):
+                    err('fidelity reuse requires a current source examination')
+                covered={entry['ref']['id'] for entry in (binding or {}).get('bindings',{}).get('records',[])
+                         if entry['ref']['collection']=='anchors'}
+                if statement and observation.body.get('context_kind') == 'overview':
+                    covered.update(passage['anchor_id'] for passage in statement.body['passages'])
+                if not set(body['evidence_refs']) <= covered:
+                    err('fidelity reuse cannot add setup or passages absent from the prior examination')
+    elif c == "overview_selections":
+        if len(state.live_all("overview_selections")) != 1:
+            err("this revision supports one overview selection per paper")
+        selected = set(body["item_ids"])
+        if not set(body["main_item_ids"]) <= selected:
+            err("main items must be selected items")
+        for uid in body["use_ids"]:
+            use = live("uses", uid)
+            if use and any(ref['collection'] != 'items' or ref['id'] not in selected for ref in (use.body['from'], use.body['to'])):
+                err("selected connections require their selected item endpoints")
+    elif c == "proof_boundaries":
+        pin = body["source_review_ref"]
+        review = state.version("source_reviews", pin["id"], pin["version"])
+        if body["state"] == "complete" and review is not None:
+            if review.body['purpose'] != 'proof_boundary' or review.body['decision'] != 'accepted':
+                err("a complete proof boundary needs an accepted proof_boundary source review")
+            if any(ref not in review.body['anchor_refs'] for ref in body['anchor_refs']):
+                err("every boundary segment must be present in the source review")
+        for identity in body["argument_ids"]:
+            matches = related(state, 'proof_boundaries', '/argument_ids', {'collection':'arguments','id':identity}, prefix=True)
+            if len(matches) != 1:
+                err('each argument has one live proof-boundary basis; revise the existing basis')
+            argument = live("arguments", identity)
+            if argument and argument.body['target'] != body['target']:
+                err("a boundary applies to arguments for its exact target")
+    elif c == "connection_refinements" and body['state'] == 'registered':
+        summary = live('uses', body['summary_use_id'])
+        argument = live('arguments', body['argument_id'])
+        suppliers, conclusions = [], []
+        for identity in body['use_ids']:
+            use = live('uses', identity)
+            detail = application(state, use)
+            group = live('groups', detail['group_id']) if detail['group_id'] else None
+            if identity == body['summary_use_id']:
+                err('a refinement cannot count its summary arrow as its own detailed proof')
+            if group is None or group.body['argument_id'] != body['argument_id'] or detail['state'] != 'registered':
+                err('refinement uses must be registered applications in the named argument')
+            if use:
+                suppliers.append(use.body['from']); conclusions.append(use.body['to'])
+        if summary and argument:
+            if argument.body['target'] != summary.body['to']:
+                err('refinement consumer argument must target the summary conclusion')
+            valid_supplier = summary.body['from'] in suppliers
+            if summary.body['type'] == 'proof_argument':
+                owner = state.major_of(summary.body['from'])
+                valid_supplier |= any(state.major_of(ref) is not None and owner is not None
+                                      and state.major_of(ref).id == owner.id for ref in suppliers)
+            if not valid_supplier:
+                err('refinement must include the stated supplier or its borrowed internal argument')
+            # Every listed contribution must reach the target through the actual
+            # argument, including other inputs not repeated in this mapping.
+            frontier = [summary.body['to']]; reachable = set()
+            while frontier:
+                ref = frontier.pop(); key = (ref['collection'], ref['id'])
+                if key in reachable: continue
+                reachable.add(key)
+                for _, gid, _ in state.relation_members('groups_in_argument', argument.ref):
+                    group = live('groups', gid)
+                    if group and group.body['conclusion'] == ref:
+                        frontier.extend(live('uses', uid).body['from'] for _, uid, _ in state.relation_members('uses_in_group', group.ref))
+            if any((ref['collection'], ref['id']) not in reachable for ref in conclusions):
+                err('refinement contains a contribution that cannot reach the consumer target')
     elif c == "coverage":
         anchor = live("anchors", body["anchor_id"])
         if anchor is not None and body["end_offset"] > len(anchor.body["excerpt"]):
@@ -366,7 +485,7 @@ def _semantic(state: State, p: Planned, errors: list, command: str):
         if target is not None and body["kind"] == "scope_discharge" and not target.body["discharges"]:
             err("scope_discharge checks target groups that discharge a scope")
         if target is not None and body["kind"] == "application" and body["state"] == "complete" \
-                and target.body["group_id"] is None:
+                and application(state, target)["state"] != "registered":
             err("an application check completes only for a grouped use")
         if body["response_id"] is not None:
             response = live("responses", body["response_id"])
@@ -404,6 +523,16 @@ def _semantic(state: State, p: Planned, errors: list, command: str):
             if target is not None and target.body["origin"] == "source" and not target.body["passages"] \
                     and body["result"] == "matched":
                 err("a source-origin statement needs at least one passage before fidelity is confirmed")
+        elif body['target']['collection'] == 'uses' and body['result'] == 'matched':
+            target = live('uses', body['target']['id'])
+            historical = body.get('context_kind') == 'overview' and \
+                (body.get('context_data') or {}).get('applicable_on_import') is False
+            if target is not None and not target.body['evidence_refs'] and not historical:
+                err('a connection needs located supporting source evidence before fidelity is confirmed')
+        elif body['target']['collection'] == 'target_specs' and body['result'] == 'matched':
+            target = live('target_specs', body['target']['id'])
+            if target is not None and not target.body['evidence_refs']:
+                err('an exact target needs located source evidence before fidelity is confirmed')
     elif c == "responses":
         if not state.has_blob(body["original_blob"]):
             err("original response blob is not stored")
@@ -552,7 +681,8 @@ def _retire(state: State, p: Planned, errors: list):
         errors.append(f"{where}: completed checks cannot be retired")
     if p.collection in IMMUTABLE_ONCE_CREATED:
         errors.append(f"{where}: {p.collection} records cannot be retired")
-    referrers = state.referrers(p.collection, p.id)
+    historical = {"checks", "findings", "observations", "reconciliations", "responses", "identity_maps", "source_reviews"}
+    referrers = [(oc, oi, path) for oc, oi, path in state.referrers(p.collection, p.id) if oc not in historical]
     if referrers:
         listing = ", ".join(f"{oc}:{oi}{path}" for oc, oi, path in referrers[:8])
         errors.append(f"{where}: still referenced by live records ({listing})")
@@ -563,10 +693,20 @@ def _unique_applications(state: State, plan_uses: list, errors: list):
         return
     seen = {}
     for use in state.live_all("uses"):
-        identity = tuple(repr(use.body[field]) for field in USE_IDENTITY)
+        app = application(state, use)
+        # Distinct overview connections can describe parallel contributions.
+        # Duplicate mathematical application detection requires an exact form.
+        if app.get('state') != 'registered':
+            continue
+        combined = dict(use.body, **{k: v for k, v in app.items() if k in USE_IDENTITY})
+        identity = tuple(repr(combined.get(field)) for field in USE_IDENTITY)
         seen.setdefault(identity, []).append(use.id)
     for p in plan_uses:
-        identity = tuple(repr(p.body[field]) for field in USE_IDENTITY)
+        app = application(state, p.record)
+        if app.get('state') != 'registered':
+            continue
+        combined = dict(p.body, **{k: v for k, v in app.items() if k in USE_IDENTITY})
+        identity = tuple(repr(combined.get(field)) for field in USE_IDENTITY)
         others = [i for i in seen.get(identity, []) if i != p.id]
         if others:
             errors.append(f"edits/{p.index} uses:{p.id}: duplicates the application identity of {others}")
@@ -723,6 +863,24 @@ def validate_plan(db: Database, plan: list, *, command: str, targets: list, work
             _immutability(state, p, errors, command)
     _unique_applications(state, [p for p in plan if p.collection == "uses" and p.body is not None
                                  and p.key not in bad], errors)
+    if not bad:
+        # An edited endpoint can invalidate an unchanged extension or selection.
+        # Follow indexed direct relationships, not every record in the paper.
+        linked = {'uses', 'groups', 'application_details', 'connection_refinements',
+                  'overview_selections', 'target_specs', 'proof_boundaries'}
+        affected = set()
+        for p in plan:
+            # Edited owners were checked above and are excluded below. Only
+            # unchanged database referrers can add work here; rescanning the
+            # entire overlay for each edit makes a coherent large batch quadratic.
+            affected.update((r['owner_collection'], r['owner_id'])
+                            for r in db.live_referrers(p.collection, p.id)
+                            if r['owner_collection'] in linked)
+        for c, i in sorted(affected - set(state.overlay)):
+            record = state.live(c, i)
+            if record:
+                _semantic(state, Planned(-1, 'replace', c, i, record.version, record.body,
+                                         prev=record, version=record.version), errors, command)
     if not errors and command in ("apply", "compare", "reconcile") and not (command == "reconcile" and work):
         _scope(state, plan, errors, targets)
     if not errors and command == "work_primary":

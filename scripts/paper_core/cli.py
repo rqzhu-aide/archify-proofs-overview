@@ -293,7 +293,7 @@ def cmd_work_prepare(args):
         result = prepare_work(db, audit_id=args.audit, mode=args.mode,
                               focus=_parse_target(args.focus) if args.focus else None, task_ids=args.task,
                               exclude_task_ids=args.exclude_task, max_units=args.max_units,
-                              max_bytes=args.max_bytes, allow_provisional=args.allow_provisional)
+                              max_bytes=args.max_bytes, allow_provisional=args.allow_provisional, route_id=args.route)
         if result.get("prepared"):
             try:
                 result["files"] = write_artifacts(db, result, args.out)
@@ -504,6 +504,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--audit", required=True)
     p.add_argument("--mode", choices=("primary", "independent", "reconcile"), required=True)
     p.add_argument("--focus")
+    p.add_argument("--route", help="exact argument for supplied-route independent review")
     p.add_argument("--task", action="append", default=[])
     p.add_argument("--exclude-task", action="append", default=[])
     p.add_argument("--max-units", type=int, default=5)

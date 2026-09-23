@@ -15,14 +15,15 @@ import re
 
 from .acceptance import COMMAND_MODES, accept, apply_batch
 from .canonical import digest, load_json_bytes, sha256_bytes
-from .contract import (BATCH, CHECK_TARGETS, EDIT_CREATE, INTERMEDIATE_KINDS, MAPPING_REQUEST, SUBMISSION, WORKER_RESPONSE, Arr, Const,
+from .contract import (BATCH, CHECK_TARGETS, EDIT_CREATE, INTERMEDIATE_KINDS, MAPPING_REQUEST, SUBMISSION, WORKER_RESPONSE, Arr, Const, RequestVersion,
                        Hash, Obj, Str, validate_body, validate_shape)
 from .errors import InvalidRequest
 from .ids import new_id
 from .packets import load_packet
 from .storage import Database
+from .semantics import application
 
-QUALIFICATION_REQUEST = Obj({"contract_version": Const(3), "request_id": Str(nonempty=True), "edits": Arr(EDIT_CREATE),
+QUALIFICATION_REQUEST = Obj({"contract_version": RequestVersion(), "request_id": Str(nonempty=True), "edits": Arr(EDIT_CREATE),
                              "blobs": Arr(Obj({"sha256": Hash(), "encoding": Const("base64"), "data": Str()}))})
 JUDGMENT_KEY_RE = re.compile(r"^judgment:(\d+)$")
 
@@ -55,6 +56,11 @@ def classify_judgments(manifest: dict, response: dict, packet_records: dict) -> 
                 problems.append(f"kind {judgment['kind']} cannot target {target['collection']}")
             if (target["collection"], target["id"]) not in read_set:
                 problems.append(f"target {target['collection']}:{target['id']} is not in the packet read set")
+            if manifest.get("review_basis") == "route_provided":
+                assigned = {(t["target"]["collection"], t["target"]["id"], t["kind"])
+                            for t in manifest.get("work", {}).get("tasks", [])}
+                if (target["collection"], target["id"], judgment["kind"]) not in assigned:
+                    problems.append("target is outside the exact supplied-route assignment")
         for anchor_id in judgment["evidence_refs"]:
             if ("anchors", anchor_id) not in read_set:
                 problems.append(f"evidence anchor {anchor_id} is not in the packet read set")
@@ -91,8 +97,8 @@ def _target_statement(db: Database, target: dict):
         elif record.collection == "groups":
             ref = {"collection": "arguments", "id": record.body["argument_id"]}
         elif record.collection == "uses":
-            ref = ({"collection": "groups", "id": record.body["group_id"]}
-                   if record.body["group_id"] else record.body["to"])
+            group_id = application(db, record)["group_id"]
+            ref = ({"collection": "groups", "id": group_id} if group_id else record.body["to"])
         else:
             return None
         record = db.head(ref["collection"], ref["id"])
@@ -205,8 +211,9 @@ def plan_review_submission(db: Database, *, submission: dict, response_bytes: by
                                            "the worker must resubmit"))
             resolved = scoped
             pending.sort(key=lambda entry: entry[0])
-    if submission["exposure"] == "source_only" and worker_exposure["status"] == "none_known":
-        exposure, exposure_note = "source_only", submission["exposure_note"]
+    review_basis = manifest.get("review_basis", "source_only")
+    if submission["exposure"] == review_basis and worker_exposure["status"] == "none_known":
+        exposure, exposure_note = review_basis, submission["exposure_note"]
     else:
         exposure = "compromised"
         exposure_note = (f"coordinator: {submission['exposure']}"
@@ -269,7 +276,7 @@ def _mapped_indexes(db: Database, response_id: str) -> set:
 
 
 def map_response(db: Database, *, mapping: dict) -> dict:
-    """Map pending judgments of a needs_revision response to canonical targets (record-contract 5.1)."""
+    """Map source identities or explicitly reuse equivalent examined routine mathematics."""
     errors = validate_shape(MAPPING_REQUEST, mapping)
     if errors:
         raise InvalidRequest("invalid mapping request", records=errors)
@@ -285,9 +292,7 @@ def map_response(db: Database, *, mapping: dict) -> dict:
     response = db.head("responses", mapping["response_id"])
     if response is None or response.retired:
         raise InvalidRequest(f"response {mapping['response_id']} is not a live record")
-    if response.body["state"] == "accepted":
-        raise InvalidRequest(f"response {response.id} is already accepted; mapping is closed",
-                             code="RESPONSE_ACCEPTED")
+    accepted_reuse = response.body["state"] == "accepted"
     packet_row = db.packet(mapping["packet_id"])
     if packet_row is None:
         raise InvalidRequest(f"unknown packet {mapping['packet_id']}", code="PACKET_UNKNOWN")
@@ -318,6 +323,15 @@ def map_response(db: Database, *, mapping: dict) -> dict:
     _, pending = classify_judgments(original_packet["_manifest"], worker, original_packet)
     pending_indexes = {i for i, _ in pending}
     already = _mapped_indexes(db, response.id)
+    mapped_targets = set()
+    for record in db.heads("identity_maps"):
+        if record.body["reason"] == "response_mapping" and record.body["response_id"] == response.id:
+            for entry in record.body["entries"]:
+                match = JUDGMENT_KEY_RE.match(entry["old"])
+                if match:
+                    mapped_targets.update((int(match.group(1)), r["collection"], r["id"]) for r in entry["new_refs"])
+    for index, target in classify_judgments(original_packet["_manifest"], worker, original_packet)[0]:
+        mapped_targets.add((index, target["collection"], target["id"]))
     audit = db.head("audits", response.body["audit_id"])
     if audit is None:
         raise InvalidRequest(f"audit {response.body['audit_id']} is missing")
@@ -336,15 +350,24 @@ def map_response(db: Database, *, mapping: dict) -> dict:
         if j >= len(worker["judgments"]):
             errors.append(f"{where}: judgment {j} does not exist (response has {len(worker['judgments'])})")
             continue
-        if j not in pending_indexes:
+        if j not in pending_indexes and not accepted_reuse:
             errors.append(f"{where}: judgment {j} was already resolved at submission")
             continue
-        if j in already or j in seen:
+        if (j in already and not accepted_reuse) or j in seen:
             errors.append(f"{where}: judgment {j} is already mapped")
             continue
         seen.add(j)
         judgment = worker["judgments"][j]
         target = entry["target"]
+        if (j, target["collection"], target["id"]) in mapped_targets:
+            errors.append(f"{where}: judgment {j} already maps to this exact target")
+            continue
+        if original_packet["_manifest"].get("review_basis") == "route_provided":
+            assigned = {(t["target"]["collection"], t["target"]["id"], t["kind"])
+                        for t in original_packet["_manifest"].get("work", {}).get("tasks", [])}
+            if (target["collection"], target["id"], judgment["kind"]) not in assigned:
+                errors.append(f"{where}: target was not in the supplied-route review")
+                continue
         if target["collection"] not in CHECK_TARGETS[judgment["kind"]]:
             errors.append(f"{where}: kind {judgment['kind']} cannot target {target['collection']}")
             continue
@@ -389,7 +412,7 @@ def map_response(db: Database, *, mapping: dict) -> dict:
                            "note": ""}})
     remaining = pending_indexes - already - seen
     completes = not remaining
-    if completes:
+    if completes and not accepted_reuse:
         body = dict(response.body)
         body["state"] = "accepted"
         edits.append({"op": "replace", "collection": "responses", "id": response.id,

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+from contextlib import closing
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -50,6 +51,19 @@ def _read_json(path):
         return json.loads(Path(path).read_text(encoding="utf-8-sig"), object_pairs_hook=_object)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise DatabaseError(f"Cannot read JSON {path}: {exc}") from exc
+
+
+def _normalize_dataset(dataset_path, extra_files, manuscript_root):
+    try:
+        return records.normalize(_read_json(dataset_path), dataset_path.parent,
+                                 extra_files=extra_files, source_root=manuscript_root)
+    except records.RecordError as exc:
+        if str(exc).startswith("Cannot capture source "):
+            raise DatabaseError(f"{exc} Seed file paths resolve from {dataset_path.parent}, "
+                                "the JSON directory. --source-root controls stored paths and refresh, "
+                                "not seed path resolution. Correct source.file relative to the JSON "
+                                "or supply its absolute path.") from exc
+        raise
 
 
 def _connect(path, *, write=False):
@@ -121,7 +135,7 @@ def init_database(db_path, dataset_path, extra_files=(), source_root=None, *, fo
     """Capture a schema-3 seed or import a schema-3 export without creating reviews."""
     db_path, dataset_path = Path(db_path).resolve(), Path(dataset_path).resolve()
     manuscript_root = Path(source_root).resolve() if source_root is not None else dataset_path.parent
-    data = records.normalize(_read_json(dataset_path), dataset_path.parent, extra_files=extra_files, source_root=manuscript_root)
+    data = _normalize_dataset(dataset_path, extra_files, manuscript_root)
     if focused:
         records.validate_focused_authoring(data)
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -214,6 +228,9 @@ def _database_profile(db_path):
 
 
 def _writable_head(connection):
+    row = connection.execute("SELECT value FROM metadata WHERE key='format'").fetchone()
+    if row is None or row[0] != FORMAT:
+        raise DatabaseError("The database format changed. Reopen it with the common-store overview adapter.")
     payload = json.loads(connection.execute("SELECT payload FROM snapshots WHERE id=?", (_head(connection),)).fetchone()[0])
     records.require_schema3(payload)
 
@@ -225,6 +242,196 @@ def _require_schema3(db_path):
         _writable_head(connection)
     finally:
         connection.close()
+
+
+def _common_format(db_path):
+    """Inspect format without making an unsupported database writable."""
+    path = Path(db_path).resolve()
+    if not path.is_file():
+        return False
+    with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as connection:
+        row = connection.execute("SELECT value FROM metadata WHERE key='storage_format'").fetchone()
+        return row is not None
+
+
+def _common_core():
+    # Use the shipped bundle in development too, so installation location cannot
+    # change the backend. Rebuild it from shared/paper_core when that source changes.
+    scripts = Path(__file__).resolve().parent
+    bundle = scripts / "paper_core"
+    loaded = sys.modules.get("paper_core")
+    if loaded is not None and Path(getattr(loaded, "__file__", "") or ".").resolve() != bundle / "__init__.py":
+        raise DatabaseError("A different paper_core is already loaded. Run this skill's paper_database.py "
+                            "in a fresh Python process; do not mix skill installations in one process.")
+    missing = [name for name in ("__init__.py", "overview.py") if not (bundle / name).is_file()]
+    if missing:
+        raise DatabaseError(f"The bundled paper_core is incomplete: missing {', '.join(missing)}. "
+                            "Reinstall the complete proof-graphify skill; no database was changed.")
+    if not sys.path or sys.path[0] != str(scripts):
+        if str(scripts) in sys.path:
+            sys.path.remove(str(scripts))
+        sys.path.insert(0, str(scripts))
+    try:
+        from paper_core import STORAGE_FORMAT, overview
+        from paper_core.storage import Database, initialize, paper_record
+    except ImportError as exc:
+        raise DatabaseError("Cannot load the bundled paper_core. Reinstall the complete "
+                            f"proof-graphify skill; no database was changed. Details: {exc}") from exc
+    if STORAGE_FORMAT != 4 or not all(callable(getattr(overview, name, None)) for name in ("project", "update")):
+        raise DatabaseError("The bundled paper_core is incompatible with this overview version. "
+                            "Reinstall the complete proof-graphify skill; no database was changed.")
+    return overview, Database, initialize, paper_record
+
+
+def _materialize_common(db, destination, *, history=False):
+    """Create disposable native snapshots for the existing overview algorithms."""
+    overview, _, _, paper_record = _common_core()
+    current, selection = overview.project(db)
+    root = paper_record(db).body["source_root"]
+    connection = sqlite3.connect(destination)
+    try:
+        connection.executescript("""
+            CREATE TABLE metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE source_blobs(sha256 TEXT PRIMARY KEY, content_base64 TEXT NOT NULL);
+            CREATE TABLE snapshots(id TEXT PRIMARY KEY, payload TEXT NOT NULL, created_at TEXT NOT NULL);
+            CREATE TABLE current_snapshot(singleton INTEGER PRIMARY KEY, snapshot_id TEXT NOT NULL);
+            CREATE TABLE observations(id TEXT PRIMARY KEY, snapshot_id TEXT NOT NULL, payload TEXT NOT NULL);
+            CREATE TABLE builds(id TEXT PRIMARY KEY, snapshot_id TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL);
+        """)
+        connection.executemany("INSERT INTO metadata VALUES (?,?)", [("format", FORMAT), ("source_root", root)])
+        profile = selection.body.get("authoring_profile") or "compatibility"
+        if profile == "focused":
+            connection.execute("INSERT INTO metadata VALUES ('authoring_profile','focused')")
+        revisions = range(1, db.max_revision() + 1) if history else [db.max_revision()]
+        for revision in revisions:
+            if not db.records_at(revision, "overview_selections"):
+                continue
+            data, _ = overview.project(db, revision)
+            snapshot_id = _store_snapshot(connection, data)
+            _store_observations(connection, snapshot_id, data.get("observations", []))
+        snapshot_id = _store_snapshot(connection, current)
+        _store_observations(connection, snapshot_id, current.get("observations", []))
+        connection.execute("INSERT INTO current_snapshot VALUES (1,?)", (snapshot_id,))
+        connection.commit()
+    finally:
+        connection.close()
+    return current, profile
+
+
+def _common_dispatch(native, db_path, *args, **kwargs):
+    """Run retained overview behavior, then atomically accept shared-field edits."""
+    overview, Database, _, _ = _common_core()
+    from paper_core.errors import CoreError
+    name = native.__name__
+    if name in {"render_database", "export_database"}:
+        output = args[0] if args else kwargs["output_path"]
+        if Path(output).resolve() == Path(db_path).resolve():
+            raise DatabaseError("Choose an output path distinct from the authoritative database.")
+    if name == "backup_database":
+        with Database(db_path) as db:
+            receipt = db.backup(args[0] if args else kwargs["output_path"])
+            data, _ = overview.project(db)
+            return {"backup": receipt.get("path", str(args[0] if args else kwargs["output_path"])),
+                    "snapshot_id": records.snapshot_digest(data), "recovery": "complete common SQLite authority"}
+    write = name in {"apply_edits", "compare_records", "refresh_database", "render_database"}
+    history = name == "changes_database" or name == "compare_records" and bool((args[0] if args else kwargs["batch"]).get("reuse_from"))
+    if name in {"export_snapshot", "get_packet", "list_records", "candidates_database", "validate_database", "render_database", "export_database"}:
+        import inspect
+        history = history or inspect.signature(native).bind(db_path, *args, **kwargs).arguments.get("snapshot_id") is not None
+    try:
+        with Database(db_path, write=write) as db:
+            if write:
+                db.begin_immediate()
+            else:
+                db.conn.execute("BEGIN")
+            try:
+                with tempfile.TemporaryDirectory(prefix="overview-projection-") as folder:
+                    projected = Path(folder) / "projection.db"
+                    before, profile = _materialize_common(db, projected, history=history)
+                    if name == "refresh_database":
+                        import inspect
+                        supplied = inspect.signature(native).bind(projected, *args, **kwargs)
+                        supplied.apply_defaults()
+                        values = supplied.arguments
+                        expected = values["expected_snapshot"]
+                        if expected != records.snapshot_digest(before):
+                            raise DatabaseError("Stale refresh: retrieve the current selected snapshot first.")
+                        refreshed = records.refresh_sources(before, _source_root(projected, values["source_root"]),
+                            extra_files=values["extra_files"], anchor_locations=values["anchor_locations"],
+                            relocate_exact=values["relocate_exact"], file_map=values["file_map"], _common_projection=True)
+                        result = _publish(projected, refreshed, expected, source_root=values["source_root"])
+                    else:
+                        try:
+                            result = native(projected, *args, **kwargs)
+                        except records.RecordError as exc:
+                            if "excerpt differs from the captured line range" in str(exc):
+                                raise DatabaseError("Selected source bytes advanced beyond the overview anchors. "
+                                    "Refresh their bindings before continuing: refresh " + str(db_path) +
+                                    " --expected-snapshot " + records.snapshot_digest(before) +
+                                    ". Supply --anchors if the source locations changed.") from exc
+                            raise
+                    if name in {"apply_edits", "compare_records", "refresh_database"}:
+                        after = _native_export_snapshot(projected)
+                        source_root = _source_root(projected) if name == "refresh_database" else None
+                        receipt = overview.update(db, before, after, profile=profile, source_root=source_root)
+                        result["common_revision"] = db.max_revision()
+                    elif name == "render_database":
+                        payload = _json(result)
+                        db.set_metadata("overview_build:" + hashlib.sha256(payload.encode()).hexdigest(), payload)
+                    if write:
+                        db.commit()
+                    else:
+                        db.rollback()
+                    return result
+            except BaseException:
+                db.rollback()
+                raise
+    except CoreError as exc:
+        raise DatabaseError(str(exc) + (": " + "; ".join(map(str, exc.records)) if exc.records else "")) from exc
+
+
+def _adapt_common(native):
+    def adapted(db_path, *args, **kwargs):
+        if _common_format(db_path):
+            return _common_dispatch(native, db_path, *args, **kwargs)
+        return native(db_path, *args, **kwargs)
+    adapted.__name__ = native.__name__
+    adapted.__doc__ = native.__doc__
+    return adapted
+
+
+def _init_common(db_path, dataset_path, extra_files=(), source_root=None, *, focused=False):
+    overview, Database, initialize, _ = _common_core()
+    from paper_core import CORE_VERSION, STORAGE_FORMAT
+    from paper_core.errors import CoreError
+    db_path, dataset_path = Path(db_path).resolve(), Path(dataset_path).resolve()
+    manuscript_root = Path(source_root).resolve() if source_root is not None else dataset_path.parent
+    data = _normalize_dataset(dataset_path, extra_files, manuscript_root)
+    if focused:
+        records.validate_focused_authoring(data)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    initialized = False
+    try:
+        initialize(db_path, source_root=manuscript_root, title=data["title"])
+        initialized = True
+        with Database(db_path, write=True) as db:
+            db.begin_immediate()
+            try:
+                overview.update(db, {"observations": []}, data, profile="focused" if focused else "compatibility")
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+    except BaseException as exc:
+        if initialized:
+            db_path.unlink(missing_ok=True)
+        if isinstance(exc, CoreError):
+            raise DatabaseError(str(exc) + (": " + "; ".join(map(str, exc.records)) if exc.records else "")) from exc
+        raise
+    return {"database": str(db_path), "snapshot_id": records.snapshot_digest(data), "authority": "sqlite",
+            "backend": "paper_core", "storage_format": STORAGE_FORMAT, "core_version": CORE_VERSION,
+            "core_path": str(Path(overview.__file__).resolve().parent),
+            "items": len(data["items"]), "uses": len(data["uses"]), "authoring_profile": "focused" if focused else "compatibility"}
 
 
 def export_snapshot(db_path, snapshot_id=None):
@@ -252,7 +459,7 @@ def get_packet(db_path, item_id, snapshot_id=None):
     data = export_snapshot(db_path, snapshot_id)
     by_id = {item["id"]: item for item in data["items"]}
     if item_id not in by_id:
-        raise DatabaseError(f"Unknown item {item_id!r}.")
+        raise DatabaseError(f"Unknown item {item_id!r}. Use list to retrieve the stored item IDs.")
     # Owned intermediate rows and the uses entering them are part of the
     # item's fidelity context; the packet is incomplete for review without
     # them. Direct incoming uses stay distinguishable from owned-step uses.
@@ -288,10 +495,41 @@ def get_packet(db_path, item_id, snapshot_id=None):
             "source_revision": {**data["source_revision"], "files": [{key: value for key, value in source.items() if key != "content_base64"} for source in data["source_revision"]["files"]]},
             "target_digests": [{"collection": collection, "id": identifier, "digest": digests[(collection, identifier)]} for collection, identifier in sorted(targets)],
             "observations": observations, "comparison_notes": comparison_notes, "observation_history_count": len(history),
+            "locator_diagnostics": [entry for entry in records.locator_diagnostics(data)
+                                    if set(entry['anchor_ids']) & anchor_ids],
             # The selected item's own derived fidelity, distinct from the
             # database-wide comparison aggregate below.
             "target_fidelity": fidelity[("items", item_id)],
             "source_status": records.source_status(data, _source_root(db_path)), "comparison_status": records.comparison_status(data, fidelity)}
+
+
+def list_records(db_path, collection=None, snapshot_id=None):
+    """List selected identities and comparison states without source blobs or prose."""
+    if collection not in (None, "items", "uses", "anchors"):
+        raise DatabaseError("Choose collection items, uses, or anchors.")
+    data = export_snapshot(db_path, snapshot_id)
+    labels = {item["id"]: item["label"] for item in data["items"]}
+    fidelity = records.fidelity_by_row(data) if collection != "anchors" else {}
+    result = {"expected_snapshot": data["snapshot_id"],
+              "counts": {kind: len(data[kind]) for kind in ("items", "uses", "anchors")}}
+    if collection in (None, "items"):
+        main = set(data.get("main_items", []))
+        result["items"] = [{"id": item["id"], "label": item["label"], "kind": item["kind"],
+                            "main_result": item["id"] in main,
+                            "comparison": fidelity[("items", item["id"])],
+                            "anchor_ids": list(dict.fromkeys(p["anchor_id"] for p in item["passages"]))}
+                           for item in data["items"]]
+    if collection in (None, "uses"):
+        result["uses"] = [{"id": use["id"], "from": use["from"], "to": use["to"],
+                           "from_label": labels[use["from"]], "to_label": labels[use["to"]],
+                           "type": use["type"], "comparison": fidelity[("uses", use["id"])],
+                           "evidence_refs": use["evidence_refs"]} for use in data["uses"]]
+    if collection == "anchors":
+        files = {source["id"]: source["path"] for source in data["source_revision"]["files"]}
+        result["anchors"] = [{"id": anchor["id"], "file_id": anchor.get("file_id"),
+                              "file": files.get(anchor.get("file_id")), "locator": anchor["locator"]}
+                             for anchor in data["anchors"]]
+    return result
 
 
 def _edit_data(data, patch):
@@ -423,6 +661,25 @@ def compare_records(db_path, batch):
     data = export_snapshot(db_path)
     if batch.get("expected_snapshot") != data["snapshot_id"]:
         raise DatabaseError(f"Stale comparison: current snapshot is {data['snapshot_id']}. Compare the current input before recording a result.")
+    if batch.get("result", "matched") == "matched":
+        conflicts = {anchor_id for entry in records.locator_diagnostics(data)
+                     if entry['code'] == 'statement_locator_conflict' for anchor_id in entry['anchor_ids']}
+        if conflicts:
+            items = {row['id']: row for row in data['items']}
+            uses = {row['id']: row for row in data['uses']}
+            for target in targets:
+                row = (items if target['collection'] == 'items' else uses).get(target['id'])
+                if row is None:
+                    continue  # The observation builder supplies the missing-ID error.
+                if target['collection'] == 'items':
+                    bound = {passage['anchor_id'] for passage in row['passages']}
+                else:
+                    bound = set(row['evidence_refs'])
+                    bound.update(p['anchor_id'] for endpoint in ('from', 'to') for p in items[row[endpoint]]['passages'])
+                if bound & conflicts:
+                    raise DatabaseError(f"Cannot mark {target['collection']}/{target['id']} matched: "
+                                        f"statement locator conflicts at {', '.join(sorted(bound & conflicts))}. "
+                                        "Correct the label or range, or record needs_attention while unresolved.")
     observations = records._make_observations_validated(data, batch.get("targets"), batch.get("reviewer"), note=batch.get("note", ""), result=batch.get("result", "matched"))
     connection = _connect(db_path, write=True)
     try:
@@ -763,6 +1020,7 @@ def validate_database(db_path, snapshot_id=None):
     return {"valid": True, "snapshot_id": storage_id, "authoring_profile": profile,
             "items": len(data["items"]), "uses": len(data["uses"]), "selected_inventory": prepared["inventory"],
             "warnings": prepared["warnings"], "graph_mode": prepared["graph_mode"], "graph_cycles": prepared["graph_cycles"],
+            "locator_diagnostics": prepared['locator_diagnostics'],
             "uses_without_evidence": prepared["uses_without_evidence"],
             "citation_candidates": prepared["build_context"]["citation_candidates"],
             "stale_targets": stale_targets,
@@ -870,27 +1128,34 @@ def main():
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("init", "get", "apply", "compare", "refresh", "changes", "export", "validate", "render", "backup", "candidates", "scaffold", "reconcile"):
-        command = commands.add_parser(name)
+    help_text = {"list": "List stored item/use IDs and comparison states without full source or history",
+                 "apply": 'Apply full-record upserts/removals with expected_snapshot; metadata belongs in top-level set',
+                 "compare": "Record one result and note for explicitly named item/use targets"}
+    for name in ("init", "get", "list", "apply", "compare", "refresh", "changes", "export", "validate", "render", "backup", "candidates", "scaffold", "reconcile"):
+        command = commands.add_parser(name, help=help_text.get(name), description=help_text.get(name))
         command.add_argument("database", type=Path)
         if name == "init":
-            command.add_argument("dataset", type=Path)
+            command.add_argument("dataset", type=Path, help="Seed/export JSON; source.file paths resolve from this JSON directory")
             command.add_argument("--focused", action="store_true", help="Author selected major statements and sourced connections with explicit main results")
         if name in ("init", "refresh"):
             command.add_argument("--source", type=Path, action="append", default=[], help="Additional appendix or macro source; repeat as needed")
-            command.add_argument("--source-root", type=Path, help="Manuscript root, separate from the seed and output folders")
+            command.add_argument("--source-root", type=Path, help="Manuscript root for stored paths and refresh; seed paths still resolve from the JSON directory")
         if name == "get":
-            command.add_argument("item")
+            command.add_argument("item", help="Stored item ID from list; returns the item and its incoming uses")
+        if name == "list":
+            command.add_argument("--collection", choices=("items", "uses", "anchors"), help="Default: items and uses; anchors lists locators without excerpts")
         if name == "reconcile":
             command.add_argument("audits", type=Path, help="Filled edge-audit JSON file or the folder scaffold wrote")
         if name in ("apply", "compare"):
-            command.add_argument("batch", type=Path)
+            command.add_argument("batch", type=Path, help=('JSON: expected_snapshot, edits [{collection, op, id, record}], optional set {title, scope, main_items}. Item records use passages [{role, anchor_id}]. See references/database.md.' if name == "apply" else "JSON: expected_snapshot, targets, reviewer, result, note. Use list for exact target IDs."))
         if name in ("export", "render", "backup"):
             command.add_argument("output", type=Path)
         if name == "scaffold":
             command.add_argument("--output", type=Path, required=True, help="Folder receiving one edge-audit file per major row; existing files are never overwritten")
-        if name in ("get", "export", "validate", "render", "changes", "candidates"):
+        if name in ("get", "list", "export", "validate", "render", "changes", "candidates"):
             command.add_argument("--snapshot")
+        if name == "render":
+            command.add_argument("--full-diagnostics", action="store_true", help="Print every math diagnostic; default groups large failure lists, with full details retained in the HTML")
         if name == 'changes':
             command.add_argument('--since', required=True, help='Retained baseline snapshot to compare')
             command.add_argument('--output', type=Path, help='Save the complete diff and return a compact receipt')
@@ -907,6 +1172,8 @@ def main():
             result = init_database(args.database, args.dataset, extra_files=args.source, source_root=args.source_root, focused=args.focused)
         elif args.command == "get":
             result = get_packet(args.database, args.item, args.snapshot)
+        elif args.command == "list":
+            result = list_records(args.database, args.collection, args.snapshot)
         elif args.command == "apply":
             result = apply_edits(args.database, _read_json(args.batch))
         elif args.command == "compare":
@@ -947,6 +1214,8 @@ def main():
             result = validate_database(args.database, args.snapshot)
         elif args.command == "render":
             result = render_database(args.database, args.output, args.snapshot)
+            from proof_overview import compact_render_receipt
+            result = compact_render_receipt(result, full=args.full_diagnostics)
         else:
             result = backup_database(args.database, args.output)
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -957,6 +1226,15 @@ def main():
     except TypeError as exc:
         print(json.dumps({"error": f"Invalid record field type: {exc}. Check the dataset or edit batch."}, ensure_ascii=False), file=sys.stderr)
         return 2
+
+
+_native_init_database = init_database
+_native_export_snapshot = export_snapshot
+for _operation in ("export_snapshot", "get_packet", "list_records", "apply_edits", "compare_records", "refresh_database",
+                   "changes_database", "candidates_database", "scaffold_audits", "reconcile_audits",
+                   "validate_database", "render_database", "export_database", "backup_database"):
+    globals()[_operation] = _adapt_common(globals()[_operation])
+init_database = _init_common
 
 
 if __name__ == "__main__":

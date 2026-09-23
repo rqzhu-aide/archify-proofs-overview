@@ -20,9 +20,10 @@ from .ids import valid_id
 from .packets import source_context_digest
 from .refs import facet_digests, membership_digest, relation_members
 from .storage import Database
+from .semantics import normalize_edits
 from .validation import Planned, State, validate_plan
 
-PACKETLESS_COMMANDS = ("import", "source_capture", "qualification")
+PACKETLESS_COMMANDS = ("import", "source_capture", "qualification", "overview")
 COMMAND_MODES = {
     "apply": ("author", "primary"),
     "compare": ("author", "primary"),
@@ -145,6 +146,10 @@ def accept_in_transaction(db: Database, *, request_id: str, request_digest: str,
     """
     if not db.write or not db.conn.in_transaction:
         raise InvalidRequest("accept_in_transaction requires a caller-owned write transaction")
+    metadata = db.check_compatibility()
+    if metadata.get('generation') != db.metadata.get('generation'):
+        from .errors import IncompatibleError
+        raise IncompatibleError('database generation changed; reopen before writing')
     annotations = annotations or {}
     receipt_context = receipt_context or {}
     if set(receipt_context) - {"packet_id", "acceptance_packet_id"}:
@@ -183,7 +188,7 @@ def accept_in_transaction(db: Database, *, request_id: str, request_digest: str,
         base_revision = manifest["base_revision"]
         targets = manifest["targets"]
     conflicts = []
-    plan = _plan(db, edits, base_revision, conflicts)
+    plan = _plan(db, normalize_edits(db, edits), base_revision, conflicts)
     if manifest is not None:
         if freshness_validator is not None:
             if (packet["packet_version"] != 2 or not manifest.get("work")

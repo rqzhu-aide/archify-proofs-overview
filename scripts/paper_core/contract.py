@@ -1,4 +1,4 @@
-"""Record contract 3: closed body schemas, local checks, and reference extraction.
+"""Record contract 4: closed body schemas, local checks, and reference extraction.
 
 Every stored body must contain exactly the listed fields; unknown fields are
 rejected. The same schema drives reference-index extraction (record-contract 1.1).
@@ -87,6 +87,13 @@ class Const(T):
     def check(self, value, path, errors):
         if value != self.expected or type(value) is not type(self.expected):
             errors.append(f"{path}: must equal {self.expected!r}")
+
+
+class RequestVersion(T):
+    """Old envelopes remain accepted; their bodies are normalized before storage."""
+    def check(self, value, path, errors):
+        if type(value) is not int or value not in (3, 4):
+            errors.append(f"{path}: supported request contract versions are 3 and 4")
 
 
 class Null(T):
@@ -320,6 +327,18 @@ def _uses_local(v):
         yield "a use cannot connect a statement to itself"
 
 
+def _target_spec_local(v):
+    if (v['statement_ref'] is None) == (v['statement'] is None):
+        yield "specify either statement_ref or exact statement, never both"
+    if v['statement_ref'] is not None and any(v['statement_ref'][k] != v['target'][k] for k in ('collection', 'id')):
+        yield "statement_ref must pin this target's exact statement"
+
+
+def _application_local(v):
+    if v['state'] == 'registered' and (v['group_id'] is None or v['needed_form'] is None):
+        yield "a registered application needs its inference group and exact required form"
+
+
 def _coverage_local(v):
     if v["end_offset"] < v["start_offset"]:
         yield "end_offset must be >= start_offset"
@@ -417,8 +436,9 @@ BODY_SCHEMAS = {
     # recorded after the migration omit the optional field and order by revision and id.
     "observations": Obj({"target": REF, "result": Enum(("matched", "needs_attention")),
                          "reviewer": Str(nonempty=True), "note": Str(), "evidence_refs": Arr(Id("anchors")),
-                         "created_at": Str(nonempty=True)},
-                        optional=("created_at",)),
+                         "created_at": Str(nonempty=True),
+                         "context_kind": Enum(("overview", "exact_target")), "context_data": Any()},
+                        optional=("created_at", "context_kind", "context_data")),
     "source_issues": Obj({"source_id": Id("sources"), "anchor_id": Id("anchors", nullable=True),
                           "category": Enum(("unresolved_branch", "ambiguous_label", "missing_source",
                                             "missing_citation", "locator_limit", "other_resolution")),
@@ -427,7 +447,7 @@ BODY_SCHEMAS = {
                          local=_source_issues_local),
     "source_reviews": Obj({"source_refs": Arr(RefT(("sources",), pinned=True)),
                            "anchor_refs": Arr(RefT(("anchors",), pinned=True)),
-                           "purpose": Enum(("branch_selection", "locator_confirmation", "context_change")),
+                           "purpose": Enum(("branch_selection", "locator_confirmation", "context_change", "proof_boundary")),
                            "decision": Enum(("accepted", "unresolved")), "rationale": Str(nonempty=True),
                            "reviewer": Str(nonempty=True)}),
     "items": Obj({"kind": Enum(ITEM_KINDS), "label": Str(nonempty=True), "caption": Str(), "statement": STATEMENT,
@@ -446,10 +466,29 @@ BODY_SCHEMAS = {
                    "scope_id": Id("scopes", nullable=True), "case_scope_ids": Arr(Id("scopes")), "discharges": Arr(Id("scopes")),
                    "rationale": Str(nonempty=True), "evidence_refs": Arr(Id("anchors"))}, local=_groups_local),
     "uses": Obj({"from": TARGET, "to": TARGET, "type": Enum(("dependency", "definition", "proof_argument")),
-                 "group_id": Id("groups", nullable=True), "reason": Str(nonempty=True),
-                 "needed_form": Obj(STATEMENT_FIELDS, nullable=True), "substitutions": Arr(SUBSTITUTION),
+                 "reason": Str(nonempty=True),
                  "evidence_refs": Arr(Id("anchors")), "regime": Str(nullable=True), "uncertainty": Str(nullable=True)},
                 local=_uses_local),
+    "application_details": Obj({"use_id": Id("uses"), "group_id": Id("groups", nullable=True),
+                                "needed_form": Obj(STATEMENT_FIELDS, nullable=True), "substitutions": Arr(SUBSTITUTION),
+                                "scope_id": Id("scopes", nullable=True), "state": Enum(("draft", "registered"))},
+                               local=_application_local, optional=("scope_id",)),
+    "target_specs": Obj({"target": TARGET, "statement_ref": RefT(("items", "parts"), pinned=True, nullable=True),
+                          "statement": Obj(STATEMENT_FIELDS, nullable=True), "scope_id": Id("scopes", nullable=True),
+                          "evidence_refs": Arr(Id("anchors")), "state": Enum(("draft", "registered")),
+                          "fidelity_ref": RefT(("observations",), pinned=True, nullable=True)}, local=_target_spec_local),
+    "overview_selections": Obj({"paper_id": Id("papers"), "title": Str(), "scope": Str(nullable=True),
+                                "item_ids": Arr(Id("items")), "use_ids": Arr(Id("uses")),
+                                "main_item_ids": Arr(Id("items")), "source_ids": Arr(Id("sources")),
+                                "authoring_profile": Str(nullable=True), "roots": Arr(Str()), "unresolved": Arr(Str()),
+                                "native_context": Any()}, optional=("native_context",)),
+    "connection_refinements": Obj({"summary_use_id": Id("uses"), "argument_id": Id("arguments"),
+                                    "use_ids": Arr(Id("uses"), nonempty=True), "state": Enum(("draft", "registered")),
+                                    "note": Str()}),
+    "proof_boundaries": Obj({"target": TARGET, "argument_ids": Arr(Id("arguments"), nonempty=True),
+                              "anchor_refs": Arr(RefT(("anchors",), pinned=True), nonempty=True),
+                              "source_review_ref": RefT(("source_reviews",), pinned=True),
+                              "state": Enum(("complete", "unresolved"))}),
     "coverage": Obj({"argument_id": Id("arguments"), "anchor_id": Id("anchors"), "start_offset": Int(0),
                      "end_offset": Int(0), "classification": Enum(("substantive", "structural")),
                      "claim_refs": Arr(TARGET), "check_ids": Arr(Id("checks")), "note": Str()},
@@ -484,7 +523,7 @@ BODY_SCHEMAS = {
     "responses": Obj({"audit_id": Id("audits"), "packet_id": Str(nonempty=True), "reviewer": Str(nonempty=True),
                       "qualification_id": Id("qualifications"), "original_blob": Hash(),
                       "covered_targets": Arr(TARGET), "coverage_note": Str(),
-                      "exposure": Enum(("source_only", "compromised")), "exposure_note": Str(),
+                      "exposure": Enum(("source_only", "route_provided", "compromised")), "exposure_note": Str(),
                       "state": Enum(("accepted", "needs_revision"))}, local=_responses_local),
     "reconciliations": Obj({"audit_id": Id("audits"), "target": REF,
                             "primary_checks": Arr(RefT(("checks",), pinned=True)),
@@ -511,14 +550,14 @@ JUDGMENT = Obj({"target": OneOf([REF_OBJECT, SOURCE_TARGET]), "kind": Enum(CHECK
                 "next_action": Str(nullable=True), "supersedes": RefT(("checks",), pinned=True, nullable=True)})
 WORKER_RESPONSE = Obj({"packet_id": Str(nonempty=True), "covered_targets": Arr(TARGET), "coverage_note": Str(),
                        "exposure_report": EXPOSURE_REPORT, "judgments": Arr(JUDGMENT)})
-SUBMISSION = Obj({"contract_version": Const(3), "request_id": Str(nonempty=True), "packet_id": Str(nonempty=True),
+SUBMISSION = Obj({"contract_version": RequestVersion(), "request_id": Str(nonempty=True), "packet_id": Str(nonempty=True),
                   "reviewer": Str(nonempty=True), "qualification_id": Id("qualifications"),
-                  "exposure": Enum(("source_only", "compromised")), "exposure_note": Str()})
-MAPPING_REQUEST = Obj({"contract_version": Const(3), "request_id": Str(nonempty=True), "packet_id": Str(nonempty=True),
+                  "exposure": Enum(("source_only", "route_provided", "compromised")), "exposure_note": Str()})
+MAPPING_REQUEST = Obj({"contract_version": RequestVersion(), "request_id": Str(nonempty=True), "packet_id": Str(nonempty=True),
                        "response_id": Id("responses"),
                        "entries": Arr(Obj({"judgment_index": Int(0), "target": REF, "rationale": Str(nonempty=True)})),
                        "reviewer": Str(nonempty=True)})
-ANCHOR_REQUEST = Obj({"contract_version": Const(3), "request_id": Str(nonempty=True), "packet_id": Str(nonempty=True),
+ANCHOR_REQUEST = Obj({"contract_version": RequestVersion(), "request_id": Str(nonempty=True), "packet_id": Str(nonempty=True),
                       "anchors": Arr(Obj({"id": Id(), "expected_version": Int(1, nullable=True),
                                           "source_id": Id("sources"), "locator": LOCATOR}))})
 CONTEXT_EXTENSION = Obj({"targets": Arr(REF), "source_anchor_ids": Arr(Id("anchors")),
@@ -529,16 +568,16 @@ EDIT_REPLACE = Obj({"op": Const("replace"), "collection": Enum(COLLECTIONS), "id
                     "expected_version": Int(1), "body": Any()})
 EDIT_RETIRE = Obj({"op": Const("retire"), "collection": Enum(COLLECTIONS), "id": Id(),
                    "expected_version": Int(1), "reason": Str(nonempty=True)})
-BATCH = Obj({"contract_version": Const(3), "request_id": Str(nonempty=True), "packet_id": Str(nonempty=True),
+BATCH = Obj({"contract_version": RequestVersion(), "request_id": Str(nonempty=True), "packet_id": Str(nonempty=True),
              "edits": Arr(OneOf([EDIT_CREATE, EDIT_REPLACE, EDIT_RETIRE]))})
 
 # The controller supplies administrative fields from its immutable assignment.
 # Workers author judgments and coverage, never arbitrary graph edits.
 WORK_SUBMISSION = Obj({
-    "contract_version": Const(3), "request_id": Str(nonempty=True), "packet_id": Str(nonempty=True),
+    "contract_version": RequestVersion(), "request_id": Str(nonempty=True), "packet_id": Str(nonempty=True),
     "rebase_packet_id": Str(nonempty=True, nullable=True), "reviewer": Str(nonempty=True),
     "qualification_id": Id("qualifications", nullable=True),
-    "exposure": Enum(("source_only", "compromised"), nullable=True), "exposure_note": Str(),
+    "exposure": Enum(("source_only", "route_provided", "compromised"), nullable=True), "exposure_note": Str(),
 })
 WORK_CHECK = Obj({
     "type": Const("check"), "task_id": Str(nonempty=True), "state": Enum(("draft", "complete")),
@@ -593,6 +632,14 @@ def validate_body(collection: str, body) -> list:
         return [f"unknown collection {collection!r}"]
     if not isinstance(body, dict):
         return ["body must be an object"]
+    if collection == 'uses' and any(k in body for k in ('group_id', 'needed_form', 'substitutions')):
+        # Historical contract-3 bodies remain readable. Acceptance normalizes
+        # incoming bodies, so new versions never store these duplicate fields.
+        common = {k: v for k, v in body.items() if k not in ('group_id', 'needed_form', 'substitutions')}
+        historical = Obj({'group_id': Id('groups',nullable=True), 'needed_form': Obj(STATEMENT_FIELDS,nullable=True),
+                          'substitutions': Arr(SUBSTITUTION)})
+        return validate_shape(BODY_SCHEMAS[collection], common) + validate_shape(historical, {k:body[k] for k in
+                      ('group_id','needed_form','substitutions') if k in body})
     return validate_shape(BODY_SCHEMAS[collection], body)
 
 
@@ -602,4 +649,6 @@ def extract_refs(collection: str, body) -> list:
     for path, target, target_id, version in BODY_SCHEMAS[collection].refs(body, ""):
         rows.append({"field_path": path, "target_collection": target, "target_id": target_id,
                      "target_version": version})
+    if collection == 'uses' and body.get('group_id'):
+        rows.insert(2, {'field_path':'/group_id','target_collection':'groups','target_id':body['group_id'],'target_version':None})
     return rows

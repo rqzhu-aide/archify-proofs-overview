@@ -19,7 +19,7 @@ _ENVIRONMENTS = frozenset((
     "substack displaylines eqalign eqalignno"
 ).split())
 CONFIGURATION = {
-    "adapter_version": 4,
+    "adapter_version": 5,
     "delimiters": [["$", "$"], ["$$", "$$"], [r"\(", r"\)"], [r"\[", r"\]"]],
     "output": "static native MathML with original LaTeX annotation",
     "maximum_formula_characters": 8192,
@@ -55,7 +55,13 @@ def _spans(text: str):
         if _escaped(text, index):
             index += 1
             continue
-        if text.startswith("$$", index):
+        doubled = False
+        if text.startswith(r"\\(", index) or text.startswith(r"\\[", index):
+            opening = text[index:index + 3]
+            closing = r"\\)" if opening.endswith("(") else r"\\]"
+            display = "inline" if opening.endswith("(") else "block"
+            doubled = True
+        elif text.startswith("$$", index):
             opening, closing, display = "$$", "$$", "block"
         elif text[index] == "$":
             opening, closing, display = "$", "$", "inline"
@@ -73,6 +79,11 @@ def _spans(text: str):
                     break
             end += 1
         if end == len(text):
+            # An isolated doubled slash is ordinary prose, often a path. Only
+            # a paired math-like delimiter is evidence of accidental escaping.
+            if doubled:
+                index += len(opening)
+                continue
             yield index, len(text), None, display
             return
         finish = end + len(closing)
@@ -96,6 +107,43 @@ def _check_tex(tex: str) -> None:
     for match in re.finditer(r"\\(?:newcommand|renewcommand|providecommand|def|gdef|edef|xdef|let|DeclareMathOperator|newenvironment|renewenvironment)\b", tex):
         if not _escaped(tex, match.start()):
             raise ValueError("source macro definitions are not expanded")
+    # A doubled command slash is accepted by the converter as a line break,
+    # then letters (e.g. 'mathbf'), which can silently change the display.
+    # Inside a row environment, however, those letters can legitimately begin
+    # the next row. Do not infer corruption there.
+    environments = []
+    for match in re.finditer(
+            r"\\(begin|end)\s*\{([^{}]*)\}|(?<!\\)\\\\([A-Za-z]{2,})", tex):
+        if _escaped(tex, match.start()):
+            continue
+        if match[1] == "begin":
+            environments.append(match[2])
+        elif match[1] == "end":
+            if environments and environments[-1] == match[2]:
+                environments.pop()
+        elif not environments:
+            # These braced row commands also permit \\\\ without an environment.
+            # Their body is parsed by the converter; avoid guessing whether a
+            # following bare word was intended as a command.
+            if _in_row_argument(tex, match.start()):
+                continue
+            raise ValueError("likely doubled LaTeX command slash: " + match.group(0)
+                             + "; check the stored text's escaping")
+
+
+def _in_row_argument(tex: str, position: int) -> bool:
+    for match in re.finditer(r"\\(?:substack|displaylines|eqalign|eqalignno)\s*\{", tex):
+        if match.end() > position or _escaped(tex, match.start()):
+            continue
+        depth = 1
+        for index in range(match.end(), position):
+            if tex[index] in "{}" and not _escaped(tex, index):
+                depth += 1 if tex[index] == "{" else -1
+            if depth == 0:
+                break
+        if depth:
+            return True
+    return False
 
 
 def _safe_mathml(value: str, tex: str, display: str) -> str:
@@ -250,7 +298,10 @@ def render_text(text: str, diagnostics=None) -> str:
     parts, previous = [], 0
     for start, end, tex, display in _spans(text):
         parts.append(html.escape(text[previous:start], quote=True))
-        if tex is None:
+        if text.startswith((r"\\(", r"\\["), start):
+            markup, reason = None, ("Likely doubled LaTeX delimiter slashes; "
+                                    "check the stored text's escaping.")
+        elif tex is None:
             markup, reason = None, "The LaTeX opening delimiter has no matching closing delimiter."
         else:
             markup, reason = _convert(tex, display)
@@ -260,6 +311,25 @@ def render_text(text: str, diagnostics=None) -> str:
         previous = end
     parts.append(html.escape(text[previous:], quote=True))
     return "".join(parts)
+
+
+def group_diagnostics(diagnostics) -> list[dict]:
+    """Summarize repeated display failures without discarding their locations.
+
+    Reasons already identify an unsupported command when available, so one
+    correction can be located across several records. The input's full
+    per-expression evidence remains untouched.
+    """
+    groups = {}
+    for row in diagnostics:
+        reason = row["reason"]
+        group = groups.setdefault(reason, {"reason": reason, "count": 0,
+                                           "locations": [], "example": row["excerpt"]})
+        group["count"] += 1
+        location = {key: row[key] for key in ("collection", "id", "field") if key in row}
+        if location and location not in group["locations"]:
+            group["locations"].append(location)
+    return list(groups.values())
 
 
 def render_scope(text: str, diagnostics=None) -> dict[str, str]:

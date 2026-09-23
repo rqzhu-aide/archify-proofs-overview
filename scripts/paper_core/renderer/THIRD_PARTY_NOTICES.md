@@ -1,7 +1,7 @@
 # Third-party notices
 
 The files under `assets/archify/` are vendored verbatim from the
-`archify-proofs-overview` package in this repository, which in turn vendors
+`proof-graphify` package in this repository, which in turn vendors
 them from Archify (MIT). The renderer uses the actual template, viewer runtime,
 and embedded WOFF2 font data (JetBrains Mono, SIL Open Font License 1.1).
 Every output is self-contained and makes no network request.
@@ -29,7 +29,7 @@ What `render_projection.mjs` takes from these files:
 - Layout constants (`kinds` palette, `box` metrics), the longest-path layering,
   orthogonal edge routing, badge placement and `jsonForScript` in
   `render_projection.mjs` are adapted from
-  `archify-proofs-overview/scripts/render.mjs` (MIT, same authors).
+  `proof-graphify/scripts/render.mjs` (MIT, same authors).
 
 `selftest.mjs` recomputes the hashes above and fails if any vendored file
 changed without this table being updated.

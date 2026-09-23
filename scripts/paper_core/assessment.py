@@ -17,6 +17,7 @@ from .contract import INTERMEDIATE_KINDS, MAJOR_KINDS, extract_refs
 from .errors import InvalidRequest
 from .refs import RELATIONS, facet_digests
 from .storage import Database, Record
+from .support_semantics import SupportClosure
 
 PROOF_KINDS = ("lemma", "proposition", "theorem", "corollary")
 PROOF_CHECK_KINDS = ("derivation", "application", "composition", "case_coverage", "scope_discharge",
@@ -69,7 +70,9 @@ class Snapshot:
         self._rel: dict = defaultdict(list)
         self._facets: dict = {}
         self._bindings: dict = {}
+        self._versions: dict = {}
         self._children = defaultdict(list)
+        self._boundaries = defaultdict(list)
         limits = limits or {}
         self.max_records = limits.get("max_records", 100000)
         self.max_relations = limits.get("max_relations", 500000)
@@ -90,6 +93,9 @@ class Snapshot:
             self._by_collection[record.collection].append(record)
             if record.collection == "items" and record.body["kind"] in INTERMEDIATE_KINDS:
                 self._children[record.body["owner_id"]].append(record)
+            if record.collection == "proof_boundaries":
+                for argument_id in record.body["argument_ids"]:
+                    self._boundaries[argument_id].append(record)
             for row in extract_refs(record.collection, record.body):
                 self.visit_relations(1, key_of(ref_of(record)))
                 self._rel[(row["field_path"], row["target_collection"], row["target_id"])].append(
@@ -104,13 +110,55 @@ class Snapshot:
             return None
         return self.live(ref["collection"], ref["id"])
 
+    def version(self, collection, id, version):
+        current = self.live(collection, id)
+        if current is not None and current.version == version:
+            return current
+        key = (collection, id, version)
+        if key not in self._versions:
+            self._versions[key] = self.db.version(collection, id, version)
+        return self._versions[key]
+
     def all(self, collection: str) -> list:
         return list(self._by_collection.get(collection, []))
 
+    def application(self, use):
+        from .semantics import application
+        return application(self, use)
+
+    def exact_scope(self, ref):
+        spec = self.target_spec(ref)
+        record = self.get(ref)
+        return spec.body["scope_id"] if spec else record.body.get("scope_id") if record else None
+
+    def target_spec(self, ref):
+        rows = self._rel.get(("/target", ref["collection"], ref["id"]), ())
+        specs = [self.live(c, i) for c, i, _ in rows if c == "target_specs"]
+        self.visit_relations(len(rows), key_of(ref))
+        return specs[0] if len(specs) == 1 else None
+
+    def proof_boundaries(self, argument_id):
+        boundaries = self._boundaries.get(argument_id, ())
+        self.visit_relations(len(boundaries), f"arguments:{argument_id}")
+        return list(boundaries)
+
     def relation_members(self, relation: str, key: dict) -> list:
         owners, field_path, _ = RELATIONS[relation]
+        if relation == "uses_in_group":
+            owners = ("uses", "application_details")
         members = self._rel.get((field_path, key["collection"], key["id"]), [])
         self.visit_relations(len(members), key_of(key))
+        if relation == "uses_in_group":
+            translated = set()
+            for c, i, version in members:
+                if c == "application_details":
+                    detail = self.live(c, i)
+                    use = self.live("uses", detail.body["use_id"])
+                    if use is not None:
+                        translated.add(("uses", use.id, use.version))
+                elif c == "uses" and self.live("application_details", i) is None:
+                    translated.add((c, i, version))
+            return sorted(translated)
         return [m for m in members if m[0] in owners]
 
     def visit_relations(self, count, context):
@@ -138,6 +186,9 @@ class Snapshot:
 
     def member_records(self, relation: str, key: dict) -> list:
         records = [self.live(c, i) for c, i, _ in self.relation_members(relation, key)]
+        if relation == "uses_in_group":
+            records = [self.live("uses", r.body["use_id"]) if r is not None
+                       and r.collection == "application_details" else r for r in records]
         return sorted((r for r in records if r is not None), key=lambda r: r.id)
 
     def facets(self, record: Record) -> dict:
@@ -196,6 +247,12 @@ class Snapshot:
             return self.major_of(record.body["conclusion"])
         if c == "arguments":
             return self.major_of(record.body["target"])
+        if c in ("target_specs", "proof_boundaries"):
+            return self.major_of(record.body["target"])
+        if c == "application_details":
+            return self.owner_of({"collection": "uses", "id": record.body["use_id"]})
+        if c == "connection_refinements":
+            return self.owner_of({"collection": "arguments", "id": record.body["argument_id"]})
         return None
 
     def kind_of(self, ref) -> str | None:
@@ -230,6 +287,10 @@ def judgment_freshness(snap: Snapshot, record: Record, *, superseded: bool, reus
     if superseded:
         info["freshness"] = "historical"
         return info
+    if record.collection == "observations" and record.body.get("context_kind") == "overview" \
+            and (record.body.get("context_data") or {}).get("applicable_on_import") is False:
+        info["freshness"] = "needs_review"
+        return info
     target = record.body.get("target") if record.collection != "reuse_decisions" else record.body["check_ref"]
     if isinstance(target, dict) and "collection" in target and snap.get(target) is None:
         info["freshness"] = "historical"
@@ -241,6 +302,8 @@ def judgment_freshness(snap: Snapshot, record: Record, *, superseded: bool, reus
     bound = binding["bindings"] if "bindings" in binding else binding
     info["context_changed"] = bound.get("source_context_digest") not in (None, snap.source_context_digest())
     changes = binding_changes(snap, bound)
+    info["context_changed"] = info["context_changed"] or any(
+        change["ref"]["collection"] == "sources" for change in changes["records"])
     if not changes["records"] and not changes["relations"]:
         return info
     info["changes"] = changes
@@ -384,8 +447,7 @@ class _Derivation:
         self.by_target: dict = defaultdict(list)   # key -> [obligation ids]
         self.constituents: dict = {}         # obligation id -> constituent
         self.judgments: dict = {}            # "checks:ID" -> info
-        self.support_memo: dict = {}
-        self.support_stack: set = set()
+        self.support_closure = SupportClosure(self)
         self.statements: list = []           # in-scope items/parts records
         self.routes: dict = {}               # statement key -> list of argument ids
         self.route_records: dict = {}        # statement key -> set of keys (arguments/groups/uses)
@@ -423,6 +485,7 @@ class _Derivation:
                 ref = decision.body["check_ref"]
                 self.reuse_index[("checks", ref["id"], ref["version"])].append(decision)
         self.responses = {r.id: r for r in snap.all("responses")}
+        self._route_review_basis = {}
         self.findings = []
         self.findings_by_target = defaultdict(list)
         self.findings_by_check = defaultdict(list)
@@ -515,8 +578,9 @@ class _Derivation:
 
         def consume(use, skey, argument=None):
             self.scope_uses[skey].add(use.id)
-            group = snap.live("groups", use.body["group_id"]) if use.body["group_id"] else None
-            scope_id = group.body["scope_id"] if group else None
+            application = snap.application(use)
+            group = snap.live("groups", application.get("group_id"))
+            scope_id = application.get("scope_id") or (group.body["scope_id"] if group else None)
             if scope_id is None and argument is not None:
                 scope_id = argument.body["scope_id"]
             assumptions = snap.scope_assumptions(scope_id)
@@ -542,7 +606,7 @@ class _Derivation:
             kind = snap.kind_of(ref)
             if proof_required and (kind in PROOF_KINDS or kind in INTERMEDIATE_KINDS):
                 self.required_establishment.add(skey)
-            pending.extend((r, False) for r in snap.scope_assumptions(statement.body.get("scope_id")).values())
+            pending.extend((r, False) for r in snap.scope_assumptions(snap.exact_scope(ref)).values())
             if not proof_required:
                 continue
             if statement.collection == "items" and kind not in INTERMEDIATE_KINDS:
@@ -582,7 +646,8 @@ class _Derivation:
                         consume(use, skey, argument)
             for use in snap.member_records("incoming_uses", ref):
                 # Already traversed grouped uses are not an additional route.
-                if use.body["group_id"] is None:
+                if snap.live("application_details", use.id) is not None \
+                        and snap.application(use).get("group_id") is None:
                     consume(use, skey)
             if skey in self.required_establishment:
                 exact = [a for a in arguments.values() if a.body["target"] == ref
@@ -629,8 +694,9 @@ class _Derivation:
                 use = snap.live("uses", use_id)
                 route_keys.add(key_of(ref_of(use)))
                 argument = None
-                if use.body["group_id"]:
-                    group = snap.live("groups", use.body["group_id"])
+                application = snap.application(use)
+                if application.get("group_id"):
+                    group = snap.live("groups", application["group_id"])
                     argument = snap.live("arguments", group.body["argument_id"])
                 self.add_obligation(ref_of(use), "application", "primary",
                                     required=argument is None or argument.body["lifecycle"] == "registered")
@@ -644,6 +710,9 @@ class _Derivation:
                 self.add_obligation(ref_of(statement), "external_source", "primary", required=True)
             if statement.body["origin"] == "source" and statement.body["passages"]:
                 self.add_obligation(ref_of(statement), "source_fidelity", "primary", required=fidelity_required)
+                spec = snap.target_spec(ref_of(statement))
+                if spec is not None:
+                    self.add_obligation(ref_of(spec), "source_fidelity", "primary", required=fidelity_required)
             if independent_required and kind in PROOF_KINDS and skey in self.required_establishment:
                 self.add_obligation(ref_of(statement), "reconciliation", "coordinator", required=True)
             self.routes[skey] = argument_ids
@@ -656,21 +725,26 @@ class _Derivation:
     def _observation_order(record) -> tuple:
         """Chronological order for source-fidelity candidates.
 
-        Migrated overview comparisons carry the legacy ``created_at`` timestamp (feature
-        overview-bridge/1); it, never the arbitrary record id, decides which of two imported
-        reviews is newer. Imported legacy rows all predate the migration, so comparisons
-        recorded afterwards keep their ``(revision, id)`` order behind them.
+        Migration preserves native append order even when timestamps have only
+        second precision. Later SQL revisions outrank imported observations.
         """
         created = record.body.get("created_at")
-        if isinstance(created, str) and created:
-            return (0, created, record.id)
-        return (1, "", record.revision or 0, record.id)
+        order = (record.body.get("context_data") or {}).get("observation_order", 0)
+        return (record.revision or 0, order if isinstance(order, int) else 0,
+                created if isinstance(created, str) else "", record.id)
 
     def _candidates(self, obligation: dict) -> list:
         target_key = key_of(obligation["target"])
         kind, role = obligation["kind"], obligation["role"]
         if kind == "source_fidelity":
-            return sorted(self.observations_by_target.get(target_key, []), key=self._observation_order)
+            observations = self.observations_by_target.get(target_key, [])
+            target = self.snap.get(obligation["target"])
+            if not observations and target is not None and target.collection == "target_specs":
+                fidelity = target.body.get("fidelity_ref")
+                observation = self.snap.get(fidelity)
+                if observation is not None and observation.version == fidelity["version"]:
+                    observations = [observation]
+            return sorted(observations, key=self._observation_order)
         if kind == "reconciliation":
             return []
         out = []
@@ -702,7 +776,7 @@ class _Derivation:
             candidates = [c for c in self._candidates(obligation) if c.id not in self.superseded]
             infos = [self.judgment_info(c) for c in candidates]
             if obligation["role"] == "independent":
-                usable = [i for i in infos if i["response_state"] == "accepted" and i["exposure"] == "source_only"]
+                usable = [i for i in infos if self.independent_usable(i)]
                 if infos and not usable:
                     constituent["compromised"] = True
                 infos = usable
@@ -764,6 +838,49 @@ class _Derivation:
                     out.append(info)
         return out
 
+    def independent_usable(self, info):
+        """Accept a supplied route only with its preserved initial blind review."""
+        if info["response_state"] != "accepted":
+            return False
+        if info["exposure"] == "source_only":
+            return True
+        if info["exposure"] != "route_provided":
+            return False
+        check = self.snap.get(info["ref"])
+        response = self.responses.get(check.body["response_id"]) if check is not None else None
+        if response is None:
+            return False
+        if response.id not in self._route_review_basis:
+            packet = self.snap.db.packet(response.body["packet_id"])
+            self._route_review_basis[response.id] = {} if packet is None else packet["manifest"]
+        manifest = self._route_review_basis[response.id]
+        route_pin = manifest.get("route_ref")
+        route = self.snap.get(route_pin)
+        if manifest.get("review_basis") != "route_provided" or route is None \
+                or route.version != route_pin["version"]:
+            return False
+        target = self.snap.get(info["target"])
+        if target is None:
+            return False
+        argument_id = target.id if target.collection == "arguments" else target.body.get("argument_id")
+        if target.collection == "uses":
+            group = self.snap.live("groups", self.snap.application(target).get("group_id"))
+            argument_id = group.body["argument_id"] if group else None
+        if argument_id != route.id:
+            return False
+        owner = self.snap.major_of(route.body["target"])
+        authorized_targets = {key_of(route.body["target"])}
+        if owner is not None:
+            authorized_targets.add(key_of(ref_of(owner)))
+        for pin in manifest.get("initial_response_refs", ()):
+            initial = self.responses.get(pin["id"])
+            if initial is not None and initial.version == pin["version"] \
+                    and initial.body["state"] == "accepted" and initial.body["exposure"] == "source_only" \
+                    and initial.body["audit_id"] == response.body["audit_id"] \
+                    and any(key_of(ref) in authorized_targets for ref in initial.body["covered_targets"]):
+                return True
+        return False
+
     def _primary_checks_for(self, statement_key: str) -> list:
         keys = set(self.route_records.get(statement_key, ())) | {statement_key}
         out = []
@@ -788,7 +905,7 @@ class _Derivation:
                 not in PROOF_KINDS:
             return "not_required"
         independent = self._independent_checks_for(statement_key)
-        usable = [i for i in independent if i["response_state"] == "accepted" and i["exposure"] == "source_only"]
+        usable = [i for i in independent if self.independent_usable(i)]
         reconciliations = self._reconciliations_for(statement_key)
         for rec in reconciliations:
             if rec.body["decision"] == "unresolved":
@@ -860,6 +977,8 @@ class _Derivation:
             return []
         snap = self.snap
         requirements = {}
+        problems = []
+        examined_boundaries = set()
         excluded = {anchor for e in self.audit.body["exclusions"] for anchor in e["source_anchor_ids"]}
         for statement in self.statements:
             statement_key = key_of(ref_of(statement))
@@ -881,6 +1000,14 @@ class _Derivation:
                 for argument in written:
                     for anchor in argument.body["evidence_refs"]:
                         requirements[(argument.id, anchor)] = {argument.id}
+                    if argument.id not in examined_boundaries:
+                        examined_boundaries.add(argument.id)
+                        boundary_anchors = self._reviewed_boundary(argument)
+                        if boundary_anchors is None:
+                            problems.append(f"proof boundary for {argument.id}: complete current source-boundary review required")
+                        else:
+                            for anchor in boundary_anchors:
+                                requirements[(argument.id, anchor)] = {argument.id}
                 if member.body["origin"] == "source":
                     for passage in member.body["passages"]:
                         if passage["role"] == "proof":
@@ -910,8 +1037,8 @@ class _Derivation:
                     argument_id = target.id
                 elif target.collection == "groups":
                     argument_id = target.body["argument_id"]
-                elif target.collection == "uses" and target.body["group_id"] is not None:
-                    group = snap.live("groups", target.body["group_id"])
+                elif target.collection == "uses" and snap.application(target).get("group_id") is not None:
+                    group = snap.live("groups", snap.application(target)["group_id"])
                     argument_id = None if group is None else group.body["argument_id"]
                 else:
                     return False
@@ -933,9 +1060,19 @@ class _Derivation:
                     if not info["superseded"] and info["state"] == "complete" and info["freshness"] == "current":
                         binding = snap.binding(candidate)
                         if binding is not None:
-                            consumed_claims.update(key_of(entry["ref"]) for entry in binding["bindings"]["records"]
-                                                   if entry["facet"] == "statement"
-                                                   and entry["ref"]["collection"] in ("items", "parts"))
+                            for entry in binding["bindings"]["records"]:
+                                if entry["facet"] != "statement":
+                                    continue
+                                ref = entry["ref"]
+                                if ref["collection"] == "target_specs":
+                                    # Exact text may live only in its specification.
+                                    # Resolve the consumed version, including in historical snapshots.
+                                    spec = snap.version(ref["collection"], ref["id"], ref["version"])
+                                    if spec is None or spec.retired:
+                                        continue
+                                    ref = spec.body["target"]
+                                if ref["collection"] in ("items", "parts"):
+                                    consumed_claims.add(key_of(ref))
                         usable = True
                         break
                     pending.extend(c for c in self.checks_by_target[key_of(check.body["target"])]
@@ -945,7 +1082,6 @@ class _Derivation:
             return all(key_of(ref) in consumed_claims for ref in body["claim_refs"])
 
         usable = {cov.id: completed(cov) for rows in coverages.values() for cov in rows}
-        problems = []
         for (owner, anchor_id), argument_ids in sorted(requirements.items()):
             if anchor_id in excluded:
                 continue
@@ -972,152 +1108,126 @@ class _Derivation:
                                 f"uncovered or unchecked spans {spans}")
         return problems
 
+    def _reviewed_boundary(self, argument):
+        """Return all reviewed source segments, or no coverage certificate."""
+        snap = self.snap
+        declared = set(argument.body["evidence_refs"])
+        target = snap.get(argument.body["target"])
+        if target is not None:
+            declared.update(p["anchor_id"] for p in target.body.get("passages", ()) if p["role"] == "proof")
+        for boundary in snap.proof_boundaries(argument.id):
+            body = boundary.body
+            if body["state"] != "complete" or body["target"] != argument.body["target"]:
+                continue
+            anchor_pins = body["anchor_refs"]
+            if not anchor_pins or not declared <= {p["id"] for p in anchor_pins}:
+                continue
+            review_pin = body["source_review_ref"]
+            review = snap.get(review_pin)
+            if review is None or review.version != review_pin["version"] \
+                    or review.body["decision"] != "accepted" or review.body["purpose"] != "proof_boundary":
+                continue
+            reviewed_anchors = {(r["id"], r["version"]) for r in review.body["anchor_refs"]}
+            reviewed_sources = {(r["id"], r["version"]) for r in review.body["source_refs"]}
+            current = True
+            for pin in anchor_pins:
+                anchor = snap.get(pin)
+                if anchor is None or anchor.version != pin["version"] or (pin["id"], pin["version"]) not in reviewed_anchors:
+                    current = False
+                    break
+                source = snap.live("sources", anchor.body["source_id"])
+                if source is None or source.version != anchor.body["source_version"] \
+                        or (source.id, source.version) not in reviewed_sources:
+                    current = False
+                    break
+            if current:
+                return [pin["id"] for pin in anchor_pins]
+        return None
+
     # -- dependency support ----------------------------------------------
     def obligation_for(self, target: dict, kind: str, role: str = "primary"):
         return self.obligations.get(obligation_id(self.audit_id, target, kind, role))
 
     def _obligation_supported(self, target: dict, kind: str) -> str:
         """supported | defect | open for a primary obligation's current state."""
+        if self.audit is not None and self.audit.body["mode"] == "triage":
+            return "open"
         obligation = self.obligation_for(target, kind)
         if obligation is None:
             return "open"
         c = self.constituents.get(obligation["id"]) or self.status(obligation)
         if c["state"] == "complete" and c["freshness"] == "current" and not c["disputed"]:
             if c["outcome"] == "supported":
+                record = self.snap.get(target)
+                scope_id = None if record is None else record.body.get("scope_id")
+                if record is not None and record.collection == "uses":
+                    application = self.snap.application(record)
+                    group = self.snap.live("groups", application.get("group_id"))
+                    scope_id = application.get("scope_id") or (group.body["scope_id"] if group else None)
+                elif record is not None and record.collection in ("items", "parts"):
+                    scope_id = self.snap.exact_scope(target)
+                conditions = {condition for _, scope in self.support_closure.ancestry(scope_id)
+                              if scope is not None for condition in scope.body["conditions"]}
+                for check_ref in c["check_refs"]:
+                    check = self.snap.get(check_ref)
+                    if check is not None and check.collection == "checks" \
+                            and self.judgment_info(check)["freshness"] == "current" \
+                            and check.body["outcome"] == "supported" \
+                            and any(condition not in conditions for condition in check.body["conditions"]):
+                        return "open"
                 return "supported"
             if c["outcome"] in DEFECT_OUTCOMES:
                 return "defect"
         return "open"
 
-    def support(self, ref: dict) -> str:
-        """Dependency support of a statement: available | conditional | unavailable (record-contract 6)."""
-        key = key_of(ref)
-        if key in self.support_memo:
-            return self.support_memo[key]
-        if key in self.support_stack:
-            return "conditional"
-        # Postorder evaluation avoids Python call-stack depth on long proof chains.
-        stack = [(ref, False)]
-        while stack:
-            current, finish = stack.pop()
-            current_key = key_of(current)
-            if current_key in self.support_memo:
-                continue
-            if finish:
-                self.support_memo[current_key] = self._support(current, current_key)
-                self.support_stack.discard(current_key)
-                continue
-            if current_key in self.support_stack:
-                continue
-            self.support_stack.add(current_key)
-            stack.append((current, True))
-            record = self.snap.get(current)
-            if record is None or self.snap.kind_of(current) in ("assumption", "definition", "external_result"):
-                continue
-            groups = list(self.snap.groups_for_conclusion(current))
-            arguments = self.snap.member_records("arguments_for_target", current)
-            if record.collection == "parts" and not arguments and not groups:
-                arguments = self.snap.member_records("arguments_for_target",
-                    {"collection": "items", "id": record.body["item_id"]})
-            for argument in arguments:
-                if argument.body["lifecycle"] == "registered":
-                    groups.extend(self.snap.member_records("groups_in_argument", ref_of(argument)))
-            for group in groups:
-                assumed = self.snap.scope_assumptions(group.body["scope_id"])
-                for use in self.snap.member_records("uses_in_group", ref_of(group)):
-                    supplier = use.body["from"]
-                    if key_of(supplier) not in assumed and key_of(supplier) not in self.support_stack:
-                        stack.append((supplier, False))
-        return self.support_memo[key]
+    def exact_target_current(self, ref):
+        """A synopsis alone is not an exact mathematical checking target."""
+        spec = self.snap.target_spec(ref)
+        if spec is None or spec.body["state"] != "registered":
+            return False
+        pin = spec.body.get("statement_ref")
+        if pin is not None:
+            statement = self.snap.get(pin)
+            if statement is None:
+                return False
+            if statement.version != pin["version"]:
+                pinned = self.snap.version(pin["collection"], pin["id"], pin["version"])
+                if pinned is None or self.snap.facets(statement)["statement"] != self.snap.facets(pinned)["statement"]:
+                    return False
+        fidelity = spec.body.get("fidelity_ref")
+        direct = sorted(self.observations_by_target.get(key_of(ref_of(spec)), ()), key=self._observation_order)
+        if direct:
+            latest = direct[-1]
+            return latest.body.get("result") == "matched" \
+                and judgment_freshness(self.snap, latest, superseded=False)["freshness"] == "current"
+        if fidelity is not None:
+            observation = self.snap.get(fidelity)
+            return observation is not None and observation.version == fidelity["version"] \
+                and observation.body.get("result") == "matched" \
+                and judgment_freshness(self.snap, observation, superseded=False)["freshness"] == "current"
+        record = self.snap.get(ref)
+        # Reconstructions have no source statement to compare. A source target
+        # requires an explicit current comparison of its exact saved form.
+        return record is not None and record.body.get("origin") != "source"
 
-    def _support(self, ref: dict, key: str) -> str:
-        snap = self.snap
-        record = snap.get(ref)
-        if record is None:
-            return "unavailable"
-        kind = snap.kind_of(ref)
-        for finding in self.findings_by_target.get(key, []):
-            if finding.body["category"] == "statement_refutation" and finding.body["lifecycle"] == "open":
-                return "unavailable"
-        if kind in ("assumption", "definition"):
-            return "available"
-        if kind == "external_result":
-            state = self._obligation_supported(ref, "external_source")
-            return {"supported": "available", "defect": "unavailable"}.get(state, "conditional")
-        if (record.collection == "items" and kind in INTERMEDIATE_KINDS) or record.collection == "parts":
-            groups = [g for g in snap.groups_for_conclusion(ref)
-                      if (a := snap.live("arguments", g.body["argument_id"])) is not None
-                      and a.body["lifecycle"] == "registered"]
-            if record.collection == "parts" and not groups and not snap.member_records("arguments_for_target", ref):
-                parent = {"collection": "items", "id": record.body["item_id"]}
-                return self.support(parent)
-            result = self._support_from_groups(groups, ref)
-            for argument in snap.member_records("arguments_for_target", ref):
-                if argument.body["lifecycle"] != "registered":
-                    continue
-                composition = self._obligation_supported(ref_of(argument), "composition")
-                if composition == "defect":
-                    return "unavailable"
-                if composition != "supported" and result == "available":
-                    result = "conditional"
-            return result
-        arguments = [a for a in snap.member_records("arguments_for_target", ref)
-                     if a.body["lifecycle"] == "registered"]
-        if not arguments:
-            return "conditional"
-        best = "conditional"
-        for argument in arguments:
-            composition = self._obligation_supported(ref_of(argument), "composition")
-            if composition == "defect":
-                return "unavailable"
-            groups = snap.member_records("groups_in_argument", ref_of(argument))
-            group_state = self._support_from_groups(groups, None)
-            if group_state == "unavailable":
-                return "unavailable"
-            if composition == "supported" and group_state == "available" and groups:
-                best = "available"
-        return best
+    def statement_refuted(self, ref):
+        return any(f.body["category"] == "statement_refutation" and f.body["lifecycle"] == "open"
+                   and judgment_freshness(self.snap, f, superseded=False)["freshness"] == "current"
+                   for f in self.findings_by_target.get(key_of(ref), ()))
 
-    def _support_from_groups(self, groups: list, conclusion) -> str:
-        if not groups:
+    def support(self, ref: dict, scope_id=None, *, default_scope=True) -> str:
+        """Availability of an exact statement in the requested recorded context."""
+        if self.audit is not None and self.audit.body["mode"] == "triage":
             return "conditional"
-        result = "available"
-        for group in groups:
-            derivation = self._obligation_supported(ref_of(group), "derivation")
-            if derivation == "defect":
-                return "unavailable"
-            if derivation != "supported":
-                result = "conditional"
-            if group.body["kind"] == "cases" and self._obligation_supported(ref_of(group), "case_coverage") != "supported":
-                result = "conditional" if self._obligation_supported(ref_of(group), "case_coverage") != "defect" \
-                    else "unavailable"
-                if result == "unavailable":
-                    return result
-            if group.body["discharges"]:
-                discharge = self._obligation_supported(ref_of(group), "scope_discharge")
-                if discharge == "defect":
-                    return "unavailable"
-                if discharge != "supported":
-                    result = "conditional"
-            for use in self.snap.member_records("uses_in_group", ref_of(group)):
-                use_support = self.use_support(use)
-                if use_support == "unavailable":
-                    result = "conditional"
-                elif use_support == "conditional":
-                    result = "conditional"
-        return result
+        if scope_id is None and default_scope:
+            scope_id = self.snap.exact_scope(ref)
+        return self.support_closure.value(self.support_closure.statement_key(ref, scope_id))
 
     def use_support(self, use: Record) -> str:
-        """Support the supplier provides through one use, downgraded by an incompatible application."""
-        application = self._obligation_supported(ref_of(use), "application")
-        if application == "defect":
-            return "unavailable"
-        group = self.snap.live("groups", use.body["group_id"]) if use.body["group_id"] else None
-        assumed = self.snap.scope_assumptions(group.body["scope_id"]) if group else {}
-        supplier = "available" if key_of(use.body["from"]) in assumed else self.support(use.body["from"])
-        if supplier == "available" and application != "supported":
+        """Supplier availability is separate from a locally valid implication."""
+        if self.audit is not None and self.audit.body["mode"] == "triage":
             return "conditional"
-        return supplier
+        return self.support_closure.value(("use", use.id))
 
     # -- assessments per record ----------------------------------------------
     def constituent_for(self, oid: str) -> dict:
@@ -1139,6 +1249,13 @@ class _Derivation:
                         "finding_refs": self.finding_refs(key_of(ref_of(use)), use_id=use.id), "disputed": False,
                         "compromised": False})
         return out
+
+    def use_assessment(self, use: Record):
+        constituents = self.use_constituents(use)
+        local = reduce([dict(c, support=None) for c in constituents])
+        assessment = reduce(constituents)
+        assessment.update(availability=self.use_support(use), local_state=local["state"], local_label=local["label"])
+        return _triage_assessment(assessment) if self.audit is not None and self.audit.body["mode"] == "triage" else assessment
 
     def group_constituents(self, group: Record, *, with_uses: bool = True) -> list:
         out = [dict(self.constituent_for(oid)) for oid in self.by_target.get(key_of(ref_of(group)), [])]
@@ -1182,10 +1299,40 @@ class _Derivation:
         assessments = {}
         for oid in list(self.obligations):
             self.constituent_for(oid)
+        roots = [self.support_closure.statement_key(ref_of(s), snap.exact_scope(ref_of(s)))
+                 for s in self.statements]
+        roots.extend(("use", use_id) for use_ids in getattr(self, "scope_uses", {}).values() for use_id in use_ids)
+        roots.extend(("argument", argument_id) for argument_ids in self.routes.values() for argument_id in argument_ids)
+        roots.extend(("group", group_id) for group_ids in getattr(self, "scope_groups", {}).values() for group_id in group_ids)
+        self.support_closure.solve(roots)
         for statement in self.statements:
             skey = key_of(ref_of(statement))
             indicator = self.independent_indicator(skey)
-            assessments[skey] = reduce(self.statement_constituents(statement), independent=indicator)
+            constituents = self.statement_constituents(statement)
+            assessment = reduce(constituents, independent=indicator)
+            availability = self.support(ref_of(statement))
+            assessment.update({"availability": availability, "local_state": assessment["state"],
+                               "local_label": assessment["label"]})
+            own = [c for c in constituents if c.get("target") == ref_of(statement)
+                   and c["kind"] == "source_fidelity" and c.get("required")]
+            source_ready = all(c["state"] == "complete" and c["freshness"] == "current"
+                               and c["outcome"] == "supported" for c in own)
+            if availability == "available" and source_ready and indicator != "disputed" \
+                    and self.snap.kind_of(ref_of(statement)) not in ("assumption", "definition"):
+                if assessment["state"] != "green":
+                    assessment.update({"state": "green", "label": "established",
+                                       "explanation": "a sufficient current route establishes the exact target in its declared scope; "
+                                                      "other recorded route outcomes and unfinished audit work remain visible"})
+            elif self.statement_refuted(ref_of(statement)):
+                assessment.update({"state": "red", "label": "statement refuted",
+                                   "explanation": "an open statement-refutation finding applies to this exact target; "
+                                                  "locally valid conditional reasoning remains separately recorded"})
+            elif availability != "available" and assessment["state"] == "green":
+                assessment.update({"state": "amber", "label": "conditional",
+                                   "explanation": "local examinations are supported, but no current founded route establishes "
+                                                  "the exact target in this scope; exact-target, premise and condition "
+                                                  "requirements remain applicable"})
+            assessments[skey] = assessment
             for argument_id in self.routes.get(skey, []):
                 argument = snap.live("arguments", argument_id)
                 if argument is not None:
@@ -1199,7 +1346,7 @@ class _Derivation:
                         for use in snap.member_records("uses_in_group", ref_of(group)):
                             ukey = key_of(ref_of(use))
                             if ukey not in assessments:
-                                assessments[ukey] = reduce(self.use_constituents(use))
+                                assessments[ukey] = self.use_assessment(use)
             for key in sorted(self.route_records.get(skey, ())):
                 if key.startswith("groups:") and key not in assessments:
                     group = snap.live("groups", key.split(":", 1)[1])
@@ -1208,11 +1355,21 @@ class _Derivation:
                 if key.startswith("uses:") and key not in assessments:
                     use = snap.live("uses", key.split(":", 1)[1])
                     if use is not None:
-                        assessments[key] = reduce(self.use_constituents(use))
+                        assessments[key] = self.use_assessment(use)
         if self.audit is not None:
             akey = key_of(ref_of(self.audit))
             assessments[akey] = reduce([dict(self.constituent_for(oid)) for oid in self.by_target.get(akey, [])])
+        if self.audit is not None and self.audit.body["mode"] == "triage":
+            assessments = {key: _triage_assessment(value) for key, value in assessments.items()}
         return assessments
+
+
+def _triage_assessment(assessment):
+    result = dict(assessment, state="gray", label="triage",
+                  explanation="triage records evidence and follow-up work; it does not certify proof correctness or audit completion")
+    if "availability" in result:
+        result.update(availability="conditional", local_state="gray", local_label="recorded evidence only")
+    return result
 
 
 def _source_limits(snap: Snapshot, statements: list, route_records: dict, mode: str) -> list:
@@ -1260,6 +1417,8 @@ def derive_full(db: Database, *, revision: int | None = None, audit_id: str | No
         obligation["assessment"] = reduce([derivation.constituents[obligation["id"]]],
                                           independent="not_required" if obligation["role"] != "coordinator"
                                           else derivation.independent_indicator(key_of(obligation["target"])))
+        if audit is not None and audit.body["mode"] == "triage":
+            obligation["assessment"] = _triage_assessment(obligation["assessment"])
     judgments = derivation.judgments
     for check in derivation.all_checks:
         derivation.judgment_info(check)
@@ -1287,6 +1446,8 @@ def derive_full(db: Database, *, revision: int | None = None, audit_id: str | No
     disputed = any(v == "disputed" for v in indicators.values())
     process_complete = audit is not None and bool(required) and len(satisfied) == len(required) \
         and not source_limits and not disputed and not derivation.problems
+    if mode == "triage":
+        process_complete = False
     if audit is not None and mode in ("full", "focused") and not derivation.statements:
         process_complete = False
     published = None

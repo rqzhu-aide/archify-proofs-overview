@@ -14,6 +14,7 @@ from .assessment import (PROOF_KINDS, TraversalLimit, derive_full, key_of,
 from .canonical import compact_json, digest
 from .contract import INTERMEDIATE_KINDS
 from .errors import InvalidRequest
+from .semantics import application, target_spec
 
 
 def _identity(prefix, *values):
@@ -78,8 +79,8 @@ def _task_argument(snap, target):
         return ref_of(record)
     if record.collection == "groups":
         return {"collection": "arguments", "id": record.body["argument_id"]}
-    if record.collection == "uses" and record.body["group_id"] is not None:
-        group = snap.live("groups", record.body["group_id"])
+    if record.collection == "uses" and application(snap, record)["group_id"] is not None:
+        group = snap.live("groups", application(snap, record)["group_id"])
         if group:
             return {"collection": "arguments", "id": group.body["argument_id"]}
     return None
@@ -172,6 +173,13 @@ def build_work(derivation, assessment, *, focus=None):
         add_predecessor(oid, pred)
         if pred and tasks[oid]["argument"]:
             task_contexts[pred].add(key_of(tasks[oid]["argument"]))
+        if target["collection"] in ("items", "parts"):
+            spec = target_spec(snap, target)
+            if spec:
+                exact = obligation(ref_of(spec), "source_fidelity")
+                add_predecessor(oid, exact)
+                if exact and tasks[oid]["argument"]:
+                    task_contexts[exact].add(key_of(tasks[oid]["argument"]))
 
     def scope_fidelity(oid, scope_id):
         for assumed in snap.scope_assumptions(scope_id).values():
@@ -243,8 +251,9 @@ def build_work(derivation, assessment, *, focus=None):
                     "Independent review requires a qualification for this protocol.", [oid]))
             continue
         if kind == "application":
-            group = snap.live("groups", record.body["group_id"]) if record.body["group_id"] else None
-            assumed = snap.scope_assumptions(group.body["scope_id"]) if group else {}
+            detail = application(snap, record)
+            group = snap.live("groups", detail["group_id"]) if detail["group_id"] else None
+            assumed = snap.scope_assumptions(detail.get("scope_id") or group.body["scope_id"]) if group else {}
             fidelity(oid, record.body["from"])
             fidelity(oid, record.body["to"])
             for ref in assumed.values():
@@ -332,7 +341,7 @@ def build_work(derivation, assessment, *, focus=None):
     for oid, task in tasks.items():
         record = snap.get(task["target"])
         group_id = record.id if record.collection == "groups" else \
-            record.body["group_id"] if record.collection == "uses" else None
+            application(snap, record)["group_id"] if record.collection == "uses" else None
         uid = _identity("unit_", audit.id, task["role"], "groups", group_id) if group_id else \
             _identity("unit_", oid)
         unit_of[oid] = uid

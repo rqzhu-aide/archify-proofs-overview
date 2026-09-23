@@ -11,13 +11,14 @@ import hashlib
 from collections import OrderedDict, defaultdict
 
 from . import PROJECTION_VERSION
-from .assessment import derive_full, key_of, pinned_of, reduce, ref_of
+from .assessment import _triage_assessment, derive_full, key_of, pinned_of, reduce, ref_of
 from .canonical import compact_json
 from .contract import INTERMEDIATE_KINDS, MAJOR_KINDS
 from .storage import Database, Record
 
 INDICATOR_RANK = {"not_required": 0, "complete": 1, "pending": 2, "compromised": 3, "disputed": 4}
-PROOF_RECORD_COLLECTIONS = ("items", "parts", "arguments", "groups", "uses", "scopes", "coverage")
+PROOF_RECORD_COLLECTIONS = ("items", "parts", "arguments", "groups", "uses", "scopes", "coverage",
+                            "target_specs", "application_details", "connection_refinements", "proof_boundaries")
 SECTION_ORDER = ("statement", "premises", "applications", "derivations", "composition", "coverage",
                  "findings", "sources", "review", "limitations")
 SECTION_TITLES = {
@@ -66,7 +67,8 @@ def public_assessment(assessment: dict) -> dict:
             "check_refs": [dict(r) for r in assessment["check_refs"]],
             "finding_refs": _ids(assessment["finding_refs"]),
             "missing_obligation_ids": list(assessment["missing_obligation_ids"]),
-            "independent_review": assessment["independent_review"]}
+            "independent_review": assessment["independent_review"],
+            **{key: assessment[key] for key in ("availability", "local_state", "local_label") if key in assessment}}
 
 
 def _dedupe_constituents(constituents: list) -> list:
@@ -134,11 +136,15 @@ class _Projector:
         self.A = result
         self.overview = derivation.audit is None
         self.records: dict = OrderedDict()
+        self._historical_records = {}
         self.problems: list = []
         self.obligation_index = {o["id"]: o for o in result["obligations"]}
         self.outgoing = defaultdict(list)
         for use in sorted(self.snap.all("uses"), key=lambda r: r.id):
             self.outgoing[key_of(use.body["from"])].append(use)
+        self.refinements_by_use = defaultdict(list)
+        for refinement in sorted(self.snap.all("connection_refinements"), key=lambda r: r.id):
+            self.refinements_by_use[refinement.body["summary_use_id"]].append(refinement)
         self.repairs_by_finding = defaultdict(list)
         for repair in sorted(self.snap.all("repairs"), key=lambda r: r.id):
             self.repairs_by_finding[repair.body["finding_id"]].append(repair)
@@ -163,13 +169,20 @@ class _Projector:
         key = _pin_key(ref)
         if key in self.records:
             return
-        record = self.snap.live(ref["collection"], ref["id"])
-        if record is None or record.version != ref["version"]:
-            record = self.db.version(ref["collection"], ref["id"], ref["version"])
+        record = self.pinned_record(ref)
         if record is None or record.body is None:
             self.problems.append(f"pinned reference {ref['collection']}:{ref['id']}:{ref['version']} has no stored body")
             return
         self.records[key] = record
+
+    def pinned_record(self, ref):
+        record = self.snap.get(ref)
+        if record is not None and record.version == ref["version"]:
+            return record
+        key = _pin_key(ref)
+        if key not in self._historical_records:
+            self._historical_records[key] = self.db.version(*key)
+        return self._historical_records[key]
 
     # -- lookups ---------------------------------------------------------------
     def obligations_for(self, ref, *, roles=None, kinds=None) -> list:
@@ -209,6 +222,8 @@ class _Projector:
                 ids.append(anchor_id)
             if record.collection == "coverage":
                 ids.append(body["anchor_id"])
+            if record.collection == "proof_boundaries":
+                ids.extend(ref["id"] for ref in body["anchor_refs"])
         anchors, seen = [], set()
         for anchor_id in ids:
             if anchor_id in seen:
@@ -231,6 +246,8 @@ class _Projector:
         return out
 
     def constituents_for_use(self, use: Record) -> list:
+        if self.snap.live("application_details", use.id) is None:
+            return []
         return self.d.use_constituents(use)
 
     def constituents_for_group(self, group: Record) -> list:
@@ -248,6 +265,10 @@ class _Projector:
     def node_set(self) -> tuple:
         if self.overview:
             items = [r for r in self.snap.all("items") if r.body["kind"] in MAJOR_KINDS]
+            selections = self.snap.all("overview_selections")
+            if len(selections) == 1:
+                selected = set(selections[0].body["item_ids"])
+                items = [r for r in items if r.id in selected]
             return OrderedDict((r.id, r) for r in sorted(items, key=lambda r: r.id)), OrderedDict()
         scoped = self.scoped_majors()
         nodes = OrderedDict(scoped)
@@ -263,7 +284,11 @@ class _Projector:
 
     def boundary_uses(self, nodes: dict, scoped: dict) -> dict:
         pairs = defaultdict(list)
+        selections = self.snap.all("overview_selections") if self.overview else []
+        selected = set(selections[0].body["use_ids"]) if len(selections) == 1 else None
         for use in sorted(self.snap.all("uses"), key=lambda r: r.id):
+            if selected is not None and use.id not in selected:
+                continue
             source, target = self.snap.major_of(use.body["from"]), self.snap.major_of(use.body["to"])
             if source is None or target is None:
                 self.problems.append(f"use {use.id} has an endpoint without a major owner")
@@ -278,6 +303,26 @@ class _Projector:
     # -- boundary traces (handoff 7.2) -----------------------------------------
     def trace(self, use: Record, owner: Record) -> dict:
         """Represented targets and context reached from one boundary use toward the owning result."""
+        refinements = self.refinements_by_use.get(use.id, ())
+        if refinements:
+            combined = {key: OrderedDict() for key in ("uses", "groups", "arguments", "conclusions", "context")}
+            combined["uses"][use.id] = use
+            for refinement in refinements:
+                combined["context"][key_of(ref_of(refinement))] = refinement
+                for use_id in refinement.body["use_ids"]:
+                    application = self.snap.live("uses", use_id)
+                    if application is None:
+                        continue
+                    trace = self._trace_application(application, owner)
+                    for kind, records in trace.items():
+                        for record in records:
+                            combined[kind][key_of(ref_of(record))] = record
+            result = {kind: list(records.values()) for kind, records in combined.items()}
+            result["conclusions"] = [self.snap.get(g.body["conclusion"]) for g in result["groups"]]
+            return result
+        return self._trace_application(use, owner)
+
+    def _trace_application(self, use: Record, owner: Record) -> dict:
         snap = self.snap
         represented_uses, represented_groups, represented_arguments, conclusions = [use], [], [], []
         context: dict = OrderedDict()
@@ -289,11 +334,12 @@ class _Projector:
         add_context(snap.get(use.body["from"]))
         for anchor in self.anchors_of([use]):
             add_context(anchor)
-        if use.body["group_id"] is None:
+        application = snap.application(use)
+        if application.get("group_id") is None:
             return {"uses": represented_uses, "groups": represented_groups, "arguments": represented_arguments, "conclusions": conclusions,
                     "context": list(context.values())}
         visited_groups, visited_uses = set(), {use.id}
-        frontier = [use.body["group_id"]]
+        frontier = [application["group_id"]]
         while frontier:
             group_id = frontier.pop(0)
             if group_id in visited_groups:
@@ -339,8 +385,9 @@ class _Projector:
                     continue  # crossing into a different major result: that is another connection
                 visited_uses.add(downstream.id)
                 represented_uses.append(downstream)
-                if downstream.body["group_id"] is not None:
-                    frontier.append(downstream.body["group_id"])
+                downstream_group = snap.application(downstream).get("group_id")
+                if downstream_group is not None:
+                    frontier.append(downstream_group)
         return {"uses": represented_uses, "groups": represented_groups, "arguments": represented_arguments, "conclusions": conclusions,
                 "context": list(context.values())}
 
@@ -453,6 +500,8 @@ class _Projector:
         if not self.overview and not in_scope:
             note = "Outside the audit scope; shown as a neighbor of an audited result."
         detail.add("statement", statements, note=note)
+        for statement in statements + intermediates:
+            self.add_exact_target(detail, statement)
         keys = {key_of(ref_of(r)) for r in statements + intermediates}
         use_ids: list = []
         independent_checks: list = []
@@ -460,7 +509,7 @@ class _Projector:
         for statement in statements:
             self.place_obligations(detail, ref_of(statement))
             self.place_checks(detail, ref_of(statement), independent_checks=independent_checks)
-            for scope in self.scope_chain(statement.body["scope_id"]):
+            for scope in self.scope_chain(snap.exact_scope(ref_of(statement))):
                 detail.add("premises", [scope])
         arguments = OrderedDict()
         for member in statements + intermediates:
@@ -494,6 +543,11 @@ class _Projector:
             for coverage in snap.member_records("coverage_in_argument", ref_of(argument)):
                 route_records.append(coverage)
                 detail.add("coverage", [coverage])
+            for boundary in snap.proof_boundaries(argument.id):
+                detail.add("coverage", [boundary])
+                review_pin = boundary.body["source_review_ref"]
+                review = self.pinned_record(review_pin)
+                detail.add("coverage", [review])
         member_uses = OrderedDict()
         for member in statements + intermediates:
             for use in snap.member_records("incoming_uses", ref_of(member)):
@@ -522,6 +576,7 @@ class _Projector:
             use_ids.append(use.id)
             route_records.append(use)
             detail.add("applications", [use])
+            self.add_application_detail(detail, use)
             self.place_obligations(detail, ref_of(use))
             self.place_checks(detail, ref_of(use), independent_checks=independent_checks)
             supplier_owner = snap.major_of(use.body["from"])
@@ -533,6 +588,34 @@ class _Projector:
         self.add_review_material(detail, keys, independent_checks)
         return detail
 
+    def add_exact_target(self, detail, statement):
+        spec = self.snap.target_spec(ref_of(statement))
+        if spec is None:
+            return
+        detail.add("statement", [spec], note="Exact audited targets identify the mathematical form and scope examined.")
+        self.place_obligations(detail, ref_of(spec))
+        for scope in self.scope_chain(spec.body["scope_id"]):
+            detail.add("premises", [scope])
+        detail.add("statement", self.d.observations_by_target.get(key_of(ref_of(spec)), ()))
+        if spec.body.get("fidelity_ref"):
+            pin = spec.body["fidelity_ref"]
+            detail.add("statement", [self.pinned_record(pin)])
+        if spec.body.get("statement_ref"):
+            pin = spec.body["statement_ref"]
+            detail.add("statement", [self.pinned_record(pin)])
+
+    def add_application_detail(self, detail, use):
+        application = self.snap.live("application_details", use.id)
+        if application is not None:
+            detail.add("applications", [application])
+            group = self.snap.live("groups", application.body["group_id"])
+            scope_id = application.body.get("scope_id") or (group.body["scope_id"] if group else None)
+            for scope in self.scope_chain(scope_id):
+                detail.add("premises", [scope])
+        for refinement in self.refinements_by_use.get(use.id, ()):
+            detail.add("applications", [refinement], note="Summary connections retain their source meaning. "
+                       "Refinements link to exact applications; the summary is not an extra checked implication.")
+
     def connection_detail(self, cid: str, traces: list, context: list) -> _Detail:
         detail = _Detail(self, f"conn:{cid}")
         keys, use_ids, independent_checks = set(), [], []
@@ -541,6 +624,7 @@ class _Projector:
             keys.add(key_of(ref_of(use)))
             use_ids.append(use.id)
             detail.add("applications", [use])
+            self.add_application_detail(detail, use)
             self.place_obligations(detail, ref_of(use))
             self.place_checks(detail, ref_of(use), independent_checks=independent_checks)
             detail.add("premises", [self.snap.get(use.body["from"])])
@@ -554,6 +638,7 @@ class _Projector:
                 keys.add(key_of(ref_of(use)))
                 use_ids.append(use.id)
                 detail.add("derivations", [use])
+                self.add_application_detail(detail, use)
                 self.place_obligations(detail, ref_of(use))
                 self.place_checks(detail, ref_of(use), independent_checks=independent_checks)
             for group, conclusion in zip(trace["groups"], trace["conclusions"]):
@@ -571,6 +656,9 @@ class _Projector:
                 detail.add("premises", [record])
             elif record.collection in ("items", "parts"):
                 detail.add("premises", [record])
+                self.add_exact_target(detail, record)
+            elif record.collection == "connection_refinements":
+                detail.add("applications", [record], note="A refinement maps the source-backed summary to the exact applications listed here.")
         self.add_findings(detail, keys, use_ids)
         anchors = []
         for trace in traces:
@@ -611,9 +699,10 @@ class _Projector:
             traces = [self.trace(use, owner) for use in uses]
             partition: dict = OrderedDict()
             for use, trace in zip(uses, traces):
-                group = snap.live("groups", use.body["group_id"]) if use.body["group_id"] else None
+                application = snap.application(use)
+                group = snap.live("groups", application.get("group_id"))
                 argument_id = None if group is None else group.body["argument_id"]
-                partition.setdefault((argument_id, use.body["group_id"]), []).append((use, trace))
+                partition.setdefault((argument_id, application.get("group_id")), []).append((use, trace))
             groups_out, all_constituents, context = [], [], OrderedDict()
             for (argument_id, group_id), members in sorted(partition.items(), key=lambda kv: (kv[0][0] or "", kv[0][1] or "")):
                 constituents = []
@@ -630,6 +719,7 @@ class _Projector:
                 constituents = _dedupe_constituents(constituents)
                 obligation_ids = sorted({c["obligation_id"] for c in constituents if c.get("obligation_id")})
                 groups_out.append({"argument_id": argument_id, "group_id": group_id,
+                                   "inference_kind": snap.live("groups", group_id).body["kind"] if group_id else None,
                                    "use_ids": sorted(use.id for use, _ in members),
                                    "obligation_ids": obligation_ids,
                                    "assessment": public_assessment(reduce(constituents))})
@@ -645,11 +735,37 @@ class _Projector:
                         support_refs.append(_unpinned(ref))
                     self.register_pinned(ref)
             context_refs = [ref_of(r) for r in context.values()]
+            represented = {u.id: u for trace in traces for u in trace["uses"]
+                           if snap.live("application_details", u.id) is not None}
+            application_assessments = []
+            for use_id, use in sorted(represented.items()):
+                application = snap.application(use)
+                group = snap.live("groups", application.get("group_id"))
+                application_assessments.append({"use_id": use_id, "group_id": application.get("group_id"),
+                    "scope_id": application.get("scope_id") or (group.body["scope_id"] if group else None),
+                    "argument_id": group.body["argument_id"] if group else None,
+                    "assessment": public_assessment(self.d.use_assessment(use))})
+            connection_assessment = public_assessment(reduce(all_constituents))
+            summary_uses = [u.id for u in uses if snap.live("application_details", u.id) is None]
+            if not all_constituents and summary_uses:
+                connection_assessment.update({"label": "source contribution",
+                    "explanation": "this source-backed summary has no completed exact application assessment"})
+            if connection_assessment["state"] == "green" and any(r.body["state"] != "registered"
+                    for use in uses for r in self.refinements_by_use.get(use.id, ())):
+                connection_assessment.update({"state": "amber", "label": "draft refinement",
+                    "explanation": "mapped applications have judgments, but the summary interpretation remains draft"})
+            if A["mode"] == "triage":
+                connection_assessment = _triage_assessment(connection_assessment)
+                for group in groups_out:
+                    group["assessment"] = _triage_assessment(group["assessment"])
+                for application in application_assessments:
+                    application["assessment"] = _triage_assessment(application["assessment"])
             connections.append({"id": cid, "from": source_id, "to": target_id,
                                 "primary_use_ids": sorted(use.id for use in uses), "groups": groups_out,
+                                "summary_use_ids": summary_uses, "applications": application_assessments,
                                 "support_refs": support_refs, "obligation_ids": obligation_ids,
                                 "context_refs": context_refs,
-                                "assessment": public_assessment(reduce(all_constituents)),
+                                "assessment": connection_assessment,
                                 "detail_key": f"conn:{cid}"})
             connection_details[cid] = (traces, list(context.values()))
             edges.append((source_id, target_id))
@@ -768,11 +884,11 @@ class _Projector:
             return {"mode": "dag", "reasons": []}
         cycle = _find_cycle(remaining, outgoing)
         path = " to ".join(cycle) if cycle else ", ".join(remaining)
-        return {"mode": "index",
-                "reasons": [f"Connections form a cycle under major-owner projection ({path}); the diagram is "
-                            "replaced by the complete major-item and connection index in the same shell.",
-                            "A cycle introduced by ownership projection is a display limitation, "
-                            "not automatically circular mathematics; every recorded use is kept."]}
+        return {"mode": "cyclic",
+                "reasons": [f"Connections form a cycle under major-owner projection ({path}); return arrows "
+                            "are routed above the connected results, preserving every direction.",
+                            "Layout does not establish mathematical validity or circularity; "
+                            "every recorded use is kept and its assessment is unchanged."]}
 
 
 def _find_cycle(nodes: list, outgoing: dict) -> list:

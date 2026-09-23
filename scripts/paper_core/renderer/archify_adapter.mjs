@@ -11,7 +11,7 @@ function replaceOnce(template, original, replacement) {
 export function archifyPage({ templatePath, title, svg, beforeGraph, afterGraph, css, runtime, data, fontStyle, index }) {
   let template = readFileSync(templatePath, 'utf8');
   // The native selection panel belongs below a mathematical graph, outside its clipped camera.
-  // These are the same layout adaptations used by archify-proofs-overview.
+  // These are the same layout adaptations used by proof-graphify.
   template = replaceOnce(template, 'if (chip.hidden || activeIds.length !== 1) return;',
     'if (chip.hidden || !container.contains(chip) || activeIds.length !== 1) return;');
   template = replaceOnce(template, 'if (chip && !chip.hidden) {',
