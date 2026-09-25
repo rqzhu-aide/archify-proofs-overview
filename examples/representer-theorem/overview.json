@@ -373,7 +373,7 @@
       }
     },
     {
-      "caption": "Projection identities",
+      "caption": "Projection preserves predictions",
       "id": "projection",
       "kind": "lemma",
       "label": "Lemma 4",
@@ -393,7 +393,7 @@
       }
     },
     {
-      "caption": "Finite kernel expansion",
+      "caption": "Minimizers lie in training span",
       "id": "representer",
       "kind": "theorem",
       "label": "Theorem 5",
@@ -411,6 +411,7 @@
           "role": "evidence"
         }
       ],
+      "proof_idea": "Write a minimizer as $f_*=s+h$ using Lemma 4. The loss sees only the projection $s$, while a nonzero orthogonal component $h$ increases the norm. At a finite minimizer, the strictly increasing penalty would therefore make removing $h$ an improvement, so every minimizer must lie in the training span.",
       "statement": {
         "form": "synopsis",
         "text": "Under Assumptions 1 and 3, if $J$ attains a finite minimum on $\\mathcal H$, every minimizer belongs to $S$: $$f_*(\\cdot)=\\sum_{i=1}^n\\alpha_i k(\\cdot,x_i).$$ The theorem does not assert existence or uniqueness. With a merely nondecreasing penalty, a minimizer in $S$ can still be chosen whenever a finite minimum is attained, but other minimizers may lie outside $S$."
@@ -431,6 +432,7 @@
           "role": "proof"
         }
       ],
+      "proof_idea": "Continuity and the positive norm penalty give a nonempty compact sublevel set on the finite-dimensional training span, establishing a finite minimum. Projection makes this a global minimum, and Theorem 5 then confines every minimizer to that span. The coefficient problem is solved by $(K+\\lambda I_n)\\alpha=y$. Other minimizing coefficient vectors differ by a vector in $\\ker K$, which represents the zero function, so the minimizing function is unique even when its coefficients are not.",
       "statement": {
         "form": "synopsis",
         "text": "Under Assumption 1 and $\\lambda>0$, the sum-loss objective $J_\\lambda(f)=\\sum_{i=1}^n(f(x_i)-y_i)^2+\\lambda\\|f\\|_{\\mathcal H}^2$ has a unique minimizing function: $$f_*(\\cdot)=\\sum_{i=1}^n\\alpha_i k(\\cdot,x_i),\\qquad \\alpha=(K+\\lambda I_n)^{-1}y,$$ where $K_{ij}=k(x_i,x_j)$ and $y=(y_1,\\ldots,y_n)^\\top$. This linear system selects a unique vector; if $K$ is singular, other coefficient vectors represent the same minimizing function."
@@ -572,209 +574,209 @@
   ],
   "observations": [
     {
-      "created_at": "2026-09-12T19:23:15+00:00",
-      "id": "comparison-204b92ab7fb44f5786976a275001d3fc",
+      "created_at": "2026-09-25T00:45:07+00:00",
+      "id": "comparison-2f739d5370fa4430b1d53a4299ca8fce",
       "input_snapshot": "e5d67ee8f7e1c6a45df11f1be8dd229f4f659b514808c532412fff2606cc88e2",
-      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "note": "Compared the stored statements, contribution reasons, and main-result proof ideas with proof.md and the captured passages. The projection and penalty argument retains finite attainment and strict increase; the corollary establishes existence before applying the theorem and distinguishes function uniqueness from coefficient uniqueness. This is a source comparison, not a proof-validity judgment.",
       "result": "matched",
-      "reviewer": "Codex overview author with independent source comparison",
+      "reviewer": "Codex source comparison, teaching example, 2026-09-24",
       "target": {
         "collection": "items",
         "id": "rkhs"
       }
     },
     {
-      "created_at": "2026-09-12T19:23:15+00:00",
-      "id": "comparison-05ceb03a38b14b39a08009163f328c98",
+      "created_at": "2026-09-25T00:45:07+00:00",
+      "id": "comparison-c995cf8304344d4c8a1a7628ec22c9eb",
       "input_snapshot": "aaa438261596c915c0abccb09516ff851d84901e10045daef6347b86a0fb46c9",
-      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "note": "Compared the stored statements, contribution reasons, and main-result proof ideas with proof.md and the captured passages. The projection and penalty argument retains finite attainment and strict increase; the corollary establishes existence before applying the theorem and distinguishes function uniqueness from coefficient uniqueness. This is a source comparison, not a proof-validity judgment.",
       "result": "matched",
-      "reviewer": "Codex overview author with independent source comparison",
+      "reviewer": "Codex source comparison, teaching example, 2026-09-24",
       "target": {
         "collection": "items",
         "id": "training-span"
       }
     },
     {
-      "created_at": "2026-09-12T19:23:15+00:00",
-      "id": "comparison-4299fbabd696475997419f146869bfbe",
+      "created_at": "2026-09-25T00:45:07+00:00",
+      "id": "comparison-39dadc186e1f45d18896bcabee2b41f6",
       "input_snapshot": "81f2fdb215b5126a5d04d93671a0d9fe62f24f3471c92acfcfbfc0068a72ed88",
-      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "note": "Compared the stored statements, contribution reasons, and main-result proof ideas with proof.md and the captured passages. The projection and penalty argument retains finite attainment and strict increase; the corollary establishes existence before applying the theorem and distinguishes function uniqueness from coefficient uniqueness. This is a source comparison, not a proof-validity judgment.",
       "result": "matched",
-      "reviewer": "Codex overview author with independent source comparison",
+      "reviewer": "Codex source comparison, teaching example, 2026-09-24",
       "target": {
         "collection": "items",
         "id": "objective"
       }
     },
     {
-      "created_at": "2026-09-12T19:23:15+00:00",
-      "id": "comparison-f0719d8adcd54e9fb3691ed3d974028b",
-      "input_snapshot": "dee262e16a2e145546c951e0ff23b994e898732ddb8814d78d0766b0186a9958",
-      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "created_at": "2026-09-25T00:45:07+00:00",
+      "id": "comparison-3b43ef71636f4a0191fca1bf4c95ddf9",
+      "input_snapshot": "807fc37f3afb09964d5891e34659d975a009b4ed88a52428b47e7a4ccc2fd25e",
+      "note": "Compared the stored statements, contribution reasons, and main-result proof ideas with proof.md and the captured passages. The projection and penalty argument retains finite attainment and strict increase; the corollary establishes existence before applying the theorem and distinguishes function uniqueness from coefficient uniqueness. This is a source comparison, not a proof-validity judgment.",
       "result": "matched",
-      "reviewer": "Codex overview author with independent source comparison",
+      "reviewer": "Codex source comparison, teaching example, 2026-09-24",
       "target": {
         "collection": "items",
         "id": "projection"
       }
     },
     {
-      "created_at": "2026-09-12T19:23:15+00:00",
-      "id": "comparison-1710e31a52874a5d8965e55365d22bfc",
-      "input_snapshot": "dac96f6e4e4d63b4ecaf2dea6013f085e18f1501a3a9f211d2126909b538d619",
-      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "created_at": "2026-09-25T00:45:07+00:00",
+      "id": "comparison-90e50ed5b969415e896b3cc20e42267e",
+      "input_snapshot": "1f4f6598381aabd75dacd3ddb28e260266b04ec4b47b2a24621a538dd3054db3",
+      "note": "Compared the stored statements, contribution reasons, and main-result proof ideas with proof.md and the captured passages. The projection and penalty argument retains finite attainment and strict increase; the corollary establishes existence before applying the theorem and distinguishes function uniqueness from coefficient uniqueness. This is a source comparison, not a proof-validity judgment.",
       "result": "matched",
-      "reviewer": "Codex overview author with independent source comparison",
+      "reviewer": "Codex source comparison, teaching example, 2026-09-24",
       "target": {
         "collection": "items",
         "id": "representer"
       }
     },
     {
-      "created_at": "2026-09-12T19:23:15+00:00",
-      "id": "comparison-f9b6a94dde3845828c19d30c380c878a",
-      "input_snapshot": "ee92ca5b5c2f2bb38c94a0c9f52e0fad0a8247ec132c72394af5ea11d9e3d9c6",
-      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "created_at": "2026-09-25T00:45:07+00:00",
+      "id": "comparison-f3f6b59ce48a488b9bdd623cca0dfe5a",
+      "input_snapshot": "d64746c9054c26eff68ff0ba2ccc65ae85e7e1679ff6e15de91487346b0ae4ef",
+      "note": "Compared the stored statements, contribution reasons, and main-result proof ideas with proof.md and the captured passages. The projection and penalty argument retains finite attainment and strict increase; the corollary establishes existence before applying the theorem and distinguishes function uniqueness from coefficient uniqueness. This is a source comparison, not a proof-validity judgment.",
       "result": "matched",
-      "reviewer": "Codex overview author with independent source comparison",
+      "reviewer": "Codex source comparison, teaching example, 2026-09-24",
       "target": {
         "collection": "items",
         "id": "kernel-ridge"
       }
     },
     {
-      "created_at": "2026-09-12T19:23:15+00:00",
-      "id": "comparison-7abf0853c36c4e4ab2f23cc839595e31",
+      "created_at": "2026-09-25T00:45:07+00:00",
+      "id": "comparison-3a1a1d55f1b046318865b50d8b71b1a8",
       "input_snapshot": "ab159906884e992d6ea365b1bc9da7efc5c0deb8142bb8b888c2ba8ee85327cf",
-      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "note": "Compared the stored statements, contribution reasons, and main-result proof ideas with proof.md and the captured passages. The projection and penalty argument retains finite attainment and strict increase; the corollary establishes existence before applying the theorem and distinguishes function uniqueness from coefficient uniqueness. This is a source comparison, not a proof-validity judgment.",
       "result": "matched",
-      "reviewer": "Codex overview author with independent source comparison",
+      "reviewer": "Codex source comparison, teaching example, 2026-09-24",
       "target": {
         "collection": "uses",
         "id": "use-21b7035e6e7ff549"
       }
     },
     {
-      "created_at": "2026-09-12T19:23:15+00:00",
-      "id": "comparison-73ab1d205f9c412aa93b70a39f879ab3",
+      "created_at": "2026-09-25T00:45:07+00:00",
+      "id": "comparison-2b0ccc78f3b2497ea3a0f0dabdab67f0",
       "input_snapshot": "e0908e2e682d0b461b59370ae8753ddd7bcdd27729ac89c74d1669ce4f5b5d7e",
-      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "note": "Compared the stored statements, contribution reasons, and main-result proof ideas with proof.md and the captured passages. The projection and penalty argument retains finite attainment and strict increase; the corollary establishes existence before applying the theorem and distinguishes function uniqueness from coefficient uniqueness. This is a source comparison, not a proof-validity judgment.",
       "result": "matched",
-      "reviewer": "Codex overview author with independent source comparison",
+      "reviewer": "Codex source comparison, teaching example, 2026-09-24",
       "target": {
         "collection": "uses",
         "id": "use-ab9eeb9a881920ea"
       }
     },
     {
-      "created_at": "2026-09-12T19:23:15+00:00",
-      "id": "comparison-92d6603d34764ac0a7f5d7007e422395",
-      "input_snapshot": "5dda57321e452ca24fe7fed5ffe523596a9446ffe1b0a6639780bcef9b034100",
-      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "created_at": "2026-09-25T00:45:07+00:00",
+      "id": "comparison-665ee0bff81148f3a76c2f14d9beda1e",
+      "input_snapshot": "b31162ed29f4363ede049b1e79db4a0cfb811bf3fe00128f2f239337b9c8bbc9",
+      "note": "Compared the stored statements, contribution reasons, and main-result proof ideas with proof.md and the captured passages. The projection and penalty argument retains finite attainment and strict increase; the corollary establishes existence before applying the theorem and distinguishes function uniqueness from coefficient uniqueness. This is a source comparison, not a proof-validity judgment.",
       "result": "matched",
-      "reviewer": "Codex overview author with independent source comparison",
+      "reviewer": "Codex source comparison, teaching example, 2026-09-24",
       "target": {
         "collection": "uses",
         "id": "use-45adfad9a011d01c"
       }
     },
     {
-      "created_at": "2026-09-12T19:23:15+00:00",
-      "id": "comparison-aff390a532c34af897f5e60ca47a0077",
-      "input_snapshot": "b87c8b0e66a3b04b23a88657156f959b3ac9b9fa70a4ae1c50092d346c177ebf",
-      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "created_at": "2026-09-25T00:45:07+00:00",
+      "id": "comparison-0c177feafba64099a4eca0b88a3f9db8",
+      "input_snapshot": "7d3f4f0449afc52cd6021cc59e031862e17d02e477cfb3725857099e306bc354",
+      "note": "Compared the stored statements, contribution reasons, and main-result proof ideas with proof.md and the captured passages. The projection and penalty argument retains finite attainment and strict increase; the corollary establishes existence before applying the theorem and distinguishes function uniqueness from coefficient uniqueness. This is a source comparison, not a proof-validity judgment.",
       "result": "matched",
-      "reviewer": "Codex overview author with independent source comparison",
+      "reviewer": "Codex source comparison, teaching example, 2026-09-24",
       "target": {
         "collection": "uses",
         "id": "use-5aa653ee833ab2bd"
       }
     },
     {
-      "created_at": "2026-09-12T19:23:15+00:00",
-      "id": "comparison-fd2db924da4545b9bc688e79077dd739",
-      "input_snapshot": "2cf1bb0c2b00307aeccf6c0cf8b20f2d527cf12472f036ee32f740dea014e872",
-      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "created_at": "2026-09-25T00:45:07+00:00",
+      "id": "comparison-dbfc493152054e159ff73ac7b62f46f6",
+      "input_snapshot": "71682a5bb832ea6fe01071769f5edf0d095ec181d061aa27d368143f4ac69165",
+      "note": "Compared the stored statements, contribution reasons, and main-result proof ideas with proof.md and the captured passages. The projection and penalty argument retains finite attainment and strict increase; the corollary establishes existence before applying the theorem and distinguishes function uniqueness from coefficient uniqueness. This is a source comparison, not a proof-validity judgment.",
       "result": "matched",
-      "reviewer": "Codex overview author with independent source comparison",
+      "reviewer": "Codex source comparison, teaching example, 2026-09-24",
       "target": {
         "collection": "uses",
         "id": "use-89a23eed071068f3"
       }
     },
     {
-      "created_at": "2026-09-12T19:23:15+00:00",
-      "id": "comparison-a0789b58df394d1d9e7f9e2c494ff88d",
-      "input_snapshot": "bc62ddd3ac9c65aaf166892ea727f26ac5b50bc9de5c27b5eee5f253c04f8246",
-      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "created_at": "2026-09-25T00:45:07+00:00",
+      "id": "comparison-8bc397e2efc74677b8000b1c90eb9ae0",
+      "input_snapshot": "ad0aed5735feb8ea036060bb0e6ea9df5c11ed26513b7a23de2c74a9ab702103",
+      "note": "Compared the stored statements, contribution reasons, and main-result proof ideas with proof.md and the captured passages. The projection and penalty argument retains finite attainment and strict increase; the corollary establishes existence before applying the theorem and distinguishes function uniqueness from coefficient uniqueness. This is a source comparison, not a proof-validity judgment.",
       "result": "matched",
-      "reviewer": "Codex overview author with independent source comparison",
+      "reviewer": "Codex source comparison, teaching example, 2026-09-24",
       "target": {
         "collection": "uses",
         "id": "use-d3d7d40b64749d96"
       }
     },
     {
-      "created_at": "2026-09-12T19:23:15+00:00",
-      "id": "comparison-10b6843c781546bd8b912d57559a05f1",
-      "input_snapshot": "b89e534604353440d417a09bcb72118aaed37d8cc9d36ccb4342a16c2a408116",
-      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "created_at": "2026-09-25T00:45:07+00:00",
+      "id": "comparison-2edf61c6376744dfa48be1e053c267f4",
+      "input_snapshot": "7627e6720032e0d28d9af66e692a363b420c0d7998eef9b34e0c17ecc0d074c6",
+      "note": "Compared the stored statements, contribution reasons, and main-result proof ideas with proof.md and the captured passages. The projection and penalty argument retains finite attainment and strict increase; the corollary establishes existence before applying the theorem and distinguishes function uniqueness from coefficient uniqueness. This is a source comparison, not a proof-validity judgment.",
       "result": "matched",
-      "reviewer": "Codex overview author with independent source comparison",
+      "reviewer": "Codex source comparison, teaching example, 2026-09-24",
       "target": {
         "collection": "uses",
         "id": "use-8793fc790f342ce7"
       }
     },
     {
-      "created_at": "2026-09-12T19:23:15+00:00",
-      "id": "comparison-7434699c603e4293a4c10f6bd6250562",
-      "input_snapshot": "8b3a16aafc3c5e1907478ddee49195e4a636d0820b5969ae8481335f4f141ebf",
-      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "created_at": "2026-09-25T00:45:07+00:00",
+      "id": "comparison-640a17418be74c55ad77f8787119a9a1",
+      "input_snapshot": "409a011130a46fe319424edaabcc4cc7361f623606f12ee88359bf3960a7e14a",
+      "note": "Compared the stored statements, contribution reasons, and main-result proof ideas with proof.md and the captured passages. The projection and penalty argument retains finite attainment and strict increase; the corollary establishes existence before applying the theorem and distinguishes function uniqueness from coefficient uniqueness. This is a source comparison, not a proof-validity judgment.",
       "result": "matched",
-      "reviewer": "Codex overview author with independent source comparison",
+      "reviewer": "Codex source comparison, teaching example, 2026-09-24",
       "target": {
         "collection": "uses",
         "id": "use-9f1b7953085cde36"
       }
     },
     {
-      "created_at": "2026-09-12T19:23:15+00:00",
-      "id": "comparison-36c2afb25238425d9f0ff7c418a7d642",
-      "input_snapshot": "90602197df88855ba5b2c68934cbbdc775f5751499f6f285f82ef1135ba1492f",
-      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "created_at": "2026-09-25T00:45:07+00:00",
+      "id": "comparison-230cbfdfbe3f4785ad24fb686775a6b4",
+      "input_snapshot": "1120cab625b0a7981040920acba82ef9ce36b271110036704ad4e3f8273bcdc2",
+      "note": "Compared the stored statements, contribution reasons, and main-result proof ideas with proof.md and the captured passages. The projection and penalty argument retains finite attainment and strict increase; the corollary establishes existence before applying the theorem and distinguishes function uniqueness from coefficient uniqueness. This is a source comparison, not a proof-validity judgment.",
       "result": "matched",
-      "reviewer": "Codex overview author with independent source comparison",
+      "reviewer": "Codex source comparison, teaching example, 2026-09-24",
       "target": {
         "collection": "uses",
         "id": "use-af8209f3d2141bee"
       }
     },
     {
-      "created_at": "2026-09-12T19:23:15+00:00",
-      "id": "comparison-05a88dd6d7204259b8b4f459eee1bc22",
-      "input_snapshot": "b4eb0c43c9dbcd1ae8d1eec406892809e7ec26102171a0adf89d7b96aec7a783",
-      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "created_at": "2026-09-25T00:45:07+00:00",
+      "id": "comparison-3813a5319bf449c0abf2c002afe7d360",
+      "input_snapshot": "fa42273a1ae38a9d63432349573dd570191bf23668c5ef7f8880667e5b17bd71",
+      "note": "Compared the stored statements, contribution reasons, and main-result proof ideas with proof.md and the captured passages. The projection and penalty argument retains finite attainment and strict increase; the corollary establishes existence before applying the theorem and distinguishes function uniqueness from coefficient uniqueness. This is a source comparison, not a proof-validity judgment.",
       "result": "matched",
-      "reviewer": "Codex overview author with independent source comparison",
+      "reviewer": "Codex source comparison, teaching example, 2026-09-24",
       "target": {
         "collection": "uses",
         "id": "use-6c53218bf26c76a6"
       }
     },
     {
-      "created_at": "2026-09-12T19:23:15+00:00",
-      "id": "comparison-6393eda931194c118ea0779304aceb65",
-      "input_snapshot": "e7362e9d530474871c074e2e207285bc0601ab73b23becf91658f81ba3661380",
-      "note": "Compared all six numbered declarations, six synopses, eleven uses, and twenty-one exact line anchors against proof.md. Checked finite attainment before applying Theorem 5, the nondecreasing-penalty remark, sum-loss normalization, unique minimizing function, and potentially nonunique coefficients for singular K. This records source fidelity, not an automated proof verdict.",
+      "created_at": "2026-09-25T00:45:07+00:00",
+      "id": "comparison-87af376e4c274e9fad454bb56d295700",
+      "input_snapshot": "122b3bba9b8a0a7f0386e2e44407b7ff0d3fe473b25f8c1014215708d04a71d3",
+      "note": "Compared the stored statements, contribution reasons, and main-result proof ideas with proof.md and the captured passages. The projection and penalty argument retains finite attainment and strict increase; the corollary establishes existence before applying the theorem and distinguishes function uniqueness from coefficient uniqueness. This is a source comparison, not a proof-validity judgment.",
       "result": "matched",
-      "reviewer": "Codex overview author with independent source comparison",
+      "reviewer": "Codex source comparison, teaching example, 2026-09-24",
       "target": {
         "collection": "uses",
         "id": "use-d6de0e33ab1a62e2"
       }
     }
   ],
-  "snapshot_id": "57fd2ff53d434cdf128c5656b440a4baa258b246aaf5e0828eb1547c7491adf0"
+  "snapshot_id": "d53cbd8008b68907eb0c742c2eeba56955946ba4d545cbcf87461727e760a7b5"
 }

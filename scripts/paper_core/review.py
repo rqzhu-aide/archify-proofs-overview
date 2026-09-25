@@ -17,9 +17,9 @@ from .acceptance import COMMAND_MODES, accept, apply_batch
 from .canonical import digest, load_json_bytes, sha256_bytes
 from .contract import (BATCH, CHECK_TARGETS, EDIT_CREATE, INTERMEDIATE_KINDS, MAPPING_REQUEST, SUBMISSION, WORKER_RESPONSE, Arr, Const, RequestVersion,
                        Hash, Obj, Str, validate_body, validate_shape)
-from .errors import InvalidRequest
+from .errors import ConflictError, InvalidRequest
 from .ids import new_id
-from .packets import load_packet
+from .packets import independent_context_changes, load_packet
 from .storage import Database
 from .semantics import application
 
@@ -311,6 +311,11 @@ def map_response(db: Database, *, mapping: dict) -> dict:
         raise InvalidRequest(f"response {response.id} does not follow the worker response shape; the worker must "
                              "resubmit", code="RESPONSE_UNREADABLE")
     original_packet = load_packet(db, response.body["packet_id"])
+    from .validation import State
+    context_changes = independent_context_changes(State(db, []), original_packet["_manifest"])
+    if context_changes["records"] or context_changes["relations"]:
+        raise ConflictError("original independent source or applicable setup changed; obtain a renewed review",
+                            records=[context_changes])
     original_records = {(r["ref"]["collection"], r["ref"]["id"]): r["body"]
                         for r in original_packet["records"]}
     original_scope = (original_packet.get("declared_scope") or {}).get("targets") or original_packet["targets"]

@@ -36,6 +36,10 @@ class SupportClosure:
         return self._scopes[scope_id]
 
     def admissible(self, source_scope, active_scope, discharges=()):
+        return self.admissibility_issue(source_scope, active_scope, discharges) is None
+
+    def admissibility_issue(self, source_scope, active_scope, discharges=()):
+        """The first rejected scope, using exactly the support reducer's rule."""
         active = {sid for sid, _ in self.ancestry(active_scope)}
         discharged = set(discharges)
         for sid, scope in self.ancestry(source_scope):
@@ -43,8 +47,8 @@ class SupportClosure:
                 continue
             if scope is None or any(scope.body.get(field) for field in
                                     ("argument_id", "assumptions", "binders", "conditions")):
-                return False
-        return True
+                return sid
+        return None
 
     def statement_key(self, ref, scope_id):
         return ("statement", ref["collection"], ref["id"], scope_id)
@@ -202,3 +206,68 @@ class SupportClosure:
     def value(self, key):
         self.solve([key])
         return self.values[key]
+
+    def explain(self, key, *, limit=8):
+        """Trace one blocking requirement through the already derived support rules.
+
+        This is a bounded explanation, never a second support evaluator. Alternative
+        routes and the original availability remain authoritative in ``values``.
+        """
+        availability = self.value(key)
+        if availability == "available":
+            return None
+        path, seen, current = [], set(), key
+        for _ in range(limit):
+            if current in seen:
+                return {"availability": availability, "code": "unfounded_cycle", "path": path,
+                        "message": "Recorded dependencies form a cycle without an established starting premise."}
+            seen.add(current)
+            if current[0] == "statement":
+                ref = {"collection": current[1], "id": current[2]}
+            else:
+                ref = {"collection": {"use": "uses", "group": "groups", "argument": "arguments"}[current[0]],
+                       "id": current[1]}
+            path.append(ref)
+            record = self.snap.get(ref)
+            detail = {"availability": availability, "target": ref, "path": path}
+            if record is None:
+                return dict(detail, code="missing_record", message="A required source or proof record is unavailable.")
+            if current[0] == "statement":
+                source_scope, active_scope = self.snap.exact_scope(ref), current[3]
+                blocked = self.admissibility_issue(source_scope, active_scope)
+                if blocked is not None:
+                    return dict(detail, code="scope_unavailable", source_scope_id=source_scope,
+                                active_scope_id=active_scope, blocking_scope_id=blocked,
+                                message="The supplier depends on a private scope that is not active or discharged at this use.")
+                if self.d.statement_refuted(ref):
+                    return dict(detail, code="statement_refuted", message="An open refutation applies to this exact supplier statement.")
+                if not self.d.exact_target_current(ref):
+                    return dict(detail, code="exact_target_pending", message="The supplier's exact target and source comparison are not current.")
+            elif current[0] == "use":
+                app = self.snap.application(record)
+                group = self.snap.live("groups", app.get("group_id"))
+                if app.get("state") != "registered" or group is None:
+                    return dict(detail, code="application_unregistered", message="The exact application has not been registered in an inference group.")
+                active_scope, group_scope = app.get("scope_id") or group.body["scope_id"], group.body["scope_id"]
+                if active_scope != group_scope and not (group.body["kind"] == "cases" and
+                                                       active_scope in group.body["case_scope_ids"]):
+                    return dict(detail, code="application_scope_mismatch", active_scope_id=active_scope,
+                                group_scope_id=group_scope,
+                                message="The application's active scope does not match its inference group or a declared case.")
+            rules = self.rules[current]
+            # Prefer a hard blocking dependency when it explains unavailable support.
+            dependencies = [dep for local, deps in rules for dep in deps
+                            if self.values[dep] == self.values[current]]
+            if dependencies:
+                current = dependencies[0]
+                continue
+            if any(local != "available" for local, _ in rules):
+                return dict(detail, code="local_examination_unresolved",
+                            message="A required local examination is missing, stale, inconclusive, or records a defect; inspect its exact outcome.")
+            dependencies = [dep for _, deps in rules for dep in deps if self.values[dep] != "available"]
+            if dependencies:
+                current = dependencies[0]
+                continue
+            return dict(detail, code="establishment_unresolved", message="No current recorded route establishes this statement in the active scope.")
+        return {"availability": availability, "code": "explanation_truncated", "path": path,
+                "message": "Further blocking dependencies remain; inspect the last displayed requirement."}

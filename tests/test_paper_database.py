@@ -82,10 +82,47 @@ class PaperDatabaseTests(unittest.TestCase):
         self.assertEqual(original, self.dataset.read_bytes())
         self.assertEqual(data["observations"], [])
 
+    def test_proof_idea_full_record_edit_removal_and_historical_comparisons(self):
+        self.compare_everything()
+        before = database.export_snapshot(self.db)
+        item = deepcopy(before["items"][1])
+        item["proof_idea"] = "Expand the variance into covariances. Independence removes the cross terms."
+        database.apply_edits(self.db, {"expected_snapshot": before["snapshot_id"], "edits": [
+            {"collection": "items", "op": "upsert", "id": "variance", "record": item}]})
+        with_idea = database.export_snapshot(self.db)
+        self.assertEqual(database.get_packet(self.db, "variance")["item"]["proof_idea"], item["proof_idea"])
+        self.assertEqual(database.get_packet(self.db, "variance")["target_fidelity"], "stale")
+        self.assertEqual(database.get_packet(self.db, "sampling")["target_fidelity"], "matched")
+        self.assertEqual(with_idea["observations"], before["observations"])
+        self.assertEqual(database.export_snapshot(self.db, before["snapshot_id"]), before)
+        changes = database.changes_database(self.db, before["snapshot_id"])
+        self.assertIn("proof_idea", next(row for row in changes["changed_targets"] if row["id"] == "variance")["fields"])
+        self.compare_everything()
+        del item["proof_idea"]
+        item["caption"] = "Clarified variance of a sum"
+        database.apply_edits(self.db, {"expected_snapshot": with_idea["snapshot_id"], "edits": [
+            {"collection": "items", "op": "upsert", "id": "variance", "record": item}]})
+        after = database.export_snapshot(self.db)
+        self.assertNotIn("proof_idea", after["items"][1])
+        self.assertEqual(len(after["observations"]), 6)
+        historical = database.get_packet(self.db, "variance", with_idea["snapshot_id"])
+        self.assertEqual(historical["item"]["proof_idea"], with_idea["items"][1]["proof_idea"])
+        self.assertEqual(historical["target_fidelity"], "matched")
+
     def test_existing_database_is_not_reinitialized(self):
         with self.assertRaisesRegex(database.DatabaseError, "already exists"):
             database._native_init_database(self.db, self.dataset)
         self.assertEqual(database.export_snapshot(self.db)["snapshot_id"], self.initial["snapshot_id"])
+
+    def test_connection_retrieval_names_its_target_and_supported_command(self):
+        data = database.export_snapshot(self.db)
+        before = self.counts()
+        with self.assertRaises(database.DatabaseError) as caught:
+            database.get_packet(self.db, data['uses'][0]['id'], data['snapshot_id'])
+        self.assertIn('connection, not an item', str(caught.exception))
+        self.assertIn('paper_database.py get <database> variance --snapshot ' + data['snapshot_id'],
+                      str(caught.exception))
+        self.assertEqual(self.counts(), before)
 
     def test_export_is_portable_without_live_source(self):
         self.source.unlink()

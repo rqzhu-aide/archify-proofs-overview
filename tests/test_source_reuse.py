@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import base64
 from copy import deepcopy
+import json
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -66,6 +68,89 @@ class SourceReuseTests(unittest.TestCase):
                          ['First physical page', 'Second physical page'] * 2)
         self.assertTrue(all(row['verification']['status'] == 'checked' for row in data['anchors']))
         self.assertEqual(self.seed, original)
+
+    def test_control_glyphs_are_replaced_only_in_pdf_excerpts_with_visible_limits(self):
+        self.pages[0].extract_text.return_value = 'A\x00 + B\x10\n\r\tEnd'
+        raw = self.source.read_bytes()
+        data = self.normalize()
+        self.assert_single_read()
+        damaged = data['anchors'][0]
+        self.assertEqual(damaged['excerpt'], 'A\ufffd + B\ufffd\n\r\tEnd')
+        self.assertEqual(damaged['verification']['status'], 'checked')
+        self.assertIn('paper.pdf, physical PDF page 1', damaged['verification']['note'])
+        self.assertIn('2 unsupported control character(s)', damaged['verification']['note'])
+        self.assertNotIn('note', data['anchors'][1]['verification'])
+        self.assertEqual(base64.b64decode(data['source_revision']['files'][0]['content_base64']), raw)
+        self.assertEqual(self.source.read_bytes(), raw)
+        self.assertEqual(data['observations'], [])
+        self.assertEqual(self.validate(data), data)
+        with patch.dict(sys.modules, {'pypdf': self.pdf_module}):
+            report = records.record_report(data, self.base)
+        warnings = [w for w in report['warnings'] if 'replacement characters' in w]
+        self.assertEqual(len(warnings), 1)
+        self.assertIn('1 captured page(s)', warnings[0])  # Two anchors reuse this page.
+
+    def test_pdf_cleanup_does_not_rewrite_retained_excerpts_or_authored_controls(self):
+        data = self.normalize()
+        self.pages[0].extract_text.return_value = 'Later extraction \x00'
+        self.assertEqual(self.validate(data), data)
+        self.seed['items'][0]['statement']['text'] = 'Authored \x00 corruption'
+        with self.assertRaisesRegex(records.RecordError, 'unexpected control character'):
+            self.normalize()
+        self.seed['items'][0]['statement']['text'] = 'A valid statement.'
+        self.source = self.base / 'paper.txt'
+        self.source.write_bytes(b'Captured text \x00 corruption\n')
+        self.seed['source']['file'] = 'paper.txt'
+        for item in self.seed['items']:
+            item['source'] = {'start_line': 1, 'end_line': 1}
+        with self.assertRaisesRegex(records.RecordError, 'unexpected control character'):
+            self.normalize()
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is needed for the public render path')
+    def test_pdf_cleanup_survives_common_database_edit_comparison_refresh_and_render(self):
+        import paper_database as database
+
+        self.pages[0].extract_text.return_value = 'A\x00 + B\x10'
+        self.seed['main_items'] = ['item-1']
+        self.seed['uses'] = [{'id': 'u21', 'from': 'item-2', 'to': 'item-1',
+                             'reason': 'The second result supplies the bound.', 'source': {'page': 2}}]
+        seed_path = self.base / 'seed.json'
+        seed_path.write_text(json.dumps(self.seed), encoding='utf-8')
+        db_path = self.base / 'paper.sqlite'
+        raw = self.source.read_bytes()
+        with patch.dict(sys.modules, {'pypdf': self.pdf_module}):
+            initial = database.init_database(db_path, seed_path, focused=True, source_root=self.base)
+            self.assertEqual(initial['backend'], 'paper_core')
+            packet = database.get_packet(db_path, 'item-1')
+            self.assertEqual(packet['target_fidelity'], 'unreviewed')
+            self.assertTrue(any('Missing glyph meanings' in a['verification'].get('note', '')
+                                for a in packet['anchors']))
+            from paper_core.storage import Database
+            with Database(db_path) as common:
+                damaged_anchor = next(a for a in common.heads('anchors') if '\ufffd' in a.body['excerpt'])
+                self.assertIn('Missing glyph meanings', damaged_anchor.body['limitation'])
+            with self.assertRaisesRegex(database.DatabaseError, 'get <database> item-1'):
+                database.get_packet(db_path, 'u21')
+            item = deepcopy(packet['item'])
+            item['caption'] = 'A clearer result caption'
+            changed = database.apply_edits(db_path, {'expected_snapshot': packet['expected_snapshot'],
+                'edits': [{'collection': 'items', 'op': 'upsert', 'id': 'item-1', 'record': item}]})
+            database.compare_records(db_path, {'expected_snapshot': changed['snapshot_id'],
+                'targets': [{'collection': 'items', 'id': 'item-1'}], 'reviewer': 'test',
+                'result': 'needs_attention', 'note': 'The damaged glyphs need inspection in the original PDF.'})
+            self.assertEqual(database.get_packet(db_path, 'item-1')['target_fidelity'], 'needs_attention')
+            data = database.export_snapshot(db_path)
+            self.assertEqual(base64.b64decode(data['source_revision']['files'][0]['content_base64']), raw)
+            self.source.write_bytes(raw + b' revised')
+            database.refresh_database(db_path, data['snapshot_id'])
+            self.assertEqual(database.get_packet(db_path, 'item-1')['target_fidelity'], 'stale')
+            current = database.export_snapshot(db_path)
+            self.assertTrue(any('\ufffd' in a['excerpt'] for a in current['anchors']))
+            report = database.render_database(db_path, self.base / 'overview.html')
+            self.assertTrue(any('replacement characters' in w for w in report['warnings']))
+            html = (self.base / 'overview.html').read_text(encoding='utf-8')
+            self.assertIn('Missing glyph meanings were not recovered', html)
+            self.assertEqual(database.export_snapshot(db_path), current)
 
     def test_validation_reuses_sources_without_mutating_or_persisting_state(self):
         data = self.normalize()

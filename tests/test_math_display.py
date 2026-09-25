@@ -135,6 +135,39 @@ class ConverterAdaptationTests(unittest.TestCase):
                 self.assertEqual(diagnostics[0]["excerpt"], decoded)
                 self.assertIn("likely doubled LaTeX command slash", diagnostics[0]["reason"])
 
+    def test_decoded_norm_commands_do_not_silently_render_as_letters(self):
+        for command in ("rVert", "rvert"):
+            for opening, closing in (("$", "$"), ("$$", "$$"), (r"\(", r"\)"), (r"\[", r"\]")):
+                with self.subTest(command=command, opening=opening):
+                    # This JSON is valid, but its single backslash consumes r.
+                    tex = json.loads('"x\\' + command + '_2"')
+                    literal = opening + tex + closing
+                    diagnostics = []
+                    markup = math_display.render_text(literal, diagnostics)
+                    self.assertIn('class="math-fallback"', markup)
+                    self.assertNotIn("<math", markup)
+                    self.assertIn(literal, markup)
+                    self.assertEqual(len(diagnostics), 1)
+                    self.assertEqual(diagnostics[0]["excerpt"], literal)
+                    self.assertIn("likely decoded LaTeX escape", diagnostics[0]["reason"])
+                    self.assertIn("\\" + command, diagnostics[0]["reason"])
+
+    def test_legitimate_math_whitespace_and_commands_are_not_escape_warnings(self):
+        for tex in (r"\lVert x\rVert_2", r"\lvert x\rvert",
+                    "x +\n y", "x +\r y", "x +\t y", "x +\r\nVert",
+                    "x +\rVertex", "x +\rvertical", "x +\n" + "eq", "x +\t" + "ext{y}"):
+            with self.subTest(tex=tex):
+                diagnostics = []
+                markup = math_display.render_text("$" + tex + "$", diagnostics)
+                self.assertEqual(diagnostics, [])
+                self.assertIn("<math", markup)
+
+    def test_control_whitespace_in_prose_does_not_become_math_diagnostics(self):
+        literal = "A carriage-return line break:\rVert and a tab:\t" + "ext."
+        diagnostics = []
+        self.assertEqual(math_display.render_text(literal, diagnostics), literal)
+        self.assertEqual(diagnostics, [])
+
     def test_paired_doubled_delimiters_are_located_without_losing_math(self):
         for literal in (r"\\(x_n\\to 0\\)", r"\\[\\frac{1}{n}\\]"):
             with self.subTest(literal=literal):
@@ -365,6 +398,27 @@ class PrepareDiagnosticsTests(unittest.TestCase):
                             for row in failures))
         self.assertEqual(prepared["build_context"]["input_snapshot"], original["snapshot_id"])
 
+    def test_decoded_escape_fallback_preserves_records_and_comparisons(self):
+        literal = r"The norm $\lVert x" + "\rVert_2$ is finite."
+        self.seed["items"][0]["statement"]["text"] = literal
+        data = records.normalize(deepcopy(self.seed), self.base)
+        data["observations"].extend(records.make_observations(
+            data, [{"collection": "items", "id": "norm-bound"}],
+            reviewer="Synthetic reviewer", note="Compared the synthetic source."))
+        data = records.validate_records(data)
+        original = deepcopy(data)
+        prepared = records.prepare_records(data, self.base)
+        lemma = next(row for row in prepared["items"] if row["id"] == "norm-bound")
+        failures = [row for row in prepared["math_diagnostics"] if row["id"] == "norm-bound"]
+        self.assertEqual(data, original)
+        self.assertEqual(lemma["statement"], literal)
+        self.assertEqual(lemma["fidelity"], "matched")
+        self.assertIn('class="math-fallback"', lemma["statement_html"])
+        self.assertEqual(len(failures), 1)
+        self.assertEqual((failures[0]["collection"], failures[0]["field"]), ("items", "statement"))
+        self.assertIn("likely decoded LaTeX escape", failures[0]["reason"])
+        self.assertEqual(prepared["build_context"]["input_snapshot"], original["snapshot_id"])
+
 
 @unittest.skipUnless(NODE, "node is needed for the renderer")
 class RendererDiagnosticsTests(unittest.TestCase):
@@ -422,6 +476,25 @@ class RendererDiagnosticsTests(unittest.TestCase):
         self.assertEqual([(d["id"], d["field"]) for d in receipt["math_diagnostics"]],
                          [("key-bound", "statement")])
         self.assertIn("key-bound (statement)", receipt["warnings"][-1])
+
+    def test_render_receipt_locates_decoded_escape_fallback_without_extra_scan(self):
+        fixture = SKILL / "tests" / "fixtures" / "schema3-intermediates.json"
+        data = records.validate_records(json.loads(fixture.read_text(encoding="utf-8")))
+        row = next(item for item in data["items"] if item["id"] == "key-bound")
+        literal = r"The bound is $\lVert x" + "\rVert_2$."
+        row["statement"]["text"] = literal
+        data.pop("snapshot_id", None)
+        data = records.validate_records(data)
+        output = self.base / "decoded-escape.html"
+        receipt = overview.render_dataset(data, fixture.parent, output)
+        self.assertEqual(overview.compact_render_receipt(receipt)["math_diagnostic_count"], 1)
+        diagnostic, = receipt["math_diagnostics"]
+        self.assertEqual((diagnostic["collection"], diagnostic["id"], diagnostic["field"]),
+                         ("items", "key-bound", "statement"))
+        self.assertIn("likely decoded LaTeX escape", diagnostic["reason"])
+        self.assertEqual(diagnostic["excerpt"], literal[len("The bound is "):-1])
+        self.assertIn("key-bound (statement)", receipt["warnings"][-1])
+        self.assertIn("Math display notes", output.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

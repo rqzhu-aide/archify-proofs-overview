@@ -134,6 +134,8 @@ def project(db, revision=None):
     for identifier in body["item_ids"]:
         item = get("items", identifier).body
         row = {"id": identifier, **{k: copy.deepcopy(item[k]) for k in ("kind", "label", "caption", "statement", "passages")}}
+        if "proof_idea" in item:
+            row["proof_idea"] = item["proof_idea"]
         for old, new in (("owner", "owner_id"), ("issue", "uncertainty"), ("aliases", "aliases")):
             if old in optional.get("items", {}).get(identifier, []) or item.get(new):
                 row[old] = copy.deepcopy(item.get(new))
@@ -188,9 +190,11 @@ def update(db, before, after, *, profile, source_root=None):
     edits, blobs = [], []
     paper = paper_record(db)
 
-    def upsert(collection, identifier, fields):
+    def upsert(collection, identifier, fields, *, remove=()):
         head = db.head(collection, identifier)
         body = {**(head.body if head and not head.retired else {}), **fields}
+        for field in remove:
+            body.pop(field, None)
         if head is not None and head.retired:
             raise InvalidRequest(f"Cannot reuse retired {collection}:{identifier}")
         if head is None or body != head.body:
@@ -224,7 +228,8 @@ def update(db, before, after, *, profile, source_root=None):
             "locator": shared_locator,
             "excerpt": anchor["excerpt"], "excerpt_sha256": anchor["excerpt_hash"],
             "method": "exact_lines" if "start_line" in loc else "label_match" if "label" in loc else "reviewed_page",
-            "limitation": None if anchor["verification"]["status"] == "checked" else anchor["verification"].get("note", "Unverified overview locator")})
+            "limitation": anchor["verification"].get("note") or (
+                None if anchor["verification"]["status"] == "checked" else "Unverified overview locator")})
     for item in after["items"]:
         existing = db.head("items", item["id"])
         defaults = {} if existing else {"origin": "source", "owner_id": item.get("owner"), "scope_id": None}
@@ -233,7 +238,11 @@ def update(db, before, after, *, profile, source_root=None):
         # An explicit retained-rich owner edit is shared navigation, not scope.
         if "owner" in item:
             fields["owner_id"] = item["owner"]
-        upsert("items", item["id"], fields)
+        if "proof_idea" in item:
+            fields["proof_idea"] = item["proof_idea"]
+        # Whole-record overview upserts may remove this optional shared field;
+        # proofcheck-only fields still come from the existing common body.
+        upsert("items", item["id"], fields, remove=() if "proof_idea" in item else ("proof_idea",))
     for use in after["uses"]:
         upsert("uses", use["id"], {"from": {"collection": "items", "id": use["from"]}, "to": {"collection": "items", "id": use["to"]},
             "type": use["type"], "reason": use["reason"], "regime": use.get("regime"), "uncertainty": use.get("issue"),

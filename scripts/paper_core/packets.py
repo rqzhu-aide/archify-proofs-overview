@@ -6,15 +6,16 @@ edit. Independent packets contain source material only.
 """
 from __future__ import annotations
 
+import copy
 import json
 
-from . import PACKET_VERSION
-from .bindings import task_binding
+from . import PACKET_VERSION, WORK_CONTEXT_EXTENSION_FEATURE
+from .bindings import binding_changes, task_binding, task_binding_changes
 from .canonical import canonical_bytes, digest
 from .contract import CONTEXT_EXTENSION, MAJOR_KINDS, validate_body, validate_shape
 from .errors import ConflictError, InvalidRequest, SourceUnavailable
 from .ids import new_id
-from .refs import RELATIONS, facet_digests, membership_digest, referrers, relation_members
+from .refs import RELATIONS, facet_digests, membership_digest, referrers, relation_members, setup_digest
 from .storage import Database
 from .semantics import application
 
@@ -40,7 +41,6 @@ WRITE_COLLECTIONS = {
 }
 ROUTE_REVIEW_COLLECTIONS = ("items", "parts", "scopes", "arguments", "groups", "uses",
                             "target_specs", "application_details", "anchors", "sources", "source_issues")
-INDEPENDENT_KINDS = ("assumption", "definition", "external_result")
 # Collections and fields an independent packet must never carry (handoff 6).
 BLINDED_COLLECTIONS = tuple(c for c in ("papers", "scopes", "arguments", "groups", "uses", "coverage", "checks",
                                         "findings", "repairs", "observations", "reconciliations", "responses",
@@ -72,6 +72,9 @@ class _Closure:
         self.omitted = []
         self._heads = {}
         self._done = set()
+        # Private selection inputs. These are never serialized to a blind worker.
+        self.neutral_inputs = {}
+        self.neutral_relations = {}
 
     def once(self, *key) -> bool:
         """True the first time a closure step runs for a key; later calls return False."""
@@ -351,6 +354,104 @@ class _Closure:
                 self.scope_chain(record.body["scope_id"])
 
 
+def _neutral_bind(closure, record, facet):
+    """Retain private setup freshness without disclosing the coordinator's graph."""
+    facets = facet_digests(record.collection, record.body)
+    closure.neutral_inputs[(record.collection, record.id, facet)] = {
+        "ref": record.pinned, "facet": facet, "digest": facets.get(facet, facets["full"])}
+    projection = setup_digest(record.collection, record.body)
+    if projection is not None:
+        closure.neutral_inputs[(record.collection, record.id, facet)]["setup_digest"] = projection
+
+
+def _neutral_members(closure, relation, ref):
+    members = closure.members(relation, ref["collection"], ref["id"])
+    closure.neutral_relations[(relation, ref["collection"], ref["id"])] = {
+        "relation": relation, "key": dict(ref), "digest": membership_digest(members),
+        "members": sorted([[c, i] for c, i, _ in members])}
+    return members
+
+
+def _neutral_scope(closure, scope_id):
+    while scope_id and closure.once("neutral_scope", scope_id):
+        scope = closure.record("scopes", scope_id)
+        if scope is None or scope.retired:
+            break
+        _neutral_bind(closure, scope, "scope")
+        closure.anchors(scope.body["evidence_refs"])
+        for assumption in scope.body["assumptions"]:
+            _neutral_statement(closure, assumption)
+        if (scope.body["conditions"] or scope.body["binders"]) and not scope.body["evidence_refs"]:
+            warning = {"reason": "Applicable setup has no captured source passage; request its exact source if needed."}
+            if warning not in closure.omitted:
+                closure.omitted.append(warning)
+        scope_id = scope.body["parent_id"]
+
+
+def _neutral_statement(closure, ref, *, borrowed=False):
+    """Select source statement/setup; ordinary suppliers do not bring their proofs."""
+    record = closure.record(ref["collection"], ref["id"])
+    if record is None or record.retired or record.collection not in ("items", "parts") \
+            or record.body["origin"] != "source" \
+            or (record.collection == "items" and record.body["kind"] not in MAJOR_KINDS):
+        return None
+    closure.add(record)
+    if closure.once("neutral_statement", record.collection, record.id):
+        _neutral_bind(closure, record, "statement")
+        closure.anchors(p["anchor_id"] for p in record.body["passages"]
+                        if p["role"] in ("statement", "definition"))
+        _neutral_scope(closure, record.body.get("scope_id"))
+        for _, spec_id, _ in _neutral_members(closure, "target_specs_for_target", record.ref):
+            spec = closure.record("target_specs", spec_id)
+            if spec is not None and not spec.retired:
+                _neutral_bind(closure, spec, "statement")
+                closure.anchors(spec.body["evidence_refs"])
+                _neutral_scope(closure, spec.body["scope_id"])
+        if record.collection == "parts":
+            _neutral_statement(closure, {"collection": "items", "id": record.body["item_id"]})
+    if borrowed and closure.once("neutral_borrowed", record.collection, record.id):
+        _neutral_bind(closure, record, "proof")
+        anchors = [p["anchor_id"] for p in record.body["passages"] if p["role"] in ("proof", "evidence")]
+        closure.anchors(anchors)
+        for boundary in closure.pull(("proof_boundaries",), ("/target", [record.key], False)):
+            closure.anchors(pin["id"] for pin in boundary.body["anchor_refs"])
+        if not anchors and record.collection == "parts":
+            _neutral_statement(closure, {"collection": "items", "id": record.body["item_id"]}, borrowed=True)
+    return record
+
+
+def _neutral_dependencies(closure, target):
+    """Use the graph only to locate source context, never to supply a proof outline."""
+    if not closure.once("neutral_dependencies", target["collection"], target["id"]):
+        return
+    uses = {identity for _, identity, _ in _neutral_members(closure, "incoming_uses", target)}
+    for _, argument_id, _ in _neutral_members(closure, "arguments_for_target", target):
+        argument = closure.record("arguments", argument_id)
+        if argument is None or argument.retired:
+            continue
+        _neutral_bind(closure, argument, "proof")
+        _neutral_scope(closure, argument.body["scope_id"])
+        for _, group_id, _ in _neutral_members(closure, "groups_in_argument", argument.ref):
+            group = closure.record("groups", group_id)
+            if group is None or group.retired:
+                continue
+            _neutral_bind(closure, group, "inference")
+            _neutral_scope(closure, group.body["scope_id"])
+            for scope_id in group.body["case_scope_ids"] + group.body["discharges"]:
+                _neutral_scope(closure, scope_id)
+            uses.update(identity for _, identity, _ in _neutral_members(closure, "uses_in_group", group.ref))
+    for use_id in sorted(uses):
+        use = closure.record("uses", use_id)
+        if use is None or use.retired:
+            continue
+        _neutral_bind(closure, use, "application")
+        _neutral_statement(closure, use.body["from"], borrowed=use.body["type"] == "proof_argument")
+        detail = closure.record("application_details", use_id)
+        if detail is not None and not detail.retired:
+            _neutral_bind(closure, detail, "application")
+            _neutral_scope(closure, detail.body.get("scope_id"))
+
+
 def _independent(db: Database, targets: list, extra_anchor_ids=(), extra_paths=(), *, closure=None, audit_id=None):
     """Source-only packet material for an independent checker (handoff 6)."""
     closure = closure or _Closure(db, "independent")
@@ -364,7 +465,11 @@ def _independent(db: Database, targets: list, extra_anchor_ids=(), extra_paths=(
         if record.body["origin"] != "source":
             raise InvalidRequest(f"independent review requires a source-origin target; {target['collection']}:"
                                  f"{target['id']} has origin {record.body['origin']}")
-        closure.add(record)
+        if record.collection == "items" and record.body["kind"] not in MAJOR_KINDS:
+            raise InvalidRequest("independent packet failed blinding check",
+                                 records=[f"items:{record.id} is an intermediate result"])
+        _neutral_statement(closure, target)
+        _neutral_dependencies(closure, target)
         for passage in record.body["passages"]:
             closure.add_id("anchors", passage["anchor_id"])
         # Supply neutral complete source segments without the coordinator's
@@ -383,6 +488,8 @@ def _independent(db: Database, targets: list, extra_anchor_ids=(), extra_paths=(
                     closure.omitted.append({"collection": "parts", "id": part.id, "reason": "not source-origin"})
                     continue
                 closure.add(part)
+                _neutral_statement(closure, part.ref)
+                _neutral_dependencies(closure, part.ref)
                 for passage in part.body["passages"]:
                     closure.add_id("anchors", passage["anchor_id"])
         elif item is not None:
@@ -401,11 +508,6 @@ def _independent(db: Database, targets: list, extra_anchor_ids=(), extra_paths=(
             audit = sorted(candidates, key=lambda a: a.id)[0]
     if audit is None:
         raise InvalidRequest("independent packets need a registered audit covering the target")
-    for item in closure.heads("items"):
-        if item.body["kind"] in INDEPENDENT_KINDS and item.body["origin"] == "source":
-            closure.add(item)
-            for passage in item.body["passages"]:
-                closure.add_id("anchors", passage["anchor_id"])
     for anchor_id in extra_anchor_ids:
         if closure.add_id("anchors", anchor_id) is None:
             raise InvalidRequest(f"requested anchor {anchor_id} is not a live record")
@@ -426,11 +528,19 @@ def _independent(db: Database, targets: list, extra_anchor_ids=(), extra_paths=(
 BLIND_SAFE_GUARDS = ("parts_of_item",)
 
 
+def _packet_record(record, mode):
+    body = record.body
+    if mode == "independent" and record.collection == "items" and "proof_idea" in body:
+        # This authored explanation is not captured source for a blind review.
+        body = {key: value for key, value in body.items() if key != "proof_idea"}
+    return {"ref": record.pinned, "body": body}
+
+
 def blinding_violations(packet: dict) -> list:
     """Return every way a packet payload exposes primary work to an independent worker."""
     problems = []
     for field in ("work", "instructions", "assigned_task_ids", "conditional_on_task_ids", "tasks", "units",
-                  "_manifest", "manifest", "historical_records", "supplied_derivations"):
+                  "_manifest", "manifest", "historical_records", "supplied_derivations", "source_comparisons"):
         if field in packet:
             problems.append(f"{field} exposes coordinator work")
     for entry in packet.get("records", []):
@@ -441,6 +551,8 @@ def blinding_violations(packet: dict) -> list:
             problems.append(f"{collection}:{entry['ref']['id']} has origin {body.get('origin')}")
         if collection == "items" and body.get("kind") not in MAJOR_KINDS:
             problems.append(f"items:{entry['ref']['id']} is an intermediate result")
+        if collection == "items" and "proof_idea" in body:
+            problems.append(f"items:{entry['ref']['id']} exposes an authored proof idea")
         if "report_path" in body:
             problems.append(f"{collection}:{entry['ref']['id']} carries a report path")
     if packet.get("write_scope"):
@@ -524,7 +636,7 @@ def _build(db: Database, *, targets: list, mode: str, extra_anchor_ids=(), extra
                 "mode": mode, "targets": list(targets), "read_set": read_set, "membership_guards": guards,
                 "source_context_digest": source_context_digest(db), "write_scope": write_scope}
     packet = dict(manifest)
-    packet["records"] = [{"ref": r.pinned, "body": r.body} for r in records]
+    packet["records"] = [_packet_record(r, mode) for r in records]
     packet["declared_scope"] = declared_scope
     packet["omitted"] = closure.omitted
     packet["extends"] = extends
@@ -571,8 +683,9 @@ def get_packet(db: Database, *, targets=(), mode: str = "author", extend=None, r
         raise InvalidRequest("invalid context extension request", records=errors)
     prior_manifest = prior["manifest"]
     if "work" in prior_manifest:
-        raise InvalidRequest("get --extend cannot extend a work assignment; refine the graph/source context "
-                             "and use work prepare for a replacement packet", code="WORK_PACKET_EXTENSION")
+        raise InvalidRequest("get --extend cannot extend a work assignment; use work extend --packet "
+                             "with pinned source_refs and reason for neutral independent context, or work prepare "
+                             "when consumed mathematics changed", code="WORK_PACKET_EXTENSION")
     if prior_manifest["source_context_digest"] != source_context_digest(db):
         raise ConflictError("captured sources changed since the packet was issued; request a fresh packet",
                             records=[{"kind": "source_context", "packet_id": extend}])
@@ -718,13 +831,10 @@ class _LocalClosure(_Closure):
         return self.state.relation_members(relation, {"collection": collection, "id": id})
 
     def heads(self, collection):
-        # Only source-only independent context uses this path. Filter in SQL before
-        # reading bodies, rather than decoding every intermediate claim in the paper.
+        # Only explicit all-source path lookup and audit selection use this path.
+        # Neutral source suppliers are located through indexed relationships.
         where, params = "h.collection=? AND v.retired=0", [collection]
-        if collection == "items":
-            where += " AND json_extract(v.body_json,'$.origin')='source' AND " \
-                     "json_extract(v.body_json,'$.kind') IN ('assumption','definition','external_result')"
-        elif collection == "audits":
+        if collection == "audits":
             where += " AND h.id=?"
             params.append(self.audit_id)
         rows = list(self.db.conn.execute(f"""SELECT h.id FROM record_heads h JOIN record_versions v
@@ -951,6 +1061,39 @@ def _source_target(closure, task):
     raise InvalidRequest("independent work needs a source-origin item or part target")
 
 
+def _source_comparisons(closure, tasks):
+    """Exact saved text and changed prior wording for selected primary comparisons."""
+    rows = []
+
+    def statement(record):
+        if record is None or record.retired:
+            return None
+        if record.collection == "target_specs" and record.body["statement"] is None:
+            pin = record.body["statement_ref"]
+            saved = closure.state.version(pin["collection"], pin["id"], pin["version"]) if pin else None
+            return saved.body["statement"] if saved is not None and not saved.retired else None
+        return record.body["statement"]
+
+    for task in tasks:
+        target = task["target"]
+        if task["action"] != "compare_source" or target["collection"] not in ("items", "parts", "target_specs"):
+            continue
+        record = closure.record(target["collection"], target["id"])
+        if record is None:
+            continue
+        current = statement(record)
+        prior = closure.state.version(record.collection, record.id, record.version - 1) if record.version > 1 else None
+        before = statement(prior)
+        anchors = record.body["evidence_refs"] if record.collection == "target_specs" else [
+            p["anchor_id"] for p in record.body["passages"] if p["role"] in ("statement", "definition")]
+        rows.append({"task_id": task["id"], "target": record.pinned, "saved_statement": current,
+            "previous_statement": {"ref": prior.pinned, "statement": before} if before is not None and before != current else None,
+            "source_anchor_refs": [closure.records[("anchors", aid)].pinned for aid in dict.fromkeys(anchors)
+                                   if ("anchors", aid) in closure.records],
+            "scope_ref": {"collection": "scopes", "id": record.body["scope_id"]} if record.body.get("scope_id") else None})
+    return rows
+
+
 def _assignment_packet(closure, *, audit_id, mode, selection, units, tasks, specs, packet_id, revision, max_bytes,
                        declared_scope=None):
     records = sorted(closure.records.values(), key=lambda record: record.key)
@@ -973,7 +1116,7 @@ def _assignment_packet(closure, *, audit_id, mode, selection, units, tasks, spec
                 "mode": mode, "targets": targets, "read_set": [r.pinned for r in records],
                 "membership_guards": guards, "source_context_digest": source_context_digest(closure.db),
                 "write_scope": write_scope}
-    packet = dict(manifest, records=[{"ref": r.pinned, "body": r.body} for r in records],
+    packet = dict(manifest, records=[_packet_record(r, mode) for r in records],
                   declared_scope=declared_scope, omitted=closure.omitted, extends=None, truncated=False)
     historical = _historical_statements(closure)
     if historical:
@@ -988,8 +1131,12 @@ def _assignment_packet(closure, *, audit_id, mode, selection, units, tasks, spec
             "tasks": [{key: task[key] for key in ("id", "target", "kind", "role", "action", "prerequisite_ids")}
                       for task in tasks],
             "conditional_on_task_ids": conditional,
-            "boundary": "Check each local inference under its stated premises. Report missing dependencies "
+                        "boundary": "Check each local inference under its stated premises. Report missing dependencies "
                         "to the coordinator. A saved local judgment does not certify upstream support."}
+    if mode == "primary":
+        comparisons = _source_comparisons(closure, tasks)
+        if comparisons:
+            packet["source_comparisons"] = comparisons
     size = {"unique_records": len(records),
             "source_excerpt_bytes": sum(len(r.body["excerpt"].encode("utf-8")) for r in records
                                         if r.collection == "anchors"),
@@ -999,6 +1146,12 @@ def _assignment_packet(closure, *, audit_id, mode, selection, units, tasks, spec
                         "units": unit_rows, "tasks": specs, "conditional_on_task_ids": conditional,
                         "limits": {"max_units": selection.get("max_units", 5), "max_bytes": max_bytes,
                                    "max_records": MAX_WORK_RECORDS}, "size": size}
+    if mode == "independent":
+        manifest["work"]["source_context_inputs"] = [closure.neutral_inputs[key]
+                                                       for key in sorted(closure.neutral_inputs)]
+        manifest["work"]["source_context_relations"] = [closure.neutral_relations[key]
+                                                          for key in sorted(closure.neutral_relations)]
+        manifest["work"]["neutral_setup_selection"] = 1
     return manifest, packet
 
 
@@ -1016,12 +1169,16 @@ def prepare_assignment(db: Database, *, audit_id: str, mode: str, selection: dic
     if type(max_bytes) is not int or not 1 <= max_bytes <= MAX_WORK_BYTES:
         raise InvalidRequest(f"max_bytes must be an integer in 1..{MAX_WORK_BYTES}")
     units, tasks = selection.get("units", []), selection.get("tasks", [])
+    deferral_reasons = [dict(row) for row in selection.get("deferred", [])]
+    remaining = {"deferred": [row["unit_id"] for row in deferral_reasons],
+                 "deferred_reasons": deferral_reasons,
+                 "coordinator_actions": selection.get("coordinator_actions", [])}
     if len(units) > 10:
         raise InvalidRequest("an assignment cannot contain more than 10 work units")
     if selection.get("analysis_complete") is False:
-        return {"prepared": False, "diagnostics": [{"code": "ANALYSIS_INCOMPLETE"}], "deferred": []}
+        return {"prepared": False, "diagnostics": [{"code": "ANALYSIS_INCOMPLETE"}], **remaining}
     if not units or not tasks:
-        return {"prepared": False, "diagnostics": [], "deferred": []}
+        return {"prepared": False, "diagnostics": [], **remaining}
     task_map = {task["id"]: task for task in tasks}
     if len(task_map) != len(tasks):
         raise InvalidRequest("selection repeats a task ID")
@@ -1094,9 +1251,12 @@ def prepare_assignment(db: Database, *, audit_id: str, mode: str, selection: dic
                 "reason": "oversized_context", "measured_or_lower_bound_bytes": exc.bytes,
                 "unique_record_count": exc.records, "largest_contributors": exc.contributors})
             break
-    deferred = [unit["id"] for unit in units if unit not in selected]
+    for unit in units:
+        if unit not in selected:
+            remaining["deferred"].append(unit["id"])
+            deferral_reasons.append({"unit_id": unit["id"], "reason": "packet_size_limit"})
     if best is None:
-        return {"prepared": False, "diagnostics": diagnostics, "deferred": deferred}
+        return {"prepared": False, "diagnostics": diagnostics, **remaining}
     manifest, packet = best
     if mode == "independent":
         problems = blinding_violations(packet)
@@ -1107,7 +1267,368 @@ def prepare_assignment(db: Database, *, audit_id: str, mode: str, selection: dic
             "manifest": manifest, "packet": packet, "selected_unit_ids": [u["id"] for u in selected],
             "assigned_task_ids": [t["id"] for t in assigned],
             "conditional_on_task_ids": manifest["work"]["conditional_on_task_ids"],
-            "deferred": deferred, "size": manifest["work"]["size"], "diagnostics": diagnostics}
+            **remaining, "size": manifest["work"]["size"], "diagnostics": diagnostics}
+
+
+def _legacy_extension_setup(db, manifest, state, *, verify=True):
+    """Compare old v2 packets' untransported scope using bounded historical reads."""
+    # Earlier v2 packets did not persist neutral selection inputs. Reconstruct
+    # only their assigned mathematical bindings, never a full historical audit.
+    class HistoricalState:
+        def __init__(self):
+            self.db, self.revision = db, manifest["base_revision"]
+            self.cache, self.bytes = {}, 0
+
+        def live(self, collection, identity):
+            key = collection, identity
+            if key not in self.cache:
+                record = db.latest_at(collection, identity, manifest["base_revision"])
+                self.cache[key] = None if record is None or record.retired else record
+                if record is not None and not record.retired:
+                    self.bytes += len(canonical_bytes(record.body))
+                if len(self.cache) > MAX_WORK_RECORDS or self.bytes > getattr(state, "max_bytes", manifest["work"]["limits"]["max_bytes"]):
+                    raise _ContextLimit(records=len(self.cache), bytes=self.bytes)
+            return self.cache[key]
+
+        def version(self, collection, identity, version):
+            return db.version(collection, identity, version)
+
+        def relation_members(self, relation, key):
+            rows = relation_members(db.conn, relation, key, revision=manifest["base_revision"])
+            if len(rows) > MAX_WORK_RECORDS:
+                raise _ContextLimit(records=len(rows), bytes=self.bytes)
+            return rows
+
+    historical = HistoricalState()
+    inputs, relations = {}, {}
+    for task in manifest["work"]["tasks"]:
+        binding = task_binding(historical, task)
+        if verify:
+            changes = task_binding_changes(state, dict(task, **binding), packet=manifest)
+            if changes["records"] or changes["relations"]:
+                raise ConflictError("consumed target or setup changed since the historical assignment; prepare renewed work",
+                                    records=[changes])
+        for row in binding["consumed_inputs"]:
+            inputs[(row["ref"]["collection"], row["ref"]["id"], row["facet"])] = row
+        for row in binding["membership_guards"]:
+            key = row["key"]
+            relations[(row["relation"], key["collection"], key["id"])] = dict(row,
+                members=sorted([[c, i] for c, i, _ in historical.relation_members(row["relation"], key)]))
+    return list(inputs.values()), list(relations.values())
+
+
+def neutral_relation_covered(state, relation, records, *, checked_targets=None):
+    """Whether changed graph membership still selects only the delivered setup.
+
+    Routine coordinator IDs may be added without new source work. Inspect their
+    bounded neutral selection instead of treating every new graph ID as evidence.
+    """
+    from .semantics import related
+
+    class Selection(_Closure):
+        def __init__(self):
+            super().__init__(state.db, "independent")
+            self.seen, self.bytes = set(), 0
+
+        def record(self, collection, identity):
+            record = state.live(collection, identity)
+            if record is not None and record.key not in self.seen:
+                self.seen.add(record.key)
+                self.bytes += len(canonical_bytes(record.body))
+                if len(self.seen) > MAX_WORK_RECORDS or self.bytes > MAX_WORK_BYTES:
+                    raise _ContextLimit(records=len(self.seen), bytes=self.bytes)
+            return record
+
+        def members(self, name, collection, identity):
+            members = state.relation_members(name, {"collection": collection, "id": identity})
+            if len(members) > MAX_WORK_RECORDS:
+                raise _ContextLimit(records=len(members), bytes=self.bytes)
+            return members
+
+        def pull(self, owners, *lookups):
+            found = {}
+            for field, targets, prefix in lookups:
+                for collection, identity in targets:
+                    for owner in owners:
+                        for record in related(state, owner, field, {"collection": collection, "id": identity}, prefix=prefix):
+                            found[record.key] = self.record(record.collection, record.id)
+            return list(found.values())
+
+    closure = Selection()
+    try:
+        key = relation["key"]
+        target = key
+        if key["collection"] == "groups":
+            group = closure.record("groups", key["id"])
+            target = {"collection": "arguments", "id": group.body["argument_id"]} if group else None
+        if target and target["collection"] == "arguments":
+            argument = closure.record("arguments", target["id"])
+            target = argument.body["target"] if argument else None
+        if target is None or target["collection"] not in ("items", "parts"):
+            return False
+        selection_key = (target["collection"], target["id"], relation["relation"] == "target_specs_for_target")
+        if checked_targets is not None and selection_key in checked_targets:
+            return True
+        _neutral_statement(closure, target)
+        if relation["relation"] != "target_specs_for_target":
+            _neutral_dependencies(closure, target)
+        expected = {(row["ref"]["collection"], row["ref"]["id"], row["facet"]): row["digest"] for row in records}
+        for row in closure.neutral_inputs.values():
+            pin = row["ref"]
+            if pin["collection"] in ("items", "parts", "scopes") \
+                    and expected.get((pin["collection"], pin["id"], row["facet"])) != row["digest"]:
+                return False
+        for record in closure.records.values():
+            if record.collection == "anchors":
+                facets = facet_digests(record.collection, record.body)
+                if any(expected.get(("anchors", record.id, facet)) != facets[facet] for facet in ("statement", "source")):
+                    return False
+        if checked_targets is not None:
+            checked_targets.add(selection_key)
+        return True
+    except _ContextLimit:
+        return False
+
+
+def independent_context_binding(state, manifest):
+    """Original source/setup and its private attachments for a blind work review.
+
+    This binding is also retained on mapped checks. Otherwise a coordinator could
+    map an old response after changing an unseen standing assumption and bind the
+    resulting judgment only to that newer setup.
+    """
+    work = manifest.get("work")
+    if manifest.get("mode") != "independent" or not isinstance(work, dict) \
+            or manifest.get("review_basis") == "route_provided":
+        return None
+    inputs = work.get("source_context_inputs")
+    relations = work.get("source_context_relations", [])
+    if inputs is None:
+        inputs, relations = _legacy_extension_setup(state.db, manifest, state, verify=False)
+    records = {}
+    for row in inputs:
+        pin = row["ref"]
+        if pin["collection"] not in ("items", "parts", "scopes", "arguments", "groups", "uses",
+                                    "application_details", "target_specs"):
+            continue
+        original = state.version(pin["collection"], pin["id"], pin["version"])
+        if original is None or original.retired:
+            raise InvalidRequest("original independent context is unavailable", code="SOURCE_CONTEXT_UNAVAILABLE", records=[pin])
+        if pin["collection"] in ("items", "parts") and original.body["origin"] != "source":
+            continue
+        consumed = copy.deepcopy(row)
+        projection = setup_digest(original.collection, original.body)
+        if projection is not None:
+            consumed["setup_digest"] = projection
+        records[(pin["collection"], pin["id"], row["facet"])] = consumed
+    for pin in manifest["read_set"]:
+        facets = {"anchors": ("statement", "source"), "sources": ("source",),
+                  "source_issues": ("full",)}.get(pin["collection"], ())
+        if not facets:
+            continue
+        original = state.version(pin["collection"], pin["id"], pin["version"])
+        if original is None or original.retired:
+            raise InvalidRequest("original independent source is unavailable", code="SOURCE_CONTEXT_UNAVAILABLE", records=[pin])
+        values = facet_digests(original.collection, original.body)
+        for facet in facets:
+            records[(pin["collection"], pin["id"], facet)] = {
+                "ref": dict(pin), "facet": facet, "digest": values[facet]}
+    if not work.get("neutral_setup_selection"):
+        # Earlier packets could omit selected setup, including exact-specification
+        # and discharged scopes. Never recover credit for undelivered context.
+        class HistoricalSelection:
+            db, revision = state.db, manifest["base_revision"]
+
+            def live(self, collection, identity):
+                record = self.db.latest_at(collection, identity, self.revision)
+                return record if record is not None and not record.retired else None
+
+            def relation_members(self, relation, key):
+                return relation_members(self.db.conn, relation, key, revision=self.revision)
+
+        historical = HistoricalSelection()
+        relations = copy.deepcopy(relations)
+        checked_targets = set()
+        for guard in relations:
+            if not neutral_relation_covered(historical, guard, list(records.values()), checked_targets=checked_targets):
+                raise ConflictError("original independent assignment omitted applicable source or setup; obtain a renewed review")
+        for row in list(records.values()):
+            pin = row["ref"]
+            if pin["collection"] not in ("items", "parts") or row["facet"] != "statement":
+                continue
+            key = {k: pin[k] for k in ("collection", "id")}
+            guard = {"relation": "target_specs_for_target", "key": key}
+            if not neutral_relation_covered(historical, guard, list(records.values())):
+                raise ConflictError("original independent assignment omitted applicable source or setup; obtain a renewed review")
+            members = historical.relation_members(guard["relation"], key)
+            guard.update(digest=membership_digest(members), members=sorted([[c, i] for c, i, _ in members]))
+            relations = [entry for entry in relations if (entry["relation"], entry["key"]) != (guard["relation"], key)]
+            relations.append(guard)
+            for collection, identity, _ in members:
+                spec = historical.live(collection, identity)
+                records[(collection, identity, "statement")] = {"ref": spec.pinned, "facet": "statement",
+                    "digest": facet_digests(collection, spec.body)["statement"],
+                    "setup_digest": setup_digest(collection, spec.body)}
+    return {"records": [records[key] for key in sorted(records)],
+            "relations": [{k: row[k] for k in ("relation", "key", "digest")} for row in relations],
+            "semantic_memberships": [dict(copy.deepcopy(row), neutral_context=True) for row in relations]}
+
+
+def independent_context_changes(state, manifest):
+    binding = independent_context_binding(state, manifest)
+    return binding_changes(state, binding) if binding is not None else {"records": [], "relations": []}
+
+
+def extend_work_assignment(db: Database, *, packet_id: str, request: dict) -> dict:
+    """Add neutral captured source to the same independent obligation, atomically.
+
+    The old packet and response are immutable. The new packet authorizes a new
+    response, not a rebased claim that the old response examined the new context.
+    """
+    if not db.write:
+        raise InvalidRequest("work extension records a packet; open the database for writing")
+    if not isinstance(request, dict) or set(request) != {"source_refs", "reason"} \
+            or not isinstance(request["reason"], str) or not request["reason"].strip() \
+            or not isinstance(request["source_refs"], list) or not request["source_refs"]:
+        raise InvalidRequest("context request must be {source_refs: [pinned item/part/anchor], reason: nonempty string}",
+                             code="WORK_CONTEXT_REQUEST")
+    if len(request["source_refs"]) > MAX_WORK_RECORDS or len(canonical_bytes(request)) > MAX_WORK_BYTES:
+        raise InvalidRequest("context request exceeds the work record/byte limit", code="WORK_CONTEXT_REQUEST")
+    seen = set()
+    for index, pin in enumerate(request["source_refs"]):
+        if not isinstance(pin, dict) or set(pin) != {"collection", "id", "version"} \
+                or pin["collection"] not in ("items", "parts", "anchors") \
+                or not isinstance(pin["id"], str) or not pin["id"] \
+                or type(pin["version"]) is not int or pin["version"] < 1:
+            raise InvalidRequest(f"source_refs[{index}] must be {{collection: items|parts|anchors, id: string, version: positive integer}}",
+                                 code="WORK_CONTEXT_REQUEST")
+        key = pin["collection"], pin["id"]
+        if key in seen:
+            raise InvalidRequest(f"source_refs[{index}] duplicates {key[0]}:{key[1]}", code="WORK_CONTEXT_REQUEST")
+        seen.add(key)
+    db.begin_immediate()
+    try:
+        stored = db.packet(packet_id)
+        if stored is None:
+            raise InvalidRequest(f"unknown packet {packet_id}", code="PACKET_UNKNOWN")
+        original = stored["manifest"]
+        if original.get("packet_version") != 2 or not isinstance(original.get("work"), dict) \
+                or original.get("mode") != "independent" or original.get("review_basis") == "route_provided":
+            raise InvalidRequest("work extend requires a source-only independent v2 work assignment; "
+                                 "use work prepare for route-provided or other work", code="WORK_CONTEXT_MODE")
+        pending = db.conn.execute("SELECT request_id FROM work_submissions WHERE packet_id=? AND state='received' LIMIT 1",
+                                  (packet_id,)).fetchone()
+        if pending:
+            raise InvalidRequest(f"inspect and idempotently replay received request {pending[0]} before extending its assignment",
+                                 code="WORK_CONTEXT_PENDING")
+        prior = json.loads(db.get_blob(stored["payload_sha256"]).decode("utf-8"))
+        if blinding_violations(prior):
+            raise InvalidRequest("the original assignment is not source-only", code="WORK_CONTEXT_MODE")
+        work = original["work"]
+        audit = db.head("audits", work["audit_id"])
+        old_audit_pin = work["audit_ref"]
+        old_audit = db.version("audits", old_audit_pin["id"], old_audit_pin["version"])
+        scope_fields = ("paper_id", "mode", "targets", "exclusions", "protocol_version", "qualification_id", "independent_required")
+        if audit is None or audit.retired or old_audit is None \
+                or any(audit.body[k] != old_audit.body[k] for k in scope_fields):
+            raise ConflictError("audit scope or review protocol changed; prepare a renewed assignment")
+        qualification = db.head("qualifications", audit.body["qualification_id"])
+        if qualification is None or qualification.retired or not qualification.body["qualified"] \
+                or qualification.body["protocol_version"] != audit.body["protocol_version"]:
+            raise InvalidRequest("independent extension needs a valid current qualification", code="QUALIFICATION_INVALID")
+        max_bytes = work["limits"]["max_bytes"]
+        closure = _LocalClosure(db, "independent", audit.id, max_bytes)
+        for entry in prior["records"]:
+            pin = entry["ref"]
+            current = closure.record(pin["collection"], pin["id"])
+            if current is None or current.retired or current.version != pin["version"]:
+                raise ConflictError("previously delivered source context changed; prepare a renewed assignment", records=[pin])
+            closure.add(current)
+        for task in work["tasks"]:
+            changes = task_binding_changes(closure.state, task, packet=original)
+            if changes["records"] or changes["relations"]:
+                raise ConflictError("consumed mathematics changed; prepare a renewed assignment", records=[changes])
+        neutral_inputs, neutral_relations = work.get("source_context_inputs", []), work.get("source_context_relations", [])
+        if "source_context_inputs" not in work:
+            neutral_inputs, neutral_relations = _legacy_extension_setup(db, original, closure.state)
+        neutral_binding = {"records": neutral_inputs,
+                           "relations": [{k: row[k] for k in ("relation", "key", "digest")} for row in neutral_relations],
+                           "semantic_memberships": neutral_relations}
+        changes = binding_changes(closure.state, neutral_binding)
+        if changes["records"] or changes["relations"]:
+            raise ConflictError("applicable source setup or registered inference changed; prepare a renewed assignment", records=[changes])
+        for guard in original.get("membership_guards", []):
+            if membership_digest(closure.members(guard["relation"], guard["key"]["collection"], guard["key"]["id"])) != guard["digest"]:
+                raise ConflictError("reviewed source membership changed; prepare a renewed assignment", records=[guard])
+        for pin in request["source_refs"]:
+            record = closure.record(pin["collection"], pin["id"])
+            if record is None or record.retired or record.version != pin["version"]:
+                raise ConflictError("requested source_ref is not a pinned live version", records=[pin])
+            if record.collection == "anchors":
+                closure.add(record)
+            elif _neutral_statement(closure, pin) is None:
+                raise InvalidRequest("context items/parts must be source-origin statements, not proposed intermediate claims or repairs",
+                                     code="WORK_CONTEXT_SOURCE", records=[pin])
+        closure.finish()
+        for record in closure.records.values():
+            if record.collection == "sources" and record.body["paper_id"] != audit.body["paper_id"]:
+                raise InvalidRequest("context source belongs to another paper", code="WORK_CONTEXT_SOURCE", records=[record.pinned])
+            if record.collection == "anchors":
+                source = closure.record("sources", record.body["source_id"])
+                if source is None or source.version != record.body["source_version"]:
+                    raise ConflictError("requested anchor does not pin the current captured source", records=[record.pinned])
+        old_keys = {(entry["ref"]["collection"], entry["ref"]["id"]) for entry in prior["records"]}
+        if not (set(closure.records) - old_keys):
+            raise InvalidRequest("context request adds no new source material", code="WORK_CONTEXT_EMPTY")
+        revision, identity = db.max_revision(), new_id("packet")
+        records = sorted(closure.records.values(), key=lambda r: r.key)
+        manifest, packet = copy.deepcopy(original), copy.deepcopy(prior)
+        common = {"packet_id": identity, "base_revision": revision, "extends": packet_id,
+                  "read_set": [r.pinned for r in records], "source_context_digest": source_context_digest(db)}
+        manifest.update(common)
+        packet.update(common)
+        packet["records"] = [_packet_record(r, "independent") for r in records]
+        packet["omitted"] = prior.get("omitted", []) + [row for row in closure.omitted if row not in prior.get("omitted", [])]
+        size = {"unique_records": len(records),
+                "source_excerpt_bytes": sum(len(r.body["excerpt"].encode("utf-8")) for r in records if r.collection == "anchors"),
+                "worker_bytes": len(canonical_bytes(packet))}
+        if size["unique_records"] > MAX_WORK_RECORDS or size["worker_bytes"] > max_bytes:
+            raise _ContextLimit(records=size["unique_records"], bytes=size["worker_bytes"], contributors=closure.state.contributors())
+        manifest["work"]["size"] = size
+        manifest["work"]["audit_ref"] = audit.pinned
+        manifest["work"]["context_extension"] = {"parent_packet_id": packet_id, "request": copy.deepcopy(request)}
+        inputs = {(row["ref"]["collection"], row["ref"]["id"], row["facet"]): row for row in neutral_binding["records"]}
+        inputs.update(closure.neutral_inputs)
+        manifest["work"]["source_context_inputs"] = [inputs[key] for key in sorted(inputs)]
+        relations = {(row["relation"], row["key"]["collection"], row["key"]["id"]): row
+                     for row in neutral_relations}
+        relations.update(closure.neutral_relations)
+        manifest["work"]["source_context_relations"] = [relations[key] for key in sorted(relations)]
+        problems = blinding_violations(packet)
+        if problems:
+            raise InvalidRequest("extended assignment failed blinding check", records=problems)
+        sha = db.put_blob(canonical_bytes(packet))
+        db.insert_packet(identity, revision, "independent", manifest, sha)
+        features = set(json.loads(db.conn.execute("SELECT value FROM metadata WHERE key='features'").fetchone()[0]))
+        features.add(WORK_CONTEXT_EXTENSION_FEATURE)
+        db.conn.execute("UPDATE metadata SET value=? WHERE key='features'", (json.dumps(sorted(features)),))
+        db.commit()
+        db.metadata = db.check_compatibility()
+        return {"prepared": True, "packet_id": identity, "revision": revision, "audit_id": audit.id,
+                "mode": "independent", "manifest": manifest, "packet": packet,
+                "selected_unit_ids": [u["id"] for u in work["units"]],
+                "assigned_task_ids": [t["id"] for t in work["tasks"]],
+                "conditional_on_task_ids": work["conditional_on_task_ids"], "size": size,
+                "deferred": [], "diagnostics": []}
+    except _ContextLimit as exc:
+        db.rollback()
+        return {"prepared": False, "packet_id": packet_id, "mode": "independent", "deferred": [],
+                "diagnostics": [{"code": "OVERSIZED_CONTEXT", "measured_or_lower_bound_bytes": exc.bytes,
+                                 "unique_record_count": exc.records, "largest_contributors": exc.contributors,
+                                 "next_action": "request a narrower source passage or plan a separately bounded review"}]}
+    except BaseException:
+        db.rollback()
+        raise
 
 
 def prepare_route_assignment(db: Database, *, audit_id, route_id, max_bytes=DEFAULT_WORK_BYTES):
@@ -1229,4 +1750,5 @@ def prepare_route_assignment(db: Database, *, audit_id, route_id, max_bytes=DEFA
 
 
 __all__ = ["MODES", "READ_COLLECTIONS", "WRITE_COLLECTIONS", "blinding_violations", "get_packet", "load_packet",
-           "source_context_digest", "prepare_assignment", "DEFAULT_WORK_BYTES", "MAX_WORK_BYTES", "MAX_WORK_RECORDS"]
+           "source_context_digest", "prepare_assignment", "extend_work_assignment", "independent_context_binding",
+           "independent_context_changes", "DEFAULT_WORK_BYTES", "MAX_WORK_BYTES", "MAX_WORK_RECORDS"]

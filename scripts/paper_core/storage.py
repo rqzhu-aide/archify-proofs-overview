@@ -12,7 +12,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import (CONTRACT_VERSION, CORE_VERSION, LEGACY_OVERVIEW_FORMAT, PACKET_VERSION,
+from . import (CONTRACT_VERSION, CORE_VERSION, DEFAULT_FEATURES, LEGACY_OVERVIEW_FORMAT, PACKET_VERSION,
                PROJECTION_VERSION, PROTOCOL_VERSION, STORAGE_FORMAT, STORAGE_FORMATS_READABLE,
                STORAGE_FORMATS_WRITABLE, SUPPORTED_FEATURES)
 from .canonical import canonical_bytes, digest, sha256_bytes
@@ -21,7 +21,7 @@ from .ids import new_id
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 INIT_METADATA = {
-    "features": json.dumps(list(SUPPORTED_FEATURES)),
+    "features": json.dumps(list(DEFAULT_FEATURES)),
     "core_version": CORE_VERSION,
     "projection_version": str(PROJECTION_VERSION),
     "packet_version": str(PACKET_VERSION),
@@ -614,7 +614,7 @@ def migrate_database(path, *, backup) -> dict:
         updates = dict(INIT_METADATA, storage_format=str(STORAGE_FORMAT), contract_version=str(CONTRACT_VERSION),
                        generation=new_id('request'))
         # Preserve every supported requirement already declared by the older database.
-        updates["features"] = json.dumps(sorted(set(json.loads(meta.get("features", "[]"))) | set(SUPPORTED_FEATURES)))
+        updates["features"] = json.dumps(sorted(set(json.loads(meta.get("features", "[]"))) | set(DEFAULT_FEATURES)))
         conn.executemany("INSERT INTO metadata(key, value) VALUES (?, ?) "
                          "ON CONFLICT(key) DO UPDATE SET value = excluded.value", updates.items())
         # Preserve old bodies and judgments verbatim. Only new heads use the

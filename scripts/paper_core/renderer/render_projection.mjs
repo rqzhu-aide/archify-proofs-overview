@@ -405,6 +405,30 @@ export function validateInput(input) {
   validateIdList(summary.source_limits, 'projection.summary.source_limits', { unique: true });
   if (summary.limitations !== undefined && (!Array.isArray(summary.limitations) || !summary.limitations.every(isString))) bad('projection.summary.limitations must be an array of strings');
   if (!(summary.published_revision === null || isCount(summary.published_revision))) bad('projection.summary.published_revision must be a nonnegative integer or null');
+  if (summary.factual !== undefined) {
+    const factual = summary.factual;
+    if (!isObject(factual) || !isObject(factual.work) || !isObject(factual.work.checks) ||
+        !isObject(factual.work.current_primary_outcomes) || !isObject(factual.statement_support) ||
+        !isObject(factual.statement_support.counts) || !isObject(factual.independent_review) || !isObject(factual.scope)) {
+      bad('projection.summary.factual must contain work, statement support, scope and independent review facts');
+    } else {
+      if (factual.revision !== projection.snapshot_revision || factual.process_complete !== summary.progress.process_complete)
+        bad('projection.summary.factual must describe the same snapshot and completion state');
+      for (const field of ['current_complete', 'draft', 'needs_review', 'historical_complete', 'superseded'])
+        if (!isCount(factual.work.checks[field])) bad(`projection.summary.factual.work.checks.${field} must be a count`);
+      for (const field of ['available', 'conditional', 'unavailable'])
+        if (!isCount(factual.statement_support.counts[field])) bad(`projection.summary.factual.statement_support.counts.${field} must be a count`);
+      for (const field of ['supported', 'gap', 'refuted', 'inconclusive'])
+        if (!isCount(factual.work.current_primary_outcomes[field])) bad(`projection.summary.factual.work.current_primary_outcomes.${field} must be a count`);
+      for (const rows of [factual.source_limits, factual.unresolved_external_sources, factual.statement_support.unresolved, factual.scope.exclusions])
+        if (!Array.isArray(rows) || rows.some(row => !isObject(row) || !isString(row.label)))
+          bad('projection.summary.factual lists must contain labeled rows');
+      if (!REVIEWS.includes(factual.independent_review.state)) bad('projection.summary.factual independent review state is invalid');
+      if (!Array.isArray(factual.independent_review.qualification_limitations) ||
+          !factual.independent_review.qualification_limitations.every(isString))
+        bad('projection.summary.factual qualification limitations must be text');
+    }
+  }
 
   const layout = projection.layout;
   if (!LAYOUT_MODES.includes(layout.mode)) bad(`projection.layout.mode must be one of ${LAYOUT_MODES.join(', ')}`);
@@ -735,6 +759,35 @@ class Renderer {
 
   // ----- summary -----------------------------------------------------------
 
+  factualHtml() {
+    const factual = this.model.summary.factual;
+    if (!factual) return '';
+    const checks = factual.work.checks, support = factual.statement_support, independent = factual.independent_review;
+    const fact = (name, value) => `<span data-proof-fact="${name}">${esc(String(value))}</span>`;
+    const outcomes = ['supported', 'gap', 'refuted', 'inconclusive'].map(outcome =>
+      `${esc(outcome)}: ${factual.work.current_primary_outcomes[outcome]}`).join('; ');
+    const unresolved = support.unresolved.map((row, index) => {
+      const premise = ['assumption', 'definition'].includes(row.kind) ? ` (declared ${row.kind}; scope-dependent premise)` : '';
+      return `<li>${fact(`unresolved.${index}`, `${row.label}: ${row.availability}${premise}`)}</li>`;
+    });
+    const sourceLimits = factual.source_limits.map((row, index) => `<li>${fact(`source_limits.${index}`, `${row.source_path || row.label}: ${row.description}`)}</li>`);
+    const external = factual.unresolved_external_sources.map((row, index) => `<li>${fact(`external.${index}`, `${row.label}: ${row.availability}`)}</li>`);
+    return `<div class="proof-card" data-proof-factual>
+<h3>Current scientific status</h3>
+<p data-proof-fact="snapshot">These facts describe snapshot ${factual.revision}. Process completion is separate from the mathematical outcomes.</p>
+<dl class="proof-kv"><dt>Current completed checks</dt><dd>${fact('checks.current_complete', checks.current_complete)}</dd>
+<dt>Unfinished drafts</dt><dd>${fact('checks.draft', checks.draft)}</dd><dt>Checks needing review</dt><dd>${fact('checks.needs_review', checks.needs_review)}</dd>
+<dt>Historical completed checks</dt><dd>${fact('checks.historical_complete', checks.historical_complete)}</dd><dt>Superseded checks</dt><dd>${fact('checks.superseded', checks.superseded)}</dd></dl>
+<p data-proof-fact="primary_outcomes">Saved check counts include nonqualifying independent work. Current primary mathematical outcomes: ${outcomes}.</p>
+<p data-proof-fact="statement_support">Statement support at each statement's recorded scope: available ${support.counts.available}; conditional ${support.counts.conditional}; unavailable ${support.counts.unavailable}.</p>
+${unresolved.length ? `<details><summary>Conditional or unavailable statements (${unresolved.length})</summary><ul>${unresolved.join('')}</ul><p>Declared assumptions and definitions can be available as premises in an explicitly authorizing scope. Their status here does not by itself indicate a proof gap; availability must be checked at each use.</p></details>` : ''}
+<p data-proof-fact="independent_review">Independent review: ${esc(REVIEW_LABELS[independent.state])}.</p>
+${independent.qualification_limitations.length ? `<ul>${independent.qualification_limitations.map((note, index) => `<li>${fact(`qualification.${index}`, note)}</li>`).join('')}</ul>` : ''}
+${sourceLimits.length ? `<h4>Recorded source limitations</h4><ul>${sourceLimits.join('')}</ul>` : ''}
+${external.length ? `<h4>Unresolved external suppliers</h4><ul>${external.join('')}</ul>` : ''}
+</div>`;
+  }
+
   summaryHtml() {
     const { model } = this;
     const { summary, projection } = model;
@@ -758,7 +811,9 @@ class Renderer {
       return `<li data-proof-source-limit="${esc(id)}">${this.idLink(id, 'source_issues')} ${meta} ${text}</li>`;
     });
     const scope = summary.scope;
-    const exclusionItems = scope.exclusions.map((entry) => `<li>${isObject(entry) && isString(entry.collection) && isString(entry.id) ? this.recordLink(entry, false) : `<span class="proof-text">${esc(isString(entry) ? entry : JSON.stringify(entry))}</span>`}</li>`);
+    const exclusionItems = summary.factual ? summary.factual.scope.exclusions.map((entry, index) =>
+      `<li data-proof-fact="exclusion.${index}"><strong>${esc(entry.label)}</strong>: ${esc(entry.reason)} Consequence: ${esc(entry.consequence)}</li>`) :
+      scope.exclusions.map((entry) => `<li>${isObject(entry) && isString(entry.collection) && isString(entry.id) ? this.recordLink(entry, false) : `<span class="proof-text">${esc(isString(entry) ? entry : JSON.stringify(entry))}</span>`}</li>`);
     const overviewScope = summary.overview_scope;
     const overviewBoundaries = overviewScope ? `<div data-proof-overview-scope>
 <h4>Original overview boundaries</h4>
@@ -778,8 +833,9 @@ ${overviewScope.exclusions.length ? `<h4>Original overview exclusions</h4><ul cl
 <dt>Major results</dt><dd>${count('progress.major_results', progress.major_results)}</dd>
 <dt>Source-unbound items</dt><dd>${count('progress.source_unbound_items', progress.source_unbound_items)}</dd>
 </dl>
-${summary.limitations?.length ? `<h4>Limits on completion</h4><ul>${summary.limitations.map((note) => `<li data-proof-limitation>${esc(note)}</li>`).join('')}</ul>` : ''}
+${summary.limitations?.length ? `<details><summary>Technical completion diagnostics (${summary.limitations.length})</summary><ul>${summary.limitations.map((note) => `<li data-proof-limitation>${esc(note)}</li>`).join('')}</ul></details>` : ''}
 </div>
+${this.factualHtml()}
 <div class="proof-card">
 <h3>Nodes by state</h3>
 ${stateList('nodes', nodeTally)}
@@ -795,7 +851,7 @@ ${stateList('connections', connectionTally)}
 </dl>
 ${findingItems.length ? `<ul class="proof-finding-list">${findingItems.join('')}</ul>` : '<p class="proof-muted">No findings listed.</p>'}
 <h3>Source limits</h3>
-${limitItems.length ? `<ul class="proof-finding-list">${limitItems.join('')}</ul>` : '<p class="proof-muted">No source limits listed.</p>'}
+${limitItems.length ? `<ul class="proof-finding-list">${limitItems.join('')}</ul>` : '<p class="proof-muted">No open source issue records listed.</p>'}
 </div>
 <div class="proof-card">
 <h3>Scope</h3>
@@ -2121,6 +2177,15 @@ const RUNTIME_JS = `(function () {
             (task.freshness ? ' (' + task.freshness.split('_').join(' ') + ')' : '') + '.';
           if (task.dependency_support) explanation.textContent += ' Premise support: ' + task.dependency_support + '.';
           li.appendChild(explanation);
+          if (task.support_explanation) li.appendChild(element('p', 'proof-muted',
+            task.support_explanation.label + ': ' + task.support_explanation.message));
+          if (task.recovery) {
+            var changed = task.recovery.changes.map(function (change) { return change.label +
+              ' (' + (change.facet || change.relation).split('_').join(' ') + ')'; });
+            li.appendChild(element('p', 'proof-muted', 'Changed inputs: ' + changed.join('; ') +
+              (task.recovery.changes_truncated ? '; further changes are available in the work query' : '') + '. ' +
+              task.recovery.preserved_local_count + ' local checks remain current. ' + task.recovery.next_action));
+          }
           if (task.next_action) { var note = doc.createElement('p'); note.textContent = task.next_action; li.appendChild(note); }
           workList.appendChild(li);
         })(unfinished[workShown]);

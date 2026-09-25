@@ -14,7 +14,7 @@ from collections import defaultdict, deque
 from .bindings import binding_changes
 from .canonical import compact_json, digest
 from .contract import INTERMEDIATE_KINDS, MAJOR_KINDS, extract_refs
-from .errors import InvalidRequest
+from .errors import ConflictError, InvalidRequest
 from .refs import RELATIONS, facet_digests
 from .storage import Database, Record
 from .support_semantics import SupportClosure
@@ -28,6 +28,39 @@ INDICATORS = ("not_required", "pending", "complete", "disputed", "compromised")
 ROLES = ("primary", "independent", "coordinator")
 OBLIGATION_KINDS = PROOF_CHECK_KINDS + ("global_consistency", "adversarial", "method_interface",
                                         "source_fidelity", "reconciliation")
+
+COVERAGE_CAUSES = {
+    "missing_coverage": ("No coverage row accounts for these proof spans.",
+                         "Classify the spans and add coverage with the responsible primary work, or use an authoring packet if no checks remain."),
+    "missing_anchor": ("The required proof anchor is unavailable.",
+                       "Restore the source anchor and review the affected proof boundary."),
+    "missing_claims": ("A substantive coverage row has no claimed statements.",
+                       "Record the item or part statements examined in this passage."),
+    "missing_checks": ("A substantive coverage row has no responsible primary checks.",
+                       "Link the primary checks that examined its claimed statements."),
+    "structural_links": ("A structural coverage row declares claims or checks.",
+                         "Correct the classification or the inaccurately declared links."),
+    "wrong_argument": ("A linked check examines another argument.",
+                       "Correct an inaccurate link or obtain the responsible check in this argument."),
+    "unusable_check": ("A linked check has no usable current, complete primary examination in this audit.",
+                       "Renew affected reasoning with an explicit successor, or correct an inaccurate link; an unrelated newer check does not carry this link forward."),
+    "unsatisfied_obligation": ("A linked check's corresponding obligation is not satisfied.",
+                               "Resolve the obligation for the linked check before claiming coverage credit."),
+    "unconsumed_claims": ("Linked checks did not consume every claimed statement.",
+                          "Examine the missing item or part statements in responsible primary checks, or correct inaccurate claims; citing the passage alone is insufficient."),
+}
+
+
+def coverage_diagnostic(fact):
+    """Render an eligibility fact without evaluating coverage a second time."""
+    message, action = COVERAGE_CAUSES[fact["code"]]
+    row = dict(fact, message=message, next_action=action)
+    for field in ("argument_ids", "claim_refs", "spans"):
+        if len(row.get(field, ())) > 10:
+            row[field + "_count"] = len(row[field])
+            row[field + "_truncated"] = True
+            row[field] = row[field][:10]
+    return row
 
 
 class TraversalLimit(InvalidRequest):
@@ -300,6 +333,23 @@ def judgment_freshness(snap: Snapshot, record: Record, *, superseded: bool, reus
         info["unbound"] = True
         return info
     bound = binding["bindings"] if "bindings" in binding else binding
+    if record.collection == "checks" and record.body["role"] == "independent" \
+            and record.body.get("response_id") and not bound.get("neutral_setup_validated"):
+        # Older mapped checks may bind newer setup that their reviewer never
+        # received. Recheck immutable response provenance without rewriting it.
+        response = snap.live("responses", record.body["response_id"])
+        original = snap.db.packet(response.body["packet_id"]) if response else None
+        if original is not None:
+            from .packets import independent_context_changes
+            try:
+                context_changes = independent_context_changes(snap, original["manifest"])
+            except (ConflictError, InvalidRequest) as exc:
+                context_changes = {"records": [{"ref": record.pinned, "facet": "independent_context",
+                    "expected": "delivered source and applicable setup", "actual": None, "reason": str(exc)}],
+                    "relations": []}
+            if context_changes["records"] or context_changes["relations"]:
+                info.update(freshness="needs_review", changes=context_changes, context_changed=True)
+                return info
     info["context_changed"] = bound.get("source_context_digest") not in (None, snap.source_context_digest())
     changes = binding_changes(snap, bound)
     info["context_changed"] = info["context_changed"] or any(
@@ -447,6 +497,7 @@ class _Derivation:
         self.by_target: dict = defaultdict(list)   # key -> [obligation ids]
         self.constituents: dict = {}         # obligation id -> constituent
         self.judgments: dict = {}            # "checks:ID" -> info
+        self.judgment_changes: dict = {}    # internal freshness explanations, not a public record dump
         self.support_closure = SupportClosure(self)
         self.statements: list = []           # in-scope items/parts records
         self.routes: dict = {}               # statement key -> list of argument ids
@@ -515,7 +566,9 @@ class _Derivation:
                      "response_state": None if response is None else response.body["state"],
                      "exposure": None if response is None else response.body["exposure"],
                      "revision": check.revision})
-        info.pop("changes", None)
+        changes = info.pop("changes", None)
+        if changes:
+            self.judgment_changes[key] = changes
         self.judgments[key] = info
         return info
 
@@ -769,6 +822,8 @@ class _Derivation:
             if candidates:
                 active = candidates[-1]
                 info = judgment_freshness(self.snap, active, superseded=False)
+                if info.get("changes"):
+                    self.judgment_changes[key_of(pinned_of(active))] = info["changes"]
                 constituent.update({"state": "complete", "substantive": True,
                                     "outcome": "supported" if active.body["result"] == "matched" else "needs_attention",
                                     "freshness": info["freshness"], "check_refs": [pinned_of(active)]})
@@ -973,6 +1028,9 @@ class _Derivation:
         and current, completed responsible checks in this audit. Missing coverage
         is unfinished work, not a malformed draft or a mathematical refutation.
         """
+        # Keep compact facts for focused work preparation. Public assessment
+        # expands only a bounded sample with the shared cause/action text.
+        self.coverage_diagnostics = []
         if self.audit is None or self.audit.body["mode"] not in ("full", "focused"):
             return []
         snap = self.snap
@@ -1019,20 +1077,32 @@ class _Derivation:
         for cov in snap.all("coverage"):
             coverages[cov.body["anchor_id"]].append(cov)
 
+        rejected = defaultdict(list)
+
+        def reject(cov, code, **detail):
+            rejected[cov.id].append({"code": code, "argument_ids": [cov.body["argument_id"]],
+                "anchor_id": cov.body["anchor_id"], "coverage_ref": pinned_of(cov), **detail})
+            return False
+
         def completed(cov):
             body = cov.body
             if body["classification"] == "structural":
-                return not body["claim_refs"] and not body["check_ids"]
+                return (not body["claim_refs"] and not body["check_ids"]) or reject(cov, "structural_links")
             if not body["claim_refs"] or not body["check_ids"]:
+                if not body["claim_refs"]:
+                    reject(cov, "missing_claims")
+                if not body["check_ids"]:
+                    reject(cov, "missing_checks")
                 return False
             consumed_claims = set()
             for check_id in body["check_ids"]:
                 check = snap.live("checks", check_id)
                 if check is None or check.body["audit_id"] != self.audit_id or check.body["role"] != "primary":
-                    return False
+                    return reject(cov, "unusable_check", check_ref=ref_of(check) if check else
+                                  {"collection": "checks", "id": check_id})
                 target = snap.get(check.body["target"])
                 if target is None:
-                    return False
+                    return reject(cov, "unusable_check", check_ref=pinned_of(check))
                 if target.collection == "arguments":
                     argument_id = target.id
                 elif target.collection == "groups":
@@ -1041,12 +1111,11 @@ class _Derivation:
                     group = snap.live("groups", snap.application(target)["group_id"])
                     argument_id = None if group is None else group.body["argument_id"]
                 else:
-                    return False
+                    return reject(cov, "wrong_argument", check_ref=pinned_of(check))
                 if argument_id != body["argument_id"]:
-                    return False
+                    return reject(cov, "wrong_argument", check_ref=pinned_of(check),
+                                  check_argument_id=argument_id)
                 obligation = self.obligation_for(check.body["target"], check.body["kind"])
-                if obligation is None or not obligation.get("satisfied"):
-                    return False
                 # A cited predecessor may be carried forward only through its
                 # explicit successor chain, not through an unrelated newer row.
                 pending, seen = [check], set()
@@ -1078,23 +1147,21 @@ class _Derivation:
                     pending.extend(c for c in self.checks_by_target[key_of(check.body["target"])]
                                    if c.body["supersedes"] == pinned_of(candidate))
                 if not usable:
-                    return False
-            return all(key_of(ref) in consumed_claims for ref in body["claim_refs"])
+                    info = self.judgment_info(check)
+                    return reject(cov, "unusable_check", check_ref=pinned_of(check),
+                                  state=info["state"], freshness=info["freshness"], superseded=info["superseded"])
+                if obligation is None or not obligation.get("satisfied"):
+                    return reject(cov, "unsatisfied_obligation", check_ref=pinned_of(check),
+                                  obligation_id=None if obligation is None else obligation["id"])
+            unconsumed = [ref for ref in body["claim_refs"] if key_of(ref) not in consumed_claims]
+            return not unconsumed or reject(cov, "unconsumed_claims", claim_refs=unconsumed)
 
         usable = {cov.id: completed(cov) for rows in coverages.values() for cov in rows}
-        for (owner, anchor_id), argument_ids in sorted(requirements.items()):
-            if anchor_id in excluded:
-                continue
-            anchor = snap.live("anchors", anchor_id)
-            if anchor is None:
-                problems.append(f"proof coverage for {owner}: anchor {anchor_id} is missing")
-                continue
-            end = len(anchor.body["excerpt"])
-            intervals = sorted((c.body["start_offset"], c.body["end_offset"])
-                               for c in coverages.get(anchor_id, [])
-                               if c.body["argument_id"] in argument_ids and usable[c.id])
+        reported = set()
+
+        def uncovered(intervals, end):
             cursor, missing = 0, []
-            for start, stop in intervals:
+            for start, stop in sorted(intervals):
                 if start < 0 or stop > end or stop < start:
                     continue
                 if start > cursor:
@@ -1102,10 +1169,39 @@ class _Derivation:
                 cursor = max(cursor, stop)
             if cursor < end:
                 missing.append([cursor, end])
+            return missing
+
+        for (owner, anchor_id), argument_ids in sorted(requirements.items()):
+            if anchor_id in excluded:
+                continue
+            anchor = snap.live("anchors", anchor_id)
+            if anchor is None:
+                problems.append(f"proof coverage for {owner}: anchor {anchor_id} is missing")
+                self.coverage_diagnostics.append({"code": "missing_anchor", "argument_ids": sorted(argument_ids),
+                                                  "owner": owner, "anchor_id": anchor_id})
+                continue
+            end = len(anchor.body["excerpt"])
+            relevant = [c for c in coverages.get(anchor_id, []) if c.body["argument_id"] in argument_ids]
+            missing = uncovered(((c.body["start_offset"], c.body["end_offset"])
+                                 for c in relevant if usable[c.id]), end)
             if missing:
                 spans = ", ".join(f"[{a}, {b})" for a, b in missing)
                 problems.append(f"proof coverage for {owner}, anchor {anchor_id}: "
                                 f"uncovered or unchecked spans {spans}")
+                # Explain only rows that leave required spans unchecked. An
+                # unused or redundant row must not create a new completion gate.
+                for cov in relevant:
+                    if cov.id in reported or not any(cov.body["start_offset"] < stop and
+                            cov.body["end_offset"] > start for start, stop in missing):
+                        continue
+                    self.coverage_diagnostics.extend(rejected[cov.id])
+                    reported.add(cov.id)
+                absent = uncovered(((c.body["start_offset"], c.body["end_offset"]) for c in relevant), end)
+                identity = (anchor_id, tuple(sorted(argument_ids)), tuple(map(tuple, absent)))
+                if absent and identity not in reported:
+                    self.coverage_diagnostics.append({"code": "missing_coverage", "argument_ids": sorted(argument_ids),
+                        "owner": owner, "anchor_id": anchor_id, "spans": absent})
+                    reported.add(identity)
         return problems
 
     def _reviewed_boundary(self, argument):
@@ -1485,6 +1581,9 @@ def derive_full(db: Database, *, revision: int | None = None, audit_id: str | No
                     "judgments_in_older_context": context_changed},
         "audits": [a.id for a in snap.all("audits")],
         "problems": derivation.problems,
+        "coverage_diagnostics": [coverage_diagnostic(row) for row in derivation.coverage_diagnostics[:100]],
+        "coverage_diagnostic_count": len(derivation.coverage_diagnostics),
+        "coverage_diagnostics_truncated": len(derivation.coverage_diagnostics) > 100,
     }
 
 

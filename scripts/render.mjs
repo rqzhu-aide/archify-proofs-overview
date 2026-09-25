@@ -547,7 +547,16 @@ function issueHtml(row) {
 
 function relationHtml(use, graph, incoming) {
   const other = graph.nodes.get(incoming ? use.from : use.to);
-  return `<li><button type="button" data-proof-focus="${esc(other.id)}">${esc(other.label)}</button> ${qualificationHtml(use)}<div>${formulaHtml(use.reason_html || esc(use.reason))}</div>${issueHtml(use)}${use.source_display ? `<small>${esc(use.source_display)}</small>` : ''}${passagesHtml(use)}</li>`;
+  return `<li><button type="button" data-proof-focus="${esc(other.id)}">${esc(other.label)}</button> ${qualificationHtml(use)}<div class="proof-contribution">${formulaHtml(use.reason_html || esc(use.reason))}</div>${issueHtml(use)}${fidelityBadgeHtml(use.fidelity)}</li>`;
+}
+
+function connectionEvidenceHtml(use, graph) {
+  const label = `${graph.nodes.get(use.from).label} → ${graph.nodes.get(use.to).label}`;
+  return `<details class="proof-use-evidence" data-proof-evidence-use="${esc(use.id)}"><summary>${esc(label)} (${esc(useTypes[use.type])})${use.regime ? `: ${formulaHtml(use.regime_html || esc(use.regime))}` : ''}</summary>${sourceHtml(use)}${passagesHtml(use)}</details>`;
+}
+
+function proofIdeaHtml(node) {
+  return node.proof_idea ? `<div class="proof-idea">${formulaHtml(node.proof_idea_html || esc(node.proof_idea))}</div>` : '';
 }
 
 function qualificationHtml(use) {
@@ -569,23 +578,26 @@ function detailUseHtml(use, graph) {
 
 function detailSectionHtml(detail, graph) {
   const annotations = graph.detailUses.filter((use) => detailAnchor(use, graph) === detail.id);
-  return `<section class="proof-detail" data-proof-detail="${esc(detail.id)}"><h5><span class="proof-detail-kind">${esc(detailKinds[detail.kind])}</span> ${esc(detail.label)}${detail.caption ? `: ${esc(detail.caption)}` : ''}</h5><div class="proof-statement">${formulaHtml(detail.statement_html)}</div>${issueHtml(detail)}${fidelityBadgeHtml(detail.fidelity)}${passagesHtml(detail)}${annotations.map((use) => detailUseHtml(use, graph)).join('')}</section>`;
+  return `<section class="proof-detail" data-proof-detail="${esc(detail.id)}"><h5><span class="proof-detail-kind">${esc(detailKinds[detail.kind])}</span> ${esc(detail.label)}${detail.caption ? `: ${esc(detail.caption)}` : ''}</h5><div class="proof-statement">${formulaHtml(detail.statement_html)}</div>${detail.proof_idea ? `<section class="proof-reading-section proof-logic-section"><h5>Proof idea</h5>${proofIdeaHtml(detail)}</section>` : ''}${issueHtml(detail)}${fidelityBadgeHtml(detail.fidelity)}${passagesHtml(detail)}${annotations.map((use) => detailUseHtml(use, graph)).join('')}</section>`;
 }
 
 function fullItemHtml(node, graph, { hover = false } = {}) {
   const incoming = graph.incoming.get(node.id), outgoing = graph.outgoing.get(node.id);
   if (hover) return `<strong>${esc(node.label)}</strong><p class="proof-hover-caption">${esc(node.caption || kinds[node.kind][0])}</p>${sourceHtml(node)}<p class="proof-hint">Click or press Enter for the statement and connections.</p>`;
   const details = graph.detailsByOwner.get(node.id) || [];
+  const connections = [...new Map([...incoming, ...outgoing].map((use) => [use.id, use])).values()];
   return `
-    ${node.statement_form === 'synopsis' ? '<p class="proof-hint proof-statement-form">Statement synopsis</p>' : ''}<div class="proof-statement">${formulaHtml(node.statement_html)}</div>${sourceHtml(node)}${issueHtml(node)}${reviewLineHtml(node)}
-      ${Array.isArray(node.aliases) && node.aliases.length ? `<p class="proof-hint">Also identified as: ${node.aliases.map((alias) => esc(alias)).join(', ')}</p>` : ''}${passagesHtml(node)}
+    <section class="proof-reading-section proof-statement-section"><h4>${node.statement_form === 'synopsis' ? 'Statement synopsis' : 'Statement'}</h4><div class="proof-statement">${formulaHtml(node.statement_html)}</div></section>
+      <section class="proof-reading-section proof-logic-section proof-dependencies">${node.proof_idea ? `<h4>Proof idea</h4>${proofIdeaHtml(node)}<h5>How the inputs contribute (${incoming.length})</h5>` : `<h4>How the inputs contribute (${incoming.length})</h4>`}${incoming.length ? `<ul>${incoming.map((use) => relationHtml(use, graph, true)).join('')}</ul><p class="proof-hint">These are recorded inputs to the argument. Their joint sufficiency has not been verified by this overview.</p>` : '<p>No prerequisite use is recorded in this overview.</p>'}</section>
+      ${issueHtml(node)}${reviewLineHtml(node)}
+      <div class="proof-dependencies proof-downstream"><h4>Used by (${outgoing.length})</h4>${outgoing.length ? `<ul>${outgoing.map((use) => relationHtml(use, graph, false)).join('')}</ul>` : '<p>No downstream use is recorded in this overview.</p>'}</div>
+      <details class="proof-evidence"><summary>Sources and locators</summary>${sourceHtml(node)}${Array.isArray(node.aliases) && node.aliases.length ? `<p class="proof-hint">Also identified as: ${node.aliases.map((alias) => esc(alias)).join(', ')}</p>` : ''}${passagesHtml(node)}${connections.length ? `<h5>Connection evidence</h5>${connections.map((use) => connectionEvidenceHtml(use, graph)).join('')}` : ''}</details>
       ${details.length ? `<div class="proof-details"><h4>Intermediate steps (${details.length})</h4>${details.map((detail) => detailSectionHtml(detail, graph)).join('')}</div>` : ''}
-      <div class="proof-dependencies"><h4>Prerequisites used (${incoming.length})</h4>${incoming.length ? `<ul>${incoming.map((use) => relationHtml(use, graph, true)).join('')}</ul><p class="proof-hint">These are recorded inputs to the argument. Their joint sufficiency has not been verified by this overview.</p>` : '<p>No prerequisite use is recorded in this overview.</p>'}
-      <h4>Used by (${outgoing.length})</h4>${outgoing.length ? `<ul>${outgoing.map((use) => relationHtml(use, graph, false)).join('')}</ul>` : '<p>No downstream use is recorded in this overview.</p>'}</div>`;
+      `.trim();
 }
 
 function fullUseHtml(use, graph) {
-  return `<h4>${esc(graph.nodes.get(use.from).label)} → ${esc(graph.nodes.get(use.to).label)}</h4>${qualificationHtml(use)}<div class="proof-statement">${formulaHtml(use.reason_html || esc(use.reason))}</div>${issueHtml(use)}${sourceHtml(use)}${passagesHtml(use)}${reviewLineHtml(use)}<p class="proof-hint">This connection records a use in the argument. This overview does not verify that inference.</p>`;
+  return `<h4>${esc(graph.nodes.get(use.from).label)} → ${esc(graph.nodes.get(use.to).label)}</h4>${qualificationHtml(use)}<section class="proof-reading-section proof-logic-section"><h4>How this input contributes</h4><div class="proof-idea">${formulaHtml(use.reason_html || esc(use.reason))}</div></section>${issueHtml(use)}${reviewLineHtml(use)}<details class="proof-evidence"><summary>Sources and locators</summary>${sourceHtml(use)}${passagesHtml(use)}</details><p class="proof-hint">This connection records a use in the argument. This overview does not verify that inference.</p>`;
 }
 
 function fullIndexHtml(data, graph, open = false) {
@@ -688,8 +700,10 @@ function proofCss(data) {
     .overview-map-node[data-kind="${kind}"]{fill:var(--proof-kind,${dark});stroke:var(--proof-kind,${dark})}
     .semantic-lens-kind[data-kind="${kind}"]{--lens-color:var(--proof-kind,${dark})}
     .proof-legend [data-kind="${kind}"]::before{background:var(--proof-kind,${dark})}
-  `).join('');
+  `.trim()).join('\n');
   return `<style id="proof-overview-style">
+    :root{--proof-reading-text:#172033;--proof-reading-muted:#475569;--proof-statement-bg:#eff6ff;--proof-statement-accent:#3b82f6;--proof-statement-label:#1e40af;--proof-logic-bg:#f5f3ff;--proof-logic-accent:#8b5cf6;--proof-logic-label:#5b21b6}
+    [data-theme="dark"]{--proof-reading-text:#e5eaf3;--proof-reading-muted:#b6c5d9;--proof-statement-bg:#142238;--proof-statement-accent:#60a5fa;--proof-statement-label:#bfdbfe;--proof-logic-bg:#241d36;--proof-logic-accent:#a78bfa;--proof-logic-label:#ddd6fe}
     ${palette}
     svg[data-focus-active] .proof-edge-badge{opacity:.13}svg[data-reach-active] .proof-edge-badge{opacity:.09}${badgeFocus}
     .proof-edge{fill:none;stroke:var(--arrow)} .proof-uncertain{stroke-dasharray:6 4}.proof-arrowhead{fill:var(--arrow)}
@@ -717,6 +731,12 @@ function proofCss(data) {
     .proof-hint,.proof-uncertainty{font-size:11px;color:var(--text-muted);line-height:1.55}.proof-dependencies{border-top:1px solid var(--panel-border);padding-top:10px;margin-top:10px}
     .proof-dependencies h4{margin:10px 0 6px;font-size:11px;color:var(--text)}.proof-dependencies p,.proof-dependencies li{font-size:11px;line-height:1.6;color:var(--text-muted)}
     .proof-dependencies ul{padding-left:18px;margin:6px 0}.proof-dependencies li{margin:5px 0}.proof-dependencies small{display:block;color:var(--text-dim)}
+    .proof-reading-section{--text:var(--proof-reading-text);--text-muted:var(--proof-reading-muted);--text-dim:var(--proof-reading-muted);color:var(--text);border:1px solid var(--panel-border);border-left:3px solid var(--proof-section-accent);border-radius:6px;padding:9px 12px;margin:10px 0;min-width:0}
+    .proof-statement-section{--proof-section-accent:var(--proof-statement-accent);--proof-section-label:var(--proof-statement-label);background:var(--proof-statement-bg)}
+    .proof-logic-section{--proof-section-accent:var(--proof-logic-accent);--proof-section-label:var(--proof-logic-label);background:var(--proof-logic-bg)}
+    .proof-reading-section h4{margin:0 0 5px;font-size:12px;line-height:1.5;color:var(--proof-section-label)}.proof-reading-section h5{margin:10px 0 5px;font-size:11px;line-height:1.5;color:var(--proof-section-label)}
+    .proof-reading-section .proof-statement{margin:0}.proof-idea{font-family:Georgia,'Times New Roman',serif;font-size:15px;line-height:1.55;overflow-wrap:anywhere;white-space:pre-line}.proof-logic-section li{font-size:12px;color:var(--text)}.proof-contribution{margin:3px 0;overflow-wrap:anywhere}.proof-logic-section>.proof-hint{margin:7px 0 0}
+    .proof-downstream{padding-top:0}.proof-evidence{border-top:1px solid var(--panel-border);margin:10px 0;padding-top:8px}.proof-evidence summary{cursor:pointer;font-size:11px;color:var(--text-muted);overflow-wrap:anywhere}.proof-evidence summary:focus-visible{outline:2px solid var(--text);outline-offset:3px}.proof-evidence h5{font-size:11px;color:var(--text);margin:10px 0 5px}.proof-use-evidence{margin:8px 0}.proof-use-evidence>summary{line-height:1.6}
     [data-proof-focus]{border:0;background:transparent;color:var(--text);text-decoration:underline;font:inherit;cursor:pointer;padding:0}
     .proof-excerpt{font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text-muted);line-height:1.5}
     .proof-passages details{margin:8px 0}.proof-passages summary{cursor:pointer;font-size:11px;overflow-wrap:anywhere}.proof-statement-form{margin:8px 0 -4px;font-weight:600}
@@ -725,7 +745,7 @@ function proofCss(data) {
     .proof-attribution{font-size:10px;color:var(--text-dim);margin:15px 0 0}
     .proof-render-warnings{font-size:12px;line-height:1.6;color:var(--text);border:1px solid var(--panel-border);border-radius:8px;padding:10px 14px;margin:12px 0}.proof-render-warnings ul{padding-left:20px;margin:5px 0}.math-fallback{font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere;border-bottom:1px dotted var(--text-muted)}
     @media(max-width:720px){.proof-main-list button{max-width:200px}.proof-view-controls p{width:100%}.diagram-container>svg{max-height:560px}}
-    @media print{#proof-tooltip,#focus-chip,.proof-view-controls{display:none!important}.diagram-container>svg{max-height:none}.proof-index>summary{display:none}.proof-index article{display:block}.proof-index .proof-statement{color:#111}.proof-index details[open]>summary{display:none}}
+    @media print{#proof-tooltip,#focus-chip,.proof-view-controls{display:none!important}.diagram-container>svg{max-height:none}.proof-index>summary{display:none}.proof-index article{display:block}.proof-reading-section{--proof-reading-text:#172033;--proof-reading-muted:#475569;--proof-statement-bg:#eff6ff;--proof-statement-label:#1e40af;--proof-logic-bg:#f5f3ff;--proof-logic-label:#5b21b6}.proof-index .proof-statement{color:#111}.proof-index details[open]>summary{display:none}}
   </style>`;
 }
 

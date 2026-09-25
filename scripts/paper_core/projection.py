@@ -8,10 +8,10 @@ authored here, and the renderer draws the result without a second color policy.
 from __future__ import annotations
 
 import hashlib
-from collections import OrderedDict, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 
 from . import PROJECTION_VERSION
-from .assessment import _triage_assessment, derive_full, key_of, pinned_of, reduce, ref_of
+from .assessment import PROOF_CHECK_KINDS, _triage_assessment, derive_full, key_of, pinned_of, reduce, ref_of
 from .canonical import compact_json
 from .contract import INTERMEDIATE_KINDS, MAJOR_KINDS
 from .storage import Database, Record
@@ -69,6 +69,94 @@ def public_assessment(assessment: dict) -> dict:
             "missing_obligation_ids": list(assessment["missing_obligation_ids"]),
             "independent_review": assessment["independent_review"],
             **{key: assessment[key] for key in ("availability", "local_state", "local_label") if key in assessment}}
+
+
+def factual_summary(derivation, result):
+    """Snapshot facts shared by status and HTML; no authored completion narrative."""
+    from .work import record_label
+    snap, audit = derivation.snap, derivation.audit
+    def named(ref):
+        return {"ref": dict(ref), "label": record_label(snap, ref)}
+
+    checks = {"current_complete": 0, "draft": 0, "needs_review": 0,
+              "historical_complete": 0, "superseded": 0}
+    for info in result["judgments"].values():
+        if info["superseded"]:
+            checks["superseded"] += 1
+        elif info["state"] == "draft":
+            checks["draft"] += 1
+        elif info["freshness"] == "current":
+            checks["current_complete"] += 1
+        elif info["freshness"] == "historical":
+            checks["historical_complete"] += 1
+        else:
+            checks["needs_review"] += 1
+    outcomes = Counter(o["outcome"] for o in result["obligations"] if o["required"]
+        and o["role"] == "primary" and o["kind"] in PROOF_CHECK_KINDS
+        and o["state"] == "complete" and o["freshness"] == "current")
+    statements = []
+    source_ids, anchors = set(), set()
+    for ref in result["statements"]:
+        row = named(ref)
+        row["kind"] = snap.kind_of(ref)
+        row["availability"] = result["assessments"].get(key_of(ref), {}).get("availability", "conditional")
+        row["scope_id"] = snap.exact_scope(ref)
+        statements.append(row)
+        record = snap.get(ref)
+        anchors.update(p["anchor_id"] for p in record.body.get("passages", []))
+        spec = snap.target_spec(ref)
+        if spec:
+            anchors.update(spec.body["evidence_refs"])
+        for key in result["route_records"].get(key_of(ref), []):
+            collection, identity = key.split(":", 1)
+            route_record = snap.live(collection, identity)
+            if route_record:
+                anchors.update(route_record.body.get("evidence_refs", []))
+    for identity in anchors:
+        anchor = snap.live("anchors", identity)
+        if anchor:
+            source_ids.add(anchor.body["source_id"])
+    source_limits = []
+    for ref in result["source_limits"]:
+        record = snap.get(ref)
+        if record:
+            source = snap.live("sources", record.body["source_id"])
+            source_limits.append({**named(ref), "source_path": source.body["path"] if source else None,
+                                  "description": record.body["description"]})
+            source_ids.add(record.body["source_id"])
+    for source in snap.all("sources"):
+        if source.body.get("limitation") and (source.id in source_ids or result["mode"] in ("full", "overview")):
+            source_limits.append({**named(ref_of(source)), "source_path": source.body["path"],
+                                  "description": source.body["limitation"]})
+    unresolved_external = [row for row in statements if row["availability"] != "available"
+                           and snap.kind_of(row["ref"]) == "external_result"]
+    indicators = Counter(result["independent"].values())
+    required = bool(audit and audit.body["independent_required"])
+    state = max(indicators, key=lambda value: INDICATOR_RANK[value]) if indicators else \
+        "pending" if required else "not_required"
+    qualification = snap.live("qualifications", audit.body["qualification_id"]) \
+        if audit and audit.body["qualification_id"] else None
+    exposures = Counter(r.body["exposure"] for r in derivation.responses.values()
+                        if audit is not None and r.body["audit_id"] == audit.id)
+    exclusions = []
+    for entry in result["scope"]["exclusions"]:
+        exclusions.append({**entry, "label": record_label(snap, entry["target"]) if entry.get("target") else
+                            "; ".join(record_label(snap, {"collection": "anchors", "id": aid})
+                                      for aid in entry["source_anchor_ids"])})
+    return {"revision": result["revision"], "audit_id": result["audit_id"],
+            "process_complete": result["progress"]["process_complete"],
+            "scope": {"mode": result["mode"], "requested": [named(ref) for ref in result["scope"]["target_refs"]],
+                      "exclusions": exclusions, "closure_statement_count": len(statements)},
+            "work": {**result["progress"], "checks": checks,
+                     "current_primary_outcomes": {outcome: outcomes[outcome] for outcome in
+                                                  ("supported", "gap", "refuted", "inconclusive")}},
+            "statement_support": {"counts": {value: sum(row["availability"] == value for row in statements)
+                                                for value in ("available", "conditional", "unavailable")},
+                                  "unresolved": [row for row in statements if row["availability"] != "available"]},
+            "source_limits": source_limits, "unresolved_external_sources": unresolved_external,
+            "independent_review": {"required": required, "state": state, "statement_counts": dict(indicators),
+                                   "response_exposures": dict(exposures),
+                                   "qualification_limitations": [] if qualification is None else qualification.body["limitations"]}}
 
 
 def _dedupe_constituents(constituents: list) -> list:
@@ -838,6 +926,7 @@ class _Projector:
             "source_limits": _ids(A["source_limits"]),
             "limitations": list(A["problems"]),
             "published_revision": A["published_revision"],
+            "factual": factual_summary(self.d, A),
         }
         # The imported overview's boundaries remain provenance even when an
         # audit selects a different set of targets. Do not merge the two scopes.
@@ -959,4 +1048,4 @@ def build_projection(db: Database, *, revision: int | None = None, audit_id: str
 
 
 __all__ = ["PROOF_RECORD_COLLECTIONS", "SECTION_ORDER", "SECTION_TITLES", "build_projection", "connection_id",
-           "project", "public_assessment"]
+           "factual_summary", "project", "public_assessment"]

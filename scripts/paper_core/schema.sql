@@ -1,4 +1,4 @@
--- Proofcheck storage format 3, record contract 3.
+-- Proofcheck storage format 4, record contract 4.
 -- Normative DDL scaffold. JSON body and cross-record semantic validation belong
 -- to the core described in record-contract.md. This is not a runtime migration.
 PRAGMA foreign_keys = ON;

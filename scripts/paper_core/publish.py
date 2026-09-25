@@ -211,6 +211,32 @@ def _visible_failures(scan, projection):
         "Recorded items; no audit selected" if projection["audit_id"] is None else "No explicit audit targets recorded")
     if len(mode) != 1 or text(mode[0]) != scope["mode"] or len(targets) != 1 or text(targets[0]) != expected_targets:
         failures.append("visible audit scope differs from the canonical scope")
+    factual = projection["summary"].get("factual")
+    if factual is not None:
+        support, review = factual["statement_support"], factual["independent_review"]
+        outcomes = "; ".join(f"{outcome}: {factual['work']['current_primary_outcomes'][outcome]}"
+                             for outcome in ("supported", "gap", "refuted", "inconclusive"))
+        expected = {
+            "snapshot": f"These facts describe snapshot {factual['revision']}. Process completion is separate from the mathematical outcomes.",
+            "primary_outcomes": "Saved check counts include nonqualifying independent work. Current primary mathematical outcomes: " + outcomes + ".",
+            "statement_support": "Statement support at each statement's recorded scope: " + "; ".join(
+                f"{state} {support['counts'][state]}" for state in ("available", "conditional", "unavailable")) + ".",
+            "independent_review": "Independent review: " + review["state"].replace("_", " ") + ".",
+            **{f"checks.{key}": str(value) for key, value in factual["work"]["checks"].items()},
+            **{f"unresolved.{index}": f"{row['label']}: {row['availability']}" +
+               (f" (declared {row['kind']}; scope-dependent premise)" if row.get("kind") in ("assumption", "definition") else "")
+               for index, row in enumerate(support["unresolved"])},
+            **{f"source_limits.{index}": f"{row.get('source_path') or row['label']}: {row['description']}"
+               for index, row in enumerate(factual["source_limits"])},
+            **{f"external.{index}": f"{row['label']}: {row['availability']}"
+               for index, row in enumerate(factual["unresolved_external_sources"])},
+            **{f"qualification.{index}": note for index, note in enumerate(review["qualification_limitations"])},
+            **{f"exclusion.{index}": f"{row['label']}: {row['reason']} Consequence: {row['consequence']}"
+               for index, row in enumerate(factual["scope"]["exclusions"])},
+        }
+        shown = [(e["attrs"]["data-proof-fact"], text(e)) for e in scan.elements if "data-proof-fact" in e["attrs"]]
+        if sorted(shown) != sorted(expected.items()):
+            failures.append("visible scientific summary differs from the assessed snapshot facts")
     return failures
 
 

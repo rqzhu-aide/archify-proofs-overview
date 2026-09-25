@@ -5,6 +5,7 @@ from copy import deepcopy
 from html.parser import HTMLParser
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -155,6 +156,56 @@ class RendererRecordsTests(unittest.TestCase):
         for use_id, excerpt in (("use-moment", "FIRST USE PASSAGE"), ("use-tail", "SECOND USE PASSAGE")):
             for prefix in ("proof-use-", "proof-index-use-"):
                 self.assertIn(excerpt, " ".join(rendered.regions[prefix + use_id]))
+
+    def test_result_sections_prioritize_authored_logic_and_retain_visible_status(self):
+        node = self.data["items"][1]
+        node.update({"fidelity": "needs_attention", "issue": "Confirm the applicable tail regime."})
+        self.data["uses"][1]["fidelity"] = "stale"
+        self.data["uses"][1]["issue"] = "Check the tail condition."
+        _, baseline, _ = self.render()
+        node.update({"proof_idea": "Combine the two bounds to control x.",
+                     "proof_idea_html": 'Combine the two bounds to control <math><mi>x</mi></math>.'})
+        _, html, rendered = self.render()
+        self.assertEqual(re.search(r"<svg[\s\S]*?</svg>", baseline).group(),
+                         re.search(r"<svg[\s\S]*?</svg>", html).group(),
+                         "A proof idea must not change graph nodes or layout.")
+        for prefix, tag in (("proof-detail-", "template"), ("proof-index-item-", "article")):
+            panel = re.search(fr'<{tag}[^>]*id="{prefix}rate"[^>]*>([\s\S]*?)</{tag}>', html).group(1)
+            self.assertIn('proof-statement-section"><h4>Statement</h4>', panel)
+            self.assertIn('<h4>Proof idea</h4>', panel)
+            self.assertIn('proof-idea">Combine the two bounds to control <span class="proof-formula"><math>', panel)
+            self.assertLess(panel.index("The rate follows."), panel.index("Combine the two bounds"))
+            self.assertLess(panel.index("Combine the two bounds"), panel.index("How the inputs contribute"))
+            evidence = panel.index('<details class="proof-evidence">')
+            for visible in ("Use the moment bound.", "Use the separate tail argument.",
+                            "Confirm the applicable tail regime.", "Check the tail condition.",
+                            'data-proof-fidelity="needs_attention"', 'data-proof-fidelity="stale"'):
+                self.assertLess(panel.index(visible), evidence)
+            for use_id, excerpt in (("use-moment", "FIRST USE PASSAGE"), ("use-tail", "SECOND USE PASSAGE")):
+                self.assertIn(f'data-proof-evidence-use="{use_id}"', panel)
+                self.assertGreater(panel.index(excerpt), evidence)
+            self.assertNotIn("Proof idea", " ".join(rendered.regions[prefix + "bound"]))
+        self.assertEqual(rendered.records["items"][1], node)
+
+    def test_index_and_intermediate_proof_ideas_keep_math_and_escape_plain_text(self):
+        self.data["graph_mode"] = "index"
+        self.data["items"][1]["proof_idea"] = "Combine <untrusted> bounds."
+        self.data["details"] = [{"id": "bound-detail", "owner": "bound", "kind": "claim",
+                                 "label": "Intermediate claim", "statement_html": "The smaller bound holds.",
+                                 "proof_idea": "Apply the estimate to x.",
+                                 "proof_idea_html": 'Apply the estimate to <math><mi>x</mi></math>.'}]
+        receipt, html, rendered = self.render()
+        rate = " ".join(rendered.regions["proof-index-item-rate"])
+        self.assertIn("Proof idea", rate)
+        self.assertIn("Combine <untrusted> bounds.", rate)
+        self.assertNotIn("<untrusted>", html)
+        bound = " ".join(rendered.regions["proof-index-item-bound"])
+        self.assertIn("Apply the estimate to", bound)
+        self.assertIn('proof-idea">Apply the estimate to <span class="proof-formula"><math>', html)
+        self.assertIn("How the inputs contribute (0)", bound)
+        self.assertIn("No prerequisite use is recorded", bound)
+        self.assertIn('[data-theme="dark"]{--proof-reading-text:', html)
+        self.assertEqual(receipt["graph_preservation"]["status"], "pass")
 
     def test_cycle_and_self_reference_have_complete_index_representation(self):
         self.data["graph_mode"] = "index"

@@ -7,7 +7,7 @@ supplier's binding.
 """
 from __future__ import annotations
 
-from .refs import facet_digests, membership_digest, relation_members
+from .refs import facet_digests, membership_digest, relation_members, setup_digest
 from .semantics import application, target_spec, boundaries
 
 BOUND_COLLECTIONS = ("checks", "observations", "reconciliations", "reuse_decisions", "source_reviews")
@@ -267,11 +267,13 @@ def binding_changes(state, binding: dict) -> dict:
         ref = entry["ref"]
         live = state.live(ref["collection"], ref["id"])
         actual = None
+        expected = entry.get("setup_digest", entry["digest"])
         if live is not None:
             facets = facet_digests(live.collection, live.body)
-            actual = facets.get(entry["facet"]) or facets["full"]
-        if actual != entry["digest"]:
-            records.append({"ref": ref, "facet": entry["facet"], "expected": entry["digest"], "actual": actual,
+            actual = (setup_digest(live.collection, live.body) if "setup_digest" in entry
+                      else facets.get(entry["facet"]) or facets["full"])
+        if actual != expected:
+            records.append({"ref": ref, "facet": entry["facet"], "expected": expected, "actual": actual,
                             "live_version": None if live is None else live.version})
     for entry in binding["relations"]:
         actual = membership_digest(state.relation_members(entry["relation"], entry["key"]))
@@ -281,6 +283,10 @@ def binding_changes(state, binding: dict) -> dict:
             if semantic is not None and sorted([[c, i] for c, i, _ in state.relation_members(
                     entry["relation"], entry["key"])]) == semantic["members"]:
                 continue
+            if semantic is not None and semantic.get("neutral_context"):
+                from .packets import neutral_relation_covered
+                if neutral_relation_covered(state, entry, binding["records"]):
+                    continue
             relations.append({"relation": entry["relation"], "key": entry["key"], "expected": entry["digest"],
                               "actual": actual})
     return {"records": records, "relations": relations}
@@ -434,6 +440,7 @@ def compute_bindings(state, collection: str, body: dict, *, packet=None) -> dict
                 'overview_context': {'selection_id':selection_id, 'target':body['target'],
                                      'digest':comparison_context(state,body['target'],selection_id)}}
     b = _Builder(state)
+    neutral_context = None
     if collection == "checks":
         _bind_check(b, body)
         _work_composition_checks(b, body, packet)
@@ -441,6 +448,14 @@ def compute_bindings(state, collection: str, body: dict, *, packet=None) -> dict
             response = state.live('responses', body['response_id'])
             original = state.db.packet(response.body['packet_id']) if response else None
             manifest = original['manifest'] if original else {}
+            from .packets import independent_context_binding
+            neutral_context = independent_context_binding(state, manifest)
+            if neutral_context is not None:
+                changes = binding_changes(state, neutral_context)
+                if changes["records"] or changes["relations"]:
+                    from .errors import ConflictError
+                    raise ConflictError("original independent source or applicable setup changed; obtain a renewed review",
+                                        records=[changes])
             for ref in manifest.get('supplied_derivation_refs', []):
                 check = b.add_ref(ref, 'full')
                 if check:
@@ -486,6 +501,25 @@ def compute_bindings(state, collection: str, body: dict, *, packet=None) -> dict
     manifest = (packet or {}).get("manifest", packet or {})
     identities = _semantic_members(b) if collection == 'checks' or _semantic_membership_origin(state, collection, body, manifest) else None
     result = b.result(packet)
+    if neutral_context is not None:
+        result["neutral_setup_validated"] = 1
+        consumed = {(row["ref"]["collection"], row["ref"]["id"], row["ref"]["version"], row["facet"],
+                     "setup_digest" in row): row
+                    for row in result["records"]}
+        consumed.update({(row["ref"]["collection"], row["ref"]["id"], row["ref"]["version"], row["facet"],
+                          "setup_digest" in row): row
+                         for row in neutral_context["records"]})
+        result["records"] = [consumed[key] for key in sorted(consumed)]
+        relations = {(row["relation"], row["key"]["collection"], row["key"]["id"]): row
+                     for row in result["relations"]}
+        for row in neutral_context["relations"]:
+            relations.setdefault((row["relation"], row["key"]["collection"], row["key"]["id"]), row)
+        result["relations"] = [relations[key] for key in sorted(relations)]
+        memberships = {(row["relation"], row["key"]["collection"], row["key"]["id"]): row
+                       for row in identities or []}
+        for row in neutral_context["semantic_memberships"]:
+            memberships.setdefault((row["relation"], row["key"]["collection"], row["key"]["id"]), row)
+        identities = [memberships[key] for key in sorted(memberships)]
     # Source currentness is tied to consumed sources/anchors. Adding an unrelated
     # audit source is not a mathematical change to every prior examination.
     result['source_context_digest'] = None

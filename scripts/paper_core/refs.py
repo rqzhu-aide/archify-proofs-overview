@@ -28,6 +28,22 @@ def _pick(body, *names):
     return {name: body[name] for name in names}
 
 
+def setup_digest(collection: str, body: dict):
+    """Private source-selection projection, not a stored record facet.
+
+    Keep ordinary facet digests alongside this projection in bindings so older
+    readers can conservatively compare the recognized, broader facet.
+    """
+    fields = {
+        "arguments": ("target", "scope_id"),
+        "groups": ("argument_id", "scope_id", "case_scope_ids", "discharges"),
+        "uses": ("from", "to", "type", "group_id"),
+        "application_details": ("use_id", "group_id", "scope_id"),
+        "target_specs": ("target", "scope_id", "evidence_refs"),
+    }.get(collection)
+    return None if fields is None else digest({key: body.get(key) for key in fields})
+
+
 def facet_digests(collection: str, body: dict) -> dict:
     """Facet digests for one record version. Each facet is a function of that version alone."""
     facets = {"full": digest(body)}

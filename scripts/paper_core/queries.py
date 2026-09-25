@@ -10,13 +10,13 @@ from __future__ import annotations
 from collections import Counter
 
 from . import CONTRACT_NAME, CONTRACT_VERSION, CORE_VERSION, PROJECTION_VERSION, STORAGE_FORMAT
-from .assessment import Snapshot, derive_assessment
+from .assessment import Snapshot, derive_full
 from .bindings import BOUND_COLLECTIONS, binding_changes
 from .contract import extract_refs, validate_body
 from .ids import COLLECTIONS
 from .errors import InvalidRequest
 from .packets import source_context_digest
-from .projection import project, public_assessment
+from .projection import factual_summary, project, public_assessment
 from .storage import Database
 
 
@@ -135,13 +135,13 @@ def validate_snapshot(db: Database, *, revision=None) -> dict:
     }
 
 
-def _pick_audit(snap: Snapshot, audit_id):
+def _pick_audit(db: Database, revision, audit_id):
     if audit_id is not None:
-        audit = snap.live("audits", audit_id)
-        if audit is None:
-            raise InvalidRequest(f"audit {audit_id} is not live at revision {snap.revision}", code="AUDIT_UNKNOWN")
+        audit = db.latest_at("audits", audit_id, revision)
+        if audit is None or audit.retired:
+            raise InvalidRequest(f"audit {audit_id} is not live at revision {revision}", code="AUDIT_UNKNOWN")
         return audit
-    audits = snap.all("audits")
+    audits = db.records_at(revision, "audits")
     if not audits:
         return None
     # the audit registered most recently (highest creating revision, then id) is the default
@@ -151,12 +151,12 @@ def _pick_audit(snap: Snapshot, audit_id):
 def status(db: Database, *, audit_id=None, revision=None) -> dict:
     """Progress and presentation state of one snapshot; never fails for an incomplete assessment."""
     revision = _revision(db, revision)
-    snap = Snapshot(db, revision)
-    audit = _pick_audit(snap, audit_id)
-    result = derive_assessment(db, revision=revision, audit_id=None if audit is None else audit.id)
+    audit = _pick_audit(db, revision, audit_id)
+    derivation, result = derive_full(db, revision=revision, audit_id=None if audit is None else audit.id)
+    snap = derivation.snap
     papers = snap.all("papers")
     paper = papers[0] if len(papers) == 1 else None
-    counts = Counter(r.collection for r in db.records_at(revision))
+    counts = {collection: len(snap.all(collection)) for collection in COLLECTIONS if snap.all(collection)}
     sources = snap.all("sources")
     limited = [{"id": s.id, "path": s.body["path"], "limitation": s.body["limitation"]}
                for s in sources if s.body.get("limitation")]
@@ -182,6 +182,7 @@ def status(db: Database, *, audit_id=None, revision=None) -> dict:
         "mode": result["mode"],
         "process_complete": result["progress"]["process_complete"],
         "progress": result["progress"],
+        "factual_summary": factual_summary(derivation, result),
         "obligations": {"required": [o["id"] for o in result["obligations"] if o["required"]],
                         "unsatisfied": [o["id"] for o in result["obligations"] if o["required"] and not o["satisfied"]]},
         "assessments": assessments,

@@ -401,7 +401,8 @@ def _overview_edits(paper: Record, legacy: dict, mapper: _IdMapper, limitations:
         edits.append(_create("items", item_ids[it["id"]], {
             "kind": kind, "label": it["label"], "caption": it.get("caption") or "", "statement": it["statement"],
             "passages": passages, "aliases": list(it.get("aliases") or []), "uncertainty": uncertainty or None,
-            "origin": "source", "owner_id": item_ids.get(owner), "scope_id": None}))
+            "origin": "source", "owner_id": item_ids.get(owner), "scope_id": None,
+            **({"proof_idea": it["proof_idea"]} if "proof_idea" in it else {})}))
     use_ids = {}
     for u in payload["uses"]:
         for end in ("from", "to"):

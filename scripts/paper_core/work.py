@@ -9,7 +9,7 @@ import base64
 import json
 from collections import defaultdict, deque
 
-from .assessment import (PROOF_KINDS, TraversalLimit, derive_full, key_of,
+from .assessment import (COVERAGE_CAUSES, PROOF_KINDS, TraversalLimit, coverage_diagnostic, derive_full, key_of,
                          obligation_id, pinned_of, ref_of)
 from .canonical import compact_json, digest
 from .contract import INTERMEDIATE_KINDS
@@ -103,6 +103,72 @@ def _source_order(snap, target):
     return min(positions, default=("", 0, key_of(target)))
 
 
+def record_label(snap, ref):
+    """Short source-facing label; technical identities remain separate fields."""
+    record = snap.get(ref)
+    if record is None:
+        return key_of(ref)
+    body = record.body
+    if record.collection in ("groups", "target_specs", "proof_boundaries"):
+        target = body.get("conclusion") or body.get("target")
+        return record.collection.replace("_", " ") + " for " + record_label(snap, target)
+    if record.collection == "uses":
+        return record_label(snap, body["from"]) + " applied to " + record_label(snap, body["to"])
+    if record.collection == "coverage":
+        argument = snap.live("arguments", body["argument_id"])
+        return "proof coverage for " + (record_label(snap, argument.body["target"]) if argument else body["argument_id"])
+    if record.collection == "anchors":
+        source = snap.live("sources", body["source_id"])
+        return "source passage in " + (source.body["path"] if source else body["source_id"])
+    return body.get("label") or body.get("title") or body.get("path") or key_of(ref)
+
+
+def _recovery(derivation, refs, preserved, *, limit=5):
+    changes, judgments = {}, []
+    for ref in refs:
+        drift = derivation.judgment_changes.get(key_of(ref))
+        if not drift:
+            continue
+        judgments.append(ref)
+        for change in drift["records"]:
+            pin, facet = change["ref"], change["facet"]
+            identity = (key_of(pin), facet)
+            if identity in changes:
+                continue
+            old = derivation.snap.version(pin["collection"], pin["id"], pin["version"])
+            live = derivation.snap.get(pin)
+            fields = sorted(k for k in set(old.body if old else ()) | set(live.body if live else ())
+                            if (old.body.get(k) if old else None) != (live.body.get(k) if live else None))
+            changes[identity] = {"kind": "record", "ref": pin, "label": record_label(derivation.snap, pin),
+                                 "facet": facet, "live_version": change.get("live_version"), "fields": fields}
+        for change in drift["relations"]:
+            identity = (key_of(change["key"]), change["relation"])
+            changes[identity] = {"kind": "membership", "target": change["key"],
+                                 "label": record_label(derivation.snap, change["key"]),
+                                 "relation": change["relation"]}
+    if not changes:
+        return None
+    rows = list(changes.values())
+    return {"judgment_refs": judgments[:limit], "judgment_count": len(judgments),
+            "judgments_truncated": len(judgments) > limit, "changed_count": len(rows), "changes": rows[:limit],
+            "changes_truncated": len(rows) > limit, "preserved_local_count": len(preserved),
+            "preserved_local_sample": preserved[:limit], "preserved_local_truncated": len(preserved) > limit,
+            "next_action": "Review the changed inputs and renew only affected reasoning with an explicit successor; unchanged local checks remain available."}
+
+
+def _draft_signature(snap, info):
+    record = snap.get(info["ref"])
+    binding = snap.binding(record)
+    if binding is None:
+        return None
+    bound = binding.get("bindings", binding)
+    mathematical = sorted((key_of(r["ref"]), r["facet"], r["digest"]) for r in bound["records"])
+    memberships = bound.get("semantic_memberships", bound["relations"])
+    return digest({"body": {k: record.body[k] for k in
+                   ("reasoning", "evidence_refs", "conditions", "next_action", "supersedes")},
+                   "records": mathematical, "memberships": memberships})
+
+
 def build_work(derivation, assessment, *, focus=None):
     """Reuse an already assessed snapshot, including for projection and status."""
     snap, audit = derivation.snap, derivation.audit
@@ -114,9 +180,18 @@ def build_work(derivation, assessment, *, focus=None):
     tasks, diagnostics, prerequisites = {}, {}, defaultdict(set)
     task_contexts, task_order = defaultdict(set), {}
     draft_index, tasks_by_target, tasks_by_anchor = defaultdict(list), defaultdict(list), defaultdict(list)
+    preserved_by_argument = defaultdict(list)
     for judgment in assessment["judgments"].values():
         if judgment["state"] == "draft" and not judgment["superseded"]:
             draft_index[(key_of(judgment["target"]), judgment["kind"], judgment["role"])].append(judgment)
+        elif judgment["state"] == "complete" and judgment["freshness"] == "current" \
+                and not judgment["superseded"] and judgment["role"] == "primary" \
+                and judgment["target"]["collection"] in ("uses", "groups"):
+            argument = _task_argument(snap, judgment["target"])
+            if argument:
+                preserved_by_argument[key_of(argument)].append({"ref": judgment["ref"],
+                    "label": record_label(snap, judgment["target"]), "kind": judgment["kind"],
+                    "outcome": judgment["outcome"]})
     for drafts in draft_index.values():
         drafts.sort(key=lambda j: (j["revision"], j["ref"]["id"]))
 
@@ -154,8 +229,34 @@ def build_work(derivation, assessment, *, focus=None):
             "judgment_refs": obligation["check_refs"], "draft_refs": [d["ref"] for d in drafts],
             "next_action": next_action, "outcome": obligation["outcome"], "freshness": obligation["freshness"],
             "dependency_support": support}
+        recovery = _recovery(derivation, obligation["check_refs"],
+                             preserved_by_argument.get(key_of(argument), []) if argument else [])
+        if recovery:
+            tasks[oid]["recovery"] = recovery
+        if target["collection"] == "uses" and support != "available":
+            explanation = derivation.support_closure.explain(("use", target["id"]))
+            if explanation:
+                explanation["label"] = record_label(snap, explanation.get("target", target))
+                explanation["supplier"] = snap.get(target).body["from"]
+                explanation["consumer"] = snap.get(target).body["to"]
+                tasks[oid]["support_explanation"] = explanation
+        by_reviewer = defaultdict(list)
+        for draft in drafts:
+            by_reviewer[draft["reviewer"]].append(draft)
+        for reviewer, own in by_reviewer.items():
+            if len(own) < 2:
+                continue
+            previous, latest = (_draft_signature(snap, info) for info in own[-2:])
+            if latest is not None and previous == latest:
+                identifier = diagnostic("repeated_unchanged_draft", [target],
+                    f"{record_label(snap, target)} has repeated unchanged unfinished work by {reviewer}. "
+                    "Continue that reviewer's existing draft or resolve its next action before another attempt.",
+                    [oid], required=False)
+                tasks[oid].setdefault("advisory_ids", []).append(identifier)
         if argument:
             task_contexts[oid].add(key_of(argument))
+        elif target["collection"] == "audits":
+            task_contexts[oid].add(key_of(target))
         tasks_by_target[key_of(target)].append(oid)
         task_order[oid] = _source_order(snap, target)
 
@@ -388,6 +489,39 @@ def build_work(derivation, assessment, *, focus=None):
             pending.extend(units[unit_of[oid]]["obligation_ids"])
         tasks = {oid: task for oid, task in tasks.items() if oid in wanted}
         units = {uid: unit for uid, unit in units.items() if any(oid in wanted for oid in unit["obligation_ids"])}
+    # Coverage eligibility was evaluated with this assessment. Group its compact
+    # facts after focus selection, so preparation never repeats the audit's
+    # entire list of spans or hides a focused argument behind a global sample.
+    arguments = {task["argument"]["id"] for task in tasks.values() if task["argument"]}
+    if focus is not None and focus["collection"] in ("items", "parts"):
+        # An intermediate focus can retain only source-fidelity tasks, while
+        # its own registered proof still has coverage to finish.
+        arguments.update(argument.id for argument in snap.member_records("arguments_for_target", focus))
+    owners = {key_of(task["owner"]) for task in tasks.values() if task["owner"]}
+    coverage_facts = [row for row in derivation.coverage_diagnostics if focus is None or
+                      arguments.intersection(row["argument_ids"]) or row.get("owner") in owners or
+                      (focus["collection"] == "anchors" and row["anchor_id"] == focus["id"]) or
+                      (focus["collection"] == "coverage" and row.get("coverage_ref", {}).get("id") == focus["id"])]
+    if coverage_facts:
+        causes = defaultdict(list)
+        for fact in coverage_facts:
+            causes[fact["code"]].append(fact)
+        affected = {argument for row in coverage_facts for argument in row["argument_ids"]}
+        related = [oid for oid, task in tasks.items() if task["kind"] == "composition" and
+                   task["role"] == "primary" and task["target"]["id"] in affected]
+        identifier = diagnostic("coverage_authoring", [ref_of(audit)],
+            "Resolve the affected coverage causes below. Adding coverage or changing spans or claims can "
+            "reopen composition; renew affected reasoning with its explicit predecessor reference. "
+            "Unchanged local checks remain usable. Detailed identities are in coverage_diagnostics in assessment.",
+            related[:20])
+        diagnostics[identifier].update({"cause_groups": [
+            {"code": code, "count": len(rows), "message": COVERAGE_CAUSES[code][0],
+             "next_action": COVERAGE_CAUSES[code][1],
+             "examples": [{key: value for key, value in coverage_diagnostic(row).items()
+                           if key not in ("message", "next_action")} for row in rows[:3]],
+             "examples_truncated": len(rows) > 3}
+            for code, rows in sorted(causes.items())], "coverage_diagnostic_count": len(coverage_facts),
+            "related_task_count": len(related), "related_tasks_truncated": len(related) > 20})
     actions = sorted(diagnostics.values(), key=lambda row: (row["code"], row["id"]))
     return {"revision": assessment["revision"], "audit_id": audit.id, "analysis_complete": True,
             "focus": focus, "progress": assessment["progress"],
@@ -398,17 +532,19 @@ def build_work(derivation, assessment, *, focus=None):
             "task_contexts": {oid: sorted(contexts) for oid, contexts in task_contexts.items() if oid in tasks}}
 
 
-def derive_work(db, *, audit_id, revision=None, focus=None, limits=None):
+def derive_work(db, *, audit_id, revision=None, focus=None, limits=None, include_assessment=False):
     try:
         derivation, result = derive_full(db, audit_id=audit_id, revision=revision, limits=limits)
-        return build_work(derivation, result, focus=focus)
+        view = build_work(derivation, result, focus=focus)
+        return (view, (derivation, result)) if include_assessment else view
     except TraversalLimit as exc:
         action = {"id": _identity("act_", audit_id, exc.code, exc.bound), "code": exc.code,
                   "target_refs": [], "related_task_ids": [], "message": exc.message, "required": True}
-        return {"revision": revision if revision is not None else db.max_revision(), "audit_id": audit_id,
+        view = {"revision": revision if revision is not None else db.max_revision(), "audit_id": audit_id,
                 "analysis_complete": False, "focus": _focus(focus), "progress": {"process_complete": False},
                 "tasks": [], "units": [], "coordinator_actions": [action], "diagnostic_count": 1,
                 "diagnostics_truncated": False, "task_contexts": {}}
+        return (view, None) if include_assessment else view
 
 
 def list_work(db, *, audit_id, focus=None, revision=None, limit=20, cursor=None, limits=None):
@@ -500,7 +636,13 @@ def select_assignment(work, request, limits=None):
             requested_units = {unit_of[oid] for oid in requested}
             candidates.sort(key=lambda unit: unit["id"] not in requested_units)
     focus = _focus(request.get("focus", work.get("focus")))
+    preferred_contexts = {key_of(focus)} if focus else set()
     if focus is not None:
+        # A statement's shared prerequisites can also serve another result.
+        # Prefer the focused result's argument before falling back to ID order.
+        preferred_contexts.update(key_of(unit["argument"]) for unit in candidates
+                                  if unit["argument"] and (unit["owner"] == focus or
+                                  any(tasks[oid]["target"] == focus for oid in unit["obligation_ids"])))
         focused = {unit["id"] for unit in candidates if unit["owner"] == focus or unit["argument"] == focus
                    or any(tasks[oid]["target"] == focus for oid in unit["obligation_ids"])}
         pending = list(focused)
@@ -548,8 +690,8 @@ def select_assignment(work, request, limits=None):
             break
         if context is None:
             options = possible_contexts(choice)
-            preferred = key_of(focus) if focus else None
-            context = preferred if preferred in options else min(options)
+            preferred = options & preferred_contexts
+            context = min(preferred or options)
         conditional.update(pending_predecessors(choice))
         if choice.get("cyclic") and provisional:
             conditional.update(p for oid in choice["pending_obligation_ids"] for p in tasks[oid]["waiting_on"]
@@ -565,7 +707,8 @@ def select_assignment(work, request, limits=None):
     if selected:
         context_ref = dict(zip(("collection", "id"), context.split(":", 1))) if ":" in context else None
         argument = context_ref if context_ref and context_ref["collection"] == "arguments" else None
-        owner = next((unit["owner"] for unit in selected if unit["argument"] == argument and unit["owner"]),
+        owner = next((unit["owner"] for unit in units.values() if argument is not None
+                      and unit["argument"] == argument and unit["owner"]),
                      selected[0]["owner"])
         base.update({"prepared": True, "selected_unit_ids": [unit["id"] for unit in selected],
                      "assigned_task_ids": assigned, "conditional_on_task_ids": sorted(conditional),

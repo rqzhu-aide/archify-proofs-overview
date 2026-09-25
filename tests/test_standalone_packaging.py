@@ -85,7 +85,8 @@ class StandalonePackagingTests(unittest.TestCase):
             "init", self.database, self.seed, "--focused"))
         self.assertEqual(receipt["backend"], "paper_core")
         self.assertEqual(receipt["storage_format"], 4)
-        self.assertEqual(receipt["core_version"], "2.1.0")
+        manifest = json.loads((self.scripts / "paper_core" / "bundle-manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(receipt["core_version"], manifest["core_version"])
         self.assertEqual(receipt["authoring_profile"], "focused")
         with closing(sqlite3.connect(self.database)) as connection:
             self.assertEqual(connection.execute(

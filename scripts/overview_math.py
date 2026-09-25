@@ -19,7 +19,7 @@ _ENVIRONMENTS = frozenset((
     "substack displaylines eqalign eqalignno"
 ).split())
 CONFIGURATION = {
-    "adapter_version": 5,
+    "adapter_version": 6,
     "delimiters": [["$", "$"], ["$$", "$$"], [r"\(", r"\)"], [r"\[", r"\]"]],
     "output": "static native MathML with original LaTeX annotation",
     "maximum_formula_characters": 8192,
@@ -93,6 +93,15 @@ def _spans(text: str):
 
 def _check_tex(tex: str) -> None:
     """Reject structures the converter can otherwise silently discard or expand."""
+    # JSON accepts \r, so an under-escaped \rVert becomes a carriage return
+    # followed by Vert. The converter then renders the remaining letters as
+    # mathematics without an error. Only flag these distinctive remnants:
+    # ordinary whitespace and ambiguous newline/tab + words are not evidence
+    # of a lost command. A CRLF does not match, nor does a longer identifier.
+    damaged = re.search(r"\r(Vert|vert)(?![A-Za-z])", tex)
+    if damaged:
+        raise ValueError("likely decoded LaTeX escape: carriage return + " + damaged[1]
+                         + "; check JSON escaping for \\r" + damaged[1])
     depth = 0
     for index, character in enumerate(tex):
         if character in "{}" and not _escaped(tex, index):

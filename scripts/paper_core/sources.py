@@ -336,8 +336,10 @@ def _extract_lines(text: str, start: int, end: int) -> str:
 
 
 def _extract_page(raw: bytes, page: int):
+    from .pdf_text import sanitize_pdf_excerpt
+
     if PdfReader is None:
-        return "", "pypdf is not installed; the reviewed page text was not extracted"
+        return "", "pypdf is not installed; page text was not extracted"
     try:
         reader = PdfReader(io.BytesIO(raw))
         count = len(reader.pages)
@@ -348,8 +350,9 @@ def _extract_page(raw: bytes, page: int):
     try:
         excerpt = reader.pages[page - 1].extract_text() or ""
     except Exception:  # pragma: no cover - depends on the PDF
-        excerpt = ""
-    return excerpt, "reviewed page: PDF text extraction is approximate and reviewed by a person"
+        return "", "PDF page text could not be extracted; inspect the original page."
+    excerpt, limitation = sanitize_pdf_excerpt(excerpt)
+    return excerpt, limitation or "PDF text extraction is approximate; compare important formulas with the original page."
 
 
 def resolve_anchor(db: Database, source, locator: dict, prior=None) -> dict:
@@ -365,6 +368,7 @@ def resolve_anchor(db: Database, source, locator: dict, prior=None) -> dict:
         if raw is None:
             raise SourceUnavailable(f"source {source.id} content blob is missing")
         excerpt, limitation = _extract_page(raw, locator["page"])
+        limitation = f"{source.body['path']}, physical PDF page {locator['page']}: {limitation}"
         method = "reviewed_page"
     else:
         if media == "pdf":

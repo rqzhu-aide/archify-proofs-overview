@@ -166,12 +166,19 @@ class _SourceContent:
         errors = entry.setdefault('page_errors', {})
         if page not in texts and page not in errors:
             try:
-                texts[page] = self.pdf_pages(row)[page - 1].extract_text() or ''
+                from paper_core.pdf_text import sanitize_pdf_excerpt
+                raw_text = self.pdf_pages(row)[page - 1].extract_text() or ''
+                texts[page], limitation = sanitize_pdf_excerpt(raw_text)
+                entry.setdefault('page_limitations', {})[page] = limitation
             except Exception as exc:
                 errors[page] = exc
         if page in errors:
             raise errors[page]
         return texts[page]
+
+    def pdf_limitation(self, row, page):
+        self.pdf_text(row, page)
+        return self._entry(row)['page_limitations'][page]
 
 
 def _uncomment(text):
@@ -361,6 +368,7 @@ def _binding(locator, file_row, context, sources=None):
     if 'label' in locator:
         _text(locator['label'], context + '.label')
     excerpt, checks, notes = '', [], []
+    extraction_note = None
     text = None
     if file_row and file_row['media_type'] != 'application/pdf':
         text = sources.text(file_row)
@@ -388,6 +396,9 @@ def _binding(locator, file_row, context, sources=None):
                 checks.append('pdf_page_bounds')
                 if not excerpt:
                     excerpt = sources.pdf_text(file_row, locator['page'])
+                limitation = sources.pdf_limitation(file_row, locator['page'])
+                if limitation:
+                    extraction_note = f"{file_row['path']}, physical PDF page {locator['page']}: {limitation}"
             except RecordError:
                 raise
             except Exception as exc:
@@ -398,6 +409,10 @@ def _binding(locator, file_row, context, sources=None):
         notes.append('No file content is registered for this locator.')
     verification = {'status': 'checked' if checks and not notes else 'unverified',
                     'method': ', '.join(checks) or 'entered_locator'}
+    # Page bounds remain checkable even when glyph extraction is damaged.
+    # This note is not a source comparison or a change to historical evidence.
+    if extraction_note:
+        notes.append(extraction_note)
     if notes:
         verification['note'] = ' '.join(notes)
     return excerpt, verification
@@ -959,8 +974,10 @@ def normalize(data, base_dir, extra_files=(), source_root=None):
 
     for item in _rows(data['items'], 'Seed items'):
         _fields(item, ('id', 'kind', 'label', 'caption', 'statement'),
-                ('source', 'passages', 'owner', 'aliases', 'issue'), 'Seed item')
+                ('source', 'passages', 'owner', 'aliases', 'issue', 'proof_idea'), 'Seed item')
         _id(item['id'], 'Seed item.id')
+        if 'proof_idea' in item:
+            _text(item['proof_idea'], 'Seed item.proof_idea')
         passages = []
         if 'source' in item:
             passages.append(('statement', located(item['source'], 'Item source')))
@@ -1105,8 +1122,10 @@ def _validate_records(data, sources):
     item_map = {}
     for row in _rows(result['items'], 'Items'):
         _fields(row, ('id', 'kind', 'label', 'caption', 'statement', 'passages'),
-                ('aliases', 'issue', 'owner'), 'Item')
+                ('aliases', 'issue', 'owner', 'proof_idea'), 'Item')
         _id(row['id'], 'Item.id')
+        if 'proof_idea' in row:
+            _text(row['proof_idea'], 'Item.proof_idea')
         for key in ('kind', 'label', 'caption'):
             _text(row[key], 'Item.' + key)
         if row['id'] in item_map or row['kind'] not in KINDS:
@@ -1580,6 +1599,17 @@ def record_report(data, base_dir, fidelity=None):
     status = comparison_status(data, fidelity)
     if status['status'] != 'complete':
         report['warnings'].append(status['summary'] + ' These are overview comparisons, not proof verdicts.')
+    pdf_files = {f['id']: f['path'] for f in data['source_revision']['files']
+                 if f['media_type'] == 'application/pdf'}
+    damaged_pages = sorted({(pdf_files[a['file_id']], a['locator']['page']) for a in data['anchors']
+                            if a.get('file_id') in pdf_files and a['locator'].get('page')
+                            and '\ufffd' in a['excerpt']})
+    if damaged_pages:
+        sample = '; '.join(f'{path}, p. {page}' for path, page in damaged_pages[:4])
+        report['warnings'].append(
+            f"PDF excerpts contain replacement characters on {len(damaged_pages)} captured page(s) "
+            f"({sample}{'; ...' if len(damaged_pages) > 4 else ''}). Missing glyph meanings were not "
+            "recovered; inspect the original pages. Page bounds and mathematical source comparison are separate checks.")
     unlocated = sorted(row['id'] for row in data['uses'] if not row['evidence_refs'])
     report['uses_without_evidence'] = unlocated
     if unlocated:
@@ -1663,6 +1693,9 @@ def _prepare_records_validated(data, base_dir):
         row['statement'] = row['statement']['text']
         row['statement_diagnostics'] = []
         row['statement_html'] = render_text(row['statement'], diagnostics=row['statement_diagnostics'])
+        if 'proof_idea' in row:
+            row['proof_idea_diagnostics'] = []
+            row['proof_idea_html'] = render_text(row['proof_idea'], diagnostics=row['proof_idea_diagnostics'])
         if row.get('issue'):
             row['issue_diagnostics'] = []
             row['issue_html'] = render_text(row['issue'], diagnostics=row['issue_diagnostics'])
@@ -1699,7 +1732,7 @@ def _prepare_records_validated(data, base_dir):
     prepared.update(record_report(data, base_dir, fidelity))
     diagnostics = []
     for row in prepared['items'] + prepared['details'] + prepared['uses'] + prepared['detail_uses']:
-        for field in ('statement', 'reason', 'regime', 'issue'):
+        for field in ('statement', 'proof_idea', 'reason', 'regime', 'issue'):
             for entry in row.get(field + '_diagnostics', []):
                 diagnostics.append({'collection': 'items' if 'kind' in row else 'uses',
                                     'id': row['id'], 'field': field, **entry})

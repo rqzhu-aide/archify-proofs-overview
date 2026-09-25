@@ -6,11 +6,12 @@ The common backend always uses the skill's bundled runtime, and `init` reports i
 
 ## Start and continue
 
-Use the shared Python interpreter. Paths below are abbreviated; the normal database lives at `<overview-folder>/data/paper-records.sqlite`.
+Use the shared Python interpreter. Paths below are abbreviated; the normal database lives at `<overview-folder>/data/paper-records.sqlite`. The database CLI forces UTF-8. For supporting extraction scripts use `python -X utf8` or `PYTHONIOENCODING=utf-8`, and read JSON/text files and redirected output explicitly as UTF-8. Check decoded characters before treating console mojibake as source damage.
 
 ```text
 python <skill>/scripts/paper_database.py init paper-records.sqlite work/seed.json --focused --source-root <manuscript-folder>
 python <skill>/scripts/paper_database.py list paper-records.sqlite
+python <skill>/scripts/paper_database.py list paper-records.sqlite --collection anchors
 python <skill>/scripts/paper_database.py get paper-records.sqlite representer
 python <skill>/scripts/paper_database.py apply paper-records.sqlite work/edits.json
 python <skill>/scripts/paper_database.py compare paper-records.sqlite work/comparisons.json
@@ -29,7 +30,7 @@ Seed source references resolve from the JSON directory. `--source-root` identifi
 
 `list <db>` gives compact IDs, labels, roles, connection endpoints, anchor references, comparison states, and `expected_snapshot`, without statement bodies or source excerpts. Use `--collection items`, `uses`, or `anchors` to narrow it. Copy generated IDs from this listing or a packet; do not infer their hash suffixes or inspect raw SQL merely to find them.
 
-`get <db> <item-id>` returns the selected statement, incoming connections, directly relevant prerequisites, required source passages, current comparisons, freshness, and `expected_snapshot`. Join item `passages[].anchor_id` and use `evidence_refs` to the packet's `anchors`. Comparison `note_ref` values resolve through `comparison_notes`, so repeated notes appear once. Full source blobs and accumulated review history are omitted; exports retain them. Empty compatibility fields can remain.
+`get <db> <item-id>` returns the selected statement, incoming connections, directly relevant prerequisites, required source passages, current comparisons, freshness, and `expected_snapshot`. To inspect a connection, get its target item; passing an existing use ID returns a message with that command. Join item `passages[].anchor_id` and use `evidence_refs` to the packet's `anchors`. Comparison `note_ref` values resolve through `comparison_notes`, so repeated notes appear once. Full source blobs and accumulated review history are omitted; exports retain them. Empty compatibility fields can remain.
 
 Retrieve the argument being edited, not the whole export. Reuse recently read context at the same source revision and read additional source only when needed. A packet is not a claim that its prerequisites suffice. See [revisions.md](revisions.md) when the manuscript changes.
 
@@ -41,7 +42,7 @@ For standing setup, seed passages may repeat the same source locator. In canonic
 
 ## Apply a bounded batch
 
-Use the current `expected_snapshot` from `list` or a packet. **An `upsert` replaces the entire record; it does not merge omitted fields.** Re-supply every intended field. A seed's inline `source` becomes an anchor at initialization: canonical item edits use `passages[].anchor_id`, and use edits use `evidence_refs`. Do not paste a seed-style `source` into a canonical item edit. An anchor upsert needs an existing file ID and a verified locator; the script extracts and hashes its passage.
+Use the current `expected_snapshot` from `list` or a packet. **An `upsert` replaces the entire record; it does not merge omitted fields.** Re-supply every intended field. A seed's inline `source` becomes an anchor at initialization: canonical item edits use `passages[].anchor_id`, and use edits use `evidence_refs`. Do not paste a seed-style `source` into a canonical item edit. Public overview use endpoints `from` and `to` are string item IDs, as below; raw common-store references use a different internal shape. Author through the public commands. An anchor upsert needs an existing file ID and a verified locator; the script extracts and hashes its passage.
 
 ```json
 {
@@ -96,7 +97,7 @@ Use the current `expected_snapshot` from `list` or a packet. **An `upsert` repla
 
 This example follows the minimal seed's `projection-lemma` and `representer` identities. Copy the lemma's existing passage anchor IDs and the existing use ID from `get` or `list`; use the registered `proof.md` file ID for the new anchor. The sample lines are specific to that example. For another paper, use its actual locations and wording. `set` is a top-level sibling of `edits`, never an edit operation. It changes `title`, `scope`, or `main_items`; a focused database cannot clear its main-result selection. A metadata-only batch can use an empty `edits` list. Do not write per-declaration exclusions merely because statements are outside the selected scope.
 
-For item upserts supply `kind`, `label`, `caption`, structured `statement`, and `passages`, plus any intended optional fields. Renumbering changes `label`, not identity. On a common store, upserts preserve proofcheck extensions and unselected records. `remove` deselects an existing item or use without deleting its common identity; revise selected references atomically. The whole batch is checked before committing. An endpoint change that contradicts a registered proof application is refused until proofcheck updates or withdraws that structure. A stale snapshot rejects the batch: retrieve and review intervening changes before submitting a revised expectation.
+For item upserts supply `kind`, `label`, `caption`, structured `statement`, and `passages`, plus any intended optional fields. Optional `proof_idea` is a nonempty source-backed explanation, returned by `get` and included in the item's existing comparison context. Retain it explicitly on upsert; omitting it removes it. Changing it can stale the item and relevant connected comparisons, just as other explanatory content can. No separate review object is needed. Renumbering changes `label`, not identity. On a common store, upserts preserve proofcheck extensions and unselected records. `remove` deselects an existing item or use without deleting its common identity; revise selected references atomically. The whole batch is checked before committing. An endpoint change that contradicts a registered proof application is refused until proofcheck updates or withdraws that structure. A stale snapshot rejects the batch: retrieve and review intervening changes before submitting a revised expectation.
 
 Write JSON batches as files with a file-writing tool, not inline shell strings that may corrupt backslash mathematics. Do not hand-write generated hashes, timestamps, comparison IDs, or duplicated excerpts.
 
@@ -116,13 +117,13 @@ Write JSON batches as files with a file-writing tool, not inline shell strings t
 }
 ```
 
-Compare the actual current stored statements and reasons, including essential qualifications, with source evidence as explained in [authoring.md](authoring.md#compare-and-display). Use the current packet or exact records already in context; fetch again only when needed to obtain the current version. After edits, compare the changed context before recording a match.
+Compare the actual current stored statements, proof ideas, and reasons, including essential qualifications, with source evidence as explained in [authoring.md](authoring.md#compare-and-display). Use the current packet or exact records already in context; fetch again only when needed to obtain the current version. After edits, compare the changed context before recording a match.
 
 One top-level `result` and `note` applies to the named targets. Group only comparisons for which that note is accurate; use separate batches for different findings. `matched` means the saved content was compared and agrees with its source, not that its proof is valid. Use `needs_attention` with a specific unresolved interpretation. An item comparison does not automatically review its incoming connections; name every reviewed target.
 
 The four displayed states are `unreviewed`, `matched`, `needs_attention`, and `stale`. The aggregate `complete` means every recorded target has a current match; `incomplete` can also mean everything was reviewed but some questions remain. Its summary and counts distinguish those cases. A reviewed unresolved record can be delivered honestly, while unreviewed and stale selected records still need attention.
 
-Comparisons bind to the selected source manifest and relevant statement/connection context. A substantive change can stale connected comparisons even when the displayed target is unchanged. Unselected audit additions and audit-only sources do not silently expand that context. Appending observations does not change the mathematical snapshot ID. A newer `needs_attention` for identical context supersedes an earlier match. The [revision workflow](revisions.md) covers explicit reviewed reuse; unchanged text alone does not perform that review.
+Comparisons bind to the selected source manifest and relevant statement/connection context. A substantive change can stale connected comparisons even when the displayed target is unchanged. A scope- or title-only edit changes the content snapshot needed for subsequent edits but leaves unchanged record comparisons valid. Unselected audit additions and audit-only sources do not silently expand that context. Appending observations does not change the mathematical snapshot ID, so comparison batches may share `expected_snapshot` while content is unchanged. A newer `needs_attention` for identical context supersedes an earlier match. The [revision workflow](revisions.md) covers explicit reviewed reuse; unchanged text alone does not perform that review.
 
 If proofcheck captures revised bytes for a selected source before the overview anchors are refreshed, an overview read can report that the stored excerpts need rebinding. Run the `refresh` command and current `--expected-snapshot` shown in that message; supply revised anchors if their locations changed. Refresh checks the resulting source bindings and leaves earlier comparisons stale for review.
 
@@ -142,4 +143,4 @@ Final rendering checks exact record preservation, input/output hashes, actual gr
 
 Large math diagnostic sets are grouped by cause and record field, with totals and a short sample in the render receipt. Use `render <db> <html> --full-diagnostics` or the HTML's Math display notes when individual occurrences are needed. This avoids reading the same macro warning repeatedly; it does not suppress unresolved display limitations in the report.
 
-Regenerate a retained export after final comparisons and check its observation receipt as well as its snapshot. Use `backup` for a consistent database copy. The database includes captured source files; share it only when those sources should be shared. The HTML alone is standalone and contains selected excerpts. Historical snapshots remain renderable with their source limitations disclosed.
+Exports are optional portable snapshots with base64-encoded source bytes; a large PDF can produce a large export. Use bounded `list` and `get` for routine inspection. Regenerate a retained export after final comparisons and check its observation receipt as well as its snapshot. Use `backup` for a consistent database copy. The database includes captured source files; share it only when those sources should be shared. The HTML alone is standalone and contains selected excerpts. Historical snapshots remain renderable with their source limitations disclosed.

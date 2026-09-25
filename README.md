@@ -1,10 +1,10 @@
 # Proof Graphify
 
-[![Version v3.1.2](https://img.shields.io/badge/version-v3.1.2-6366f1)](https://github.com/rqzhu-aide/proof-graphify/tree/v3.1.2)
+[![Version v3.1.3](https://img.shields.io/badge/version-v3.1.3-6366f1)](https://github.com/rqzhu-aide/proof-graphify/tree/v3.1.3)
 
 **Explore a paper's main results, important prerequisites, and connections in the style of [Archify](https://github.com/tt-a1i/archify).**
 
-The skill selects the results that explain the paper's central contributions, records concise faithful summaries and sourced connections in a local SQLite database, and generates an interactive HTML graph. Follow prerequisites, inspect source passages, and navigate the argument without reconstructing individual proof steps. The selected scope is visible; unselected declarations do not require exhaustive bookkeeping.
+The skill selects the results that explain the paper's central contributions, records faithful summaries, proof ideas, and sourced connections in a local SQLite database, and generates an interactive HTML graph. Expanded cards distinguish statements from the reasoning that connects their prerequisites. Follow the argument and inspect source passages without reconstructing individual proof steps. The selected scope is visible; unselected declarations do not require exhaustive bookkeeping.
 
 The records remain reusable: [revise the overview](references/revisions.md) as the manuscript changes, or [hand the records to proofcheck](references/audit-database.md) as a starting inventory for a deeper audit. Source comparison checks the overview against the paper; it does not certify proof validity. Existing detailed databases retain their content and history.
 

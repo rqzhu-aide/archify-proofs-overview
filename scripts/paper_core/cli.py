@@ -67,6 +67,82 @@ def _write_json(path, payload) -> dict:
     return {"path": str(p), "bytes": len(text.encode("utf-8"))}
 
 
+def _write_template(path, payload):
+    """Authoring assistance never overwrites an existing response or source."""
+    data = (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with destination.open("xb") as stream:
+            stream.write(data)
+    except FileExistsError:
+        if not destination.is_file() or destination.read_bytes() != data:
+            raise InvalidRequest("template output exists with different content; choose a new output path",
+                                 code="OUTPUT_CONFLICT") from None
+    return {"path": str(destination), "bytes": len(data)}
+
+
+def _protect_template_destination(db, path):
+    destination = Path(path).resolve()
+    protected = {db.path.resolve()}
+    for source in db.heads("sources"):
+        paper = db.head("papers", source.body["paper_id"])
+        if paper is not None:
+            protected.add((Path(paper.body["source_root"]) / source.body["path"]).resolve())
+    if destination in protected:
+        raise InvalidRequest("template output cannot replace a database or registered source, even if absent",
+                             code="OUTPUT_CONFLICT")
+
+
+def cmd_template(args):
+    from .assistance import authoring_template
+    with Database(args.db) as db:
+        _protect_template_destination(db, args.out)
+        if db.packet(args.packet) is None:
+            raise InvalidRequest(f"unknown packet {args.packet}", code="PACKET_UNKNOWN")
+        result = authoring_template(args.collection, packet_id=args.packet, record_id=args.id)
+    return {"command": "template", "file": _write_template(args.out, result),
+            "next_action": "author the template's scientific fields; submit only its template member"}
+
+
+def cmd_review_mapping_template(args):
+    from .assistance import mapping_template
+    from .contract import WORKER_RESPONSE, validate_shape
+    from .acceptance import COMMAND_MODES
+    from .packets import load_packet
+    from .review import _mapped_indexes, classify_judgments
+    with Database(args.db) as db:
+        _protect_template_destination(db, args.out)
+        response = db.head("responses", args.response)
+        if response is None or response.retired:
+            raise InvalidRequest("mapping template needs a live saved response", code="RESPONSE_UNKNOWN")
+        packet = db.packet(args.packet)
+        if packet is None:
+            raise InvalidRequest(f"unknown packet {args.packet}", code="PACKET_UNKNOWN")
+        if packet["manifest"]["mode"] not in COMMAND_MODES["review_map"]:
+            raise InvalidRequest("choose a private coordinator mapping packet containing canonical targets",
+                                 code="PACKET_MODE")
+        try:
+            worker = json.loads(db.get_blob(response.body["original_blob"]))
+        except (TypeError, ValueError, UnicodeError):
+            raise InvalidRequest("unreadable worker response requires a new response, not mapping",
+                                 code="RESPONSE_UNREADABLE") from None
+        if validate_shape(WORKER_RESPONSE, worker):
+            raise InvalidRequest("malformed worker response requires a new response, not mapping",
+                                 code="RESPONSE_UNREADABLE")
+        original = load_packet(db, response.body["packet_id"])
+        _, pending = classify_judgments(original["_manifest"], worker, original)
+        already_mapped = _mapped_indexes(db, response.id)
+        indexes = args.judgment if args.judgment is not None else [
+            i for i, _ in pending if i not in already_mapped]
+        if any(i < 0 or i >= len(worker["judgments"]) for i in indexes):
+            raise InvalidRequest("judgment indexes must identify saved response rows")
+        result = mapping_template(source_packet_id=response.body["packet_id"], mapping_packet_id=args.packet,
+                                  response_id=args.response, judgment_indexes=indexes)
+    return {"command": "review mapping-template", "file": _write_template(args.out, result),
+            "next_action": "author exact target and rationale for each selected row; keep the worker bytes unchanged"}
+
+
 def _parse_target(text: str) -> dict:
     collection, sep, id = text.partition(":")
     if not sep or not collection or not id:
@@ -284,7 +360,8 @@ def cmd_work_list(args):
 
 
 def _compact_work(result):
-    return {k: v for k, v in result.items() if k not in ("packet", "manifest", "scaffold")}
+    return {k: v for k, v in result.items()
+            if k not in ("packet", "manifest", "scaffold", "worker_guidance", "coordinator_guidance")}
 
 
 def cmd_work_prepare(args):
@@ -301,6 +378,24 @@ def cmd_work_prepare(args):
                 exc.records.append({"packet_id": result["packet_id"], "next_action": "work inspect --packet"})
                 raise
     return {"command": "work prepare", **_compact_work(result)}
+
+
+def cmd_work_extend(args):
+    from .controller import extend_work, read_bounded, write_artifacts
+    from .canonical import load_json_bytes
+    try:
+        request = load_json_bytes(read_bounded(args.request, 65536))
+    except (UnicodeError, ValueError) as exc:
+        raise InvalidRequest(f"context request is not valid UTF-8 JSON: {exc}", code="JSON_INVALID") from exc
+    with Database(args.db, write=True) as db:
+        result = extend_work(db, packet_id=args.packet, request=request)
+        if result.get("prepared"):
+            try:
+                result["files"] = write_artifacts(db, result, args.out)
+            except CoreError as exc:
+                exc.records.append({"packet_id": result["packet_id"], "next_action": "work inspect --packet"})
+                raise
+    return {"command": "work extend", **_compact_work(result)}
 
 
 def cmd_work_submit(args):
@@ -512,6 +607,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--allow-provisional", action="store_true")
     p.add_argument("--out", required=True)
     p.set_defaults(func=cmd_work_prepare)
+    p = work.add_parser("extend", help="add captured neutral source to an independent work assignment")
+    _db_arg(p)
+    p.add_argument("--packet", required=True)
+    p.add_argument("--request", required=True)
+    p.add_argument("--out", required=True)
+    p.set_defaults(func=cmd_work_extend)
     p = work.add_parser("submit", help="preserve and validate one structured response")
     _db_arg(p)
     p.add_argument("--submission", required=True)
@@ -550,6 +651,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--count", type=int, default=1)
     p.set_defaults(func=cmd_ids)
 
+    p = sub.add_parser("template", help="generate one collection's uncommitted authoring shape")
+    _db_arg(p)
+    p.add_argument("--collection", required=True, choices=COLLECTIONS)
+    p.add_argument("--packet", required=True)
+    p.add_argument("--id", default=None, help="existing shared identity for a same-ID extension")
+    p.add_argument("--out", required=True)
+    p.set_defaults(func=cmd_template)
+
     p = sub.add_parser("get", help="assemble a packet")
     _db_arg(p)
     p.add_argument("--target", action="append", default=[], help="COLLECTION:ID (repeatable)")
@@ -583,6 +692,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--response", default=None, metavar="RESPONSE_ID")
     p.add_argument("--mapping", required=True)
     p.set_defaults(func=cmd_review_map)
+    p = review.add_parser("mapping-template", help="scaffold coordinator mapping with worker and mapping packet identities")
+    _db_arg(p)
+    p.add_argument("--response", required=True)
+    p.add_argument("--packet", required=True)
+    p.add_argument("--judgment", type=int, action="append", default=None)
+    p.add_argument("--out", required=True)
+    p.set_defaults(func=cmd_review_mapping_template)
     p = review.add_parser("reconcile", help="record reconciliations against a reconcile packet")
     _db_arg(p)
     p.add_argument("--packet", default=None)

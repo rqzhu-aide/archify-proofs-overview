@@ -459,6 +459,12 @@ def get_packet(db_path, item_id, snapshot_id=None):
     data = export_snapshot(db_path, snapshot_id)
     by_id = {item["id"]: item for item in data["items"]}
     if item_id not in by_id:
+        use = next((row for row in data["uses"] if row["id"] == item_id), None)
+        if use:
+            raise DatabaseError(
+                f"{item_id!r} is a connection, not an item. Its target is {use['to']!r}. "
+                f"Retrieve that argument with paper_database.py get <database> {use['to']}" +
+                (f" --snapshot {snapshot_id}" if snapshot_id else "") + ".")
         raise DatabaseError(f"Unknown item {item_id!r}. Use list to retrieve the stored item IDs.")
     # Owned intermediate rows and the uses entering them are part of the
     # item's fidelity context; the packet is incomplete for review without

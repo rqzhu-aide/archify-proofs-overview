@@ -172,7 +172,8 @@ class Obj(T):
 
     def check(self, value, path, errors):
         if not isinstance(value, dict):
-            errors.append(f"{path or '/'}: expected object")
+            errors.append(f"{path or '/'}: expected object with fields {list(self.fields)}; "
+                          f"got {type(value).__name__}; use the generated shape")
             return
         unknown = sorted(set(value) - set(self.fields))
         missing = [name for name in self.fields if name not in value and name not in self.optional]
@@ -212,7 +213,8 @@ class RefT(T):
         expected = {"collection", "id"} | ({"version"} if self.pinned else set())
         shape = "PinnedRef" if self.pinned else "Ref"
         if not isinstance(value, dict) or set(value) != expected:
-            errors.append(f"{path}: expected {shape} with keys {sorted(expected)}")
+            actual = f"object keys {sorted(value)}" if isinstance(value, dict) else type(value).__name__
+            errors.append(f"{path}: expected {shape} with keys {sorted(expected)}; got {actual}")
             return
         if value["collection"] not in self.collections:
             errors.append(f"{path}/collection: must be one of {list(self.collections)}")
@@ -247,7 +249,10 @@ class OneOf(T):
     def check(self, value, path, errors):
         option = self._pick(value)
         if option is None:
-            errors.append(f"{path}: object does not match any allowed shape")
+            shapes = [sorted(option.fields) for option in self.options]
+            actual = f"object keys {sorted(value)}" if isinstance(value, dict) else type(value).__name__
+            errors.append(f"{path}: object does not match any allowed shape; expected one of {shapes}; "
+                          f"got {actual}; keep required nullable fields present")
             return
         option.validate(value, path, errors)
 
@@ -452,8 +457,8 @@ BODY_SCHEMAS = {
                            "reviewer": Str(nonempty=True)}),
     "items": Obj({"kind": Enum(ITEM_KINDS), "label": Str(nonempty=True), "caption": Str(), "statement": STATEMENT,
                   "passages": Arr(PASSAGE), "aliases": Arr(Str(nonempty=True)), "uncertainty": Str(nullable=True),
-                  "origin": ORIGIN, "owner_id": Id("items", nullable=True), "scope_id": Id("scopes", nullable=True)},
-                 local=_items_local),
+                  "origin": ORIGIN, "owner_id": Id("items", nullable=True), "scope_id": Id("scopes", nullable=True),
+                  "proof_idea": Str(nonempty=True)}, optional=("proof_idea",), local=_items_local),
     "parts": Obj({"item_id": Id("items"), "label": Str(nonempty=True), "statement": STATEMENT,
                   "passages": Arr(PASSAGE), "scope_id": Id("scopes", nullable=True), "origin": ORIGIN}),
     "scopes": Obj({"argument_id": Id("arguments", nullable=True), "parent_id": Id("scopes", nullable=True),

@@ -1,6 +1,6 @@
 # Inspect the delivered overview
 
-Use an available browser tool to check a representative long statement, its prerequisites, and navigation. This is a small display check, not another source review. Reuse the shared browser capability; do not create a browser driver, install a framework, or make paper-specific automation a delivery requirement. After one failed attempt and one reasonable fallback, report the interaction checks that remain untested.
+Use an available browser tool to check a representative long statement, its prerequisites, and navigation. If no browser tool exists, use the render receipt and diagnostics, disclose interactions as untested, and stop this check without a failed attempt. Otherwise reuse the shared browser capability; do not create a driver or install a framework. After one failed attempt and one reasonable fallback, disclose untested behavior and stop. The bundled fixture-based `interaction_test.mjs` checks the viewer during development, not the current paper's HTML; do not add it or another static hook scan as a paper delivery step.
 
 Use controls visible in the current viewport. Selection can pan the canvas and scroll to the details below it, so locate controls again after navigation. Open the finder before addressing its hidden input or results. A narrow browser pane may collapse optional controls; checking a wider viewport is useful when available, not a reason to change the paper records.
 

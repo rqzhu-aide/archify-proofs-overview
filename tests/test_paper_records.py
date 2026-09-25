@@ -109,6 +109,64 @@ class PaperRecordsTests(unittest.TestCase):
         candidate.pop("snapshot_id", None)
         return records.validate_records(candidate)
 
+    def test_absent_proof_idea_preserves_historical_digests_and_projection(self):
+        for source in (self.main, self.macros, self.appendix):
+            source.write_bytes(source.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+        data = self.migrate()
+        # Captured before the optional field was introduced. Timestamp is not
+        # part of snapshot identity; relative paths and CRLF bytes are fixed.
+        self.assertEqual(data["snapshot_id"], "85f381c8577e5059244851ea6a01f9a18e5d5841bacf80385042cc0538ea5d8a")
+        expected = {
+            ("items", "independence"): "6d7f18566a556e1256ddd02f420b3e2f9bf320bd704b5c4ef956d2a4811e11a0",
+            ("items", "centering"): "f3e3c109c26f0fadf8b452057c84136c76211c39e8b602297579bd0f753af2c5",
+            ("uses", "use-05587ad2fac8192a"): "757e501a292e8e343ef41f871c4f1c4880fa647eba7030fd02e400095c80e24b",
+        }
+        self.assertEqual({key: records.target_digest(data, *key) for key in expected}, expected)
+        prepared = records.prepare_records(data, self.base)
+        self.assertTrue(all("proof_idea" not in row and "proof_idea_html" not in row for row in prepared["items"]))
+
+    def test_proof_idea_flows_through_capture_refresh_and_safe_math_projection(self):
+        idea = r"Apply independence to the centered sum $X-\mu$. Keep <script> literal."
+        self.seed["items"][1]["proof_idea"] = idea
+        data = self.migrate()
+        before = deepcopy(data)
+        prepared = records.prepare_records(data, self.base)
+        row = next(row for row in prepared["items"] if row["id"] == "centering")
+        self.assertEqual(row["proof_idea"], idea)
+        self.assertIn("<math", row["proof_idea_html"])
+        self.assertIn("&lt;script&gt;", row["proof_idea_html"])
+        self.assertNotIn("<script>", row["proof_idea_html"])
+        self.assertEqual(data, before)
+        self.assertEqual(records.normalize(data, self.base), data)
+        self.main.write_text(self.main.read_text(encoding="utf-8") + "% revision\n", encoding="utf-8")
+        refreshed = records.refresh_sources(data, self.base)
+        self.assertEqual(refreshed["items"][1]["proof_idea"], idea)
+        self.assertNotEqual(refreshed["snapshot_id"], data["snapshot_id"])
+
+    def test_proof_idea_rejects_malformed_seed_and_canonical_values(self):
+        canonical = self.migrate()
+        for value in (None, "", " \t\n", 1, [], {}, "bad\x00text"):
+            with self.subTest(value=value):
+                seed = deepcopy(self.seed)
+                seed["items"][1]["proof_idea"] = value
+                with self.assertRaisesRegex(records.RecordError, "proof_idea"):
+                    records.normalize(seed, self.base)
+                data = deepcopy(canonical)
+                data["items"][1]["proof_idea"] = value
+                with self.assertRaisesRegex(records.RecordError, "proof_idea"):
+                    self.revalidate(data)
+
+    def test_proof_idea_math_failure_has_located_diagnostic(self):
+        self.seed["items"][1]["proof_idea"] = r"Use $\privateProofMacro$ in the final step."
+        data = self.migrate()
+        prepared = records.prepare_records(data, self.base)
+        failures = [entry for entry in prepared["math_diagnostics"] if entry["field"] == "proof_idea"]
+        self.assertEqual(len(failures), 1)
+        self.assertEqual((failures[0]["collection"], failures[0]["id"]), ("items", "centering"))
+        self.assertIn(r"\privateProofMacro", failures[0]["excerpt"])
+        self.assertIn('class="math-fallback"', prepared["items"][1]["proof_idea_html"])
+        self.assertNotIn("proof_idea_html", data["items"][1])
+
     def compare_all(self, data):
         candidate = deepcopy(data)
         targets = [{"collection": group, "id": row["id"]}

@@ -13,7 +13,8 @@ from .contract import (BATCH, CHECK_TARGETS, WORK_PRIMARY_RESPONSE, WORK_SUBMISS
                        extract_refs, validate_body, validate_shape)
 from .errors import CoreError, ConflictError, InvalidRequest
 from .ids import new_id, valid_id
-from .packets import load_packet, prepare_assignment, prepare_route_assignment, source_context_digest
+from .packets import (independent_context_changes, load_packet, prepare_assignment,
+                      prepare_route_assignment, source_context_digest)
 from .review import _check_body, plan_review_submission
 from .refs import facet_digests
 from .storage import Database
@@ -103,6 +104,18 @@ def _provenance(db, envelope, manifest):
 
 def _task_map(manifest):
     return {task["id"]: task for task in manifest["work"]["tasks"]}
+
+
+def _validate_rebase(original, active):
+    if (active["work"]["audit_id"], active["mode"]) != (original["work"]["audit_id"], original["mode"]):
+        raise InvalidRequest("rebase packet has another audit or mode", code="PACKET_MODE")
+    if original["mode"] == "independent":
+        before = {(r["collection"], r["id"], r["version"]) for r in original["read_set"]}
+        after = {(r["collection"], r["id"], r["version"]) for r in active["read_set"]}
+        if after - before or original.get("review_basis") != active.get("review_basis"):
+            raise InvalidRequest(
+                "new independent context requires a new response naming that packet; "
+                "rebase cannot claim newly delivered evidence", code="NEW_CONTEXT_RESPONSE_REQUIRED")
 
 
 def _pinned_in(ref, manifest):
@@ -328,6 +341,10 @@ def _freshness(original, active, plan):
             raise ConflictError("source context changed; review sources before reusing this response")
         old_tasks, fresh_tasks = _task_map(original), _task_map(active)
         state = State(db, [])
+        neutral_changes = independent_context_changes(state, original)
+        if neutral_changes["records"] or neutral_changes["relations"]:
+            raise ConflictError("independent source or setup changed; prepare renewed source-only work",
+                                records=[neutral_changes])
         audit_ref = original["work"].get("audit_ref") or next(
             (r for r in original["read_set"] if r["collection"] == "audits"
              and r["id"] == original["work"]["audit_id"]), None)
@@ -415,8 +432,7 @@ def submit_work(db, *, envelope_bytes: bytes, response_bytes: bytes) -> dict:
                 _provenance(db, envelope, original)
                 if envelope["rebase_packet_id"]:
                     active = _packet(db, envelope["rebase_packet_id"])["manifest"]
-                    if (active["work"]["audit_id"], active["mode"]) != (original["work"]["audit_id"], original["mode"]):
-                        raise InvalidRequest("rebase packet has another audit or mode", code="PACKET_MODE")
+                    _validate_rebase(original, active)
                 db.insert_work_submission(request_id=request_id, request_digest=request_digest,
                                           packet_id=envelope["packet_id"], audit_id=original["work"]["audit_id"],
                                           role=original["mode"], envelope_bytes=envelope_bytes,
@@ -439,6 +455,7 @@ def submit_work(db, *, envelope_bytes: bytes, response_bytes: bytes) -> dict:
                 return result
             original = _packet(db, envelope["packet_id"])["manifest"]
             active = _packet(db, envelope["rebase_packet_id"] or envelope["packet_id"])["manifest"]
+            _validate_rebase(original, active)
             _provenance(db, envelope, original)
             if not isinstance(worker, dict) or worker.get("packet_id") != envelope["packet_id"]:
                 raise InvalidRequest("worker response must name its original packet", code="PACKET_MISMATCH")
@@ -525,6 +542,21 @@ def response_scaffold(manifest):
     return {"packet_id": manifest["packet_id"], "results": results, "coverage": [], "findings": []}
 
 
+def _assist(db, prepared, *, assessed=None):
+    if prepared.get("prepared"):
+        from .assistance import coordinator_guidance, worker_guidance
+        prepared["scaffold"] = response_scaffold(prepared["manifest"])
+        prepared["worker_guidance"] = worker_guidance(prepared["mode"], composition=any(
+            task["kind"] == "composition" for task in prepared["manifest"].get("work", {}).get("tasks", ())))
+        prepared["coordinator_guidance"] = coordinator_guidance(db, prepared["manifest"], assessed=assessed)
+    return prepared
+
+
+def extend_work(db, *, packet_id, request):
+    from .packets import extend_work_assignment
+    return _assist(db, extend_work_assignment(db, packet_id=packet_id, request=request))
+
+
 def prepare_work(db, *, audit_id, mode, focus=None, task_ids=(), exclude_task_ids=(),
                  max_units=5, max_bytes=131072, allow_provisional=False, route_id=None):
     if mode not in ("primary", "independent", "reconcile"):
@@ -535,19 +567,15 @@ def prepare_work(db, *, audit_id, mode, focus=None, task_ids=(), exclude_task_id
         if mode != "independent" or task_ids or exclude_task_ids or allow_provisional:
             raise InvalidRequest("--route requires independent mode without task overrides or provisional work")
         prepared = prepare_route_assignment(db, audit_id=audit_id, route_id=route_id, max_bytes=max_bytes)
-        if prepared.get("prepared"):
-            prepared["scaffold"] = response_scaffold(prepared["manifest"])
-        return prepared
-    view = derive_work(db, audit_id=audit_id, focus=focus)
+        return _assist(db, prepared)
+    view, assessed = derive_work(db, audit_id=audit_id, focus=focus, include_assessment=True)
     selection = select_assignment(view, {"mode": mode, "focus": focus, "task_ids": list(task_ids),
                                         "exclude_task_ids": list(exclude_task_ids), "max_units": max_units,
                                         "allow_provisional": allow_provisional})
     if not selection.get("prepared"):
         return {"revision": view["revision"], "audit_id": audit_id, "mode": mode, **selection}
     prepared = prepare_assignment(db, audit_id=audit_id, mode=mode, selection=selection, max_bytes=max_bytes)
-    if prepared.get("prepared"):
-        prepared["scaffold"] = response_scaffold(prepared["manifest"])
-    return prepared
+    return _assist(db, prepared, assessed=assessed)
 
 
 def _current(db, row):
@@ -576,9 +604,13 @@ def inspect_work(db, *, request_id=None, packet_id=None, audit_id=None, limit=20
                 "response_sha256": row["response_sha256"], "packet_id": row["packet_id"]}
     if packet_id:
         row = _packet(db, packet_id)
+        from .assistance import coordinator_guidance, worker_guidance
         return {"packet_id": packet_id, "revision": row["base_revision"], "manifest": row["manifest"],
                 "packet": _parse(db.get_blob(row["payload_sha256"]), "stored packet"),
                 "scaffold": response_scaffold(row["manifest"]),
+                "worker_guidance": worker_guidance(row["manifest"]["mode"], composition=any(
+                    task["kind"] == "composition" for task in row["manifest"].get("work", {}).get("tasks", ()))),
+                "coordinator_guidance": coordinator_guidance(db, row["manifest"]),
                 "submissions": db.work_submissions(packet_id=packet_id, limit=20)}
     if type(limit) is not int or not 1 <= limit <= 100:
         raise InvalidRequest("limit must be between 1 and 100")
@@ -628,6 +660,9 @@ def write_artifacts(db, result, directory):
         files = {"worker-packet.json": canonical_bytes(result["packet"]),
                  "coordinator-manifest.json": canonical_bytes(result["manifest"]),
                  "response-scaffold.json": canonical_bytes(result["scaffold"])}
+        for key in ("worker_guidance", "coordinator_guidance"):
+            if key in result:
+                files[key.replace("_", "-") + ".json"] = canonical_bytes(result[key])
     elif result.get("request_id"):
         files = {"submission-envelope.json": db.get_blob(result["envelope_sha256"]),
                  "worker-response.json": db.get_blob(result["response_sha256"])}
